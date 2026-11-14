@@ -357,11 +357,6 @@ async function loadSelectionMissTargets(db: Db, now: Date): Promise<QuestionSupp
   for (const demand of demands) {
     const knowledgeId = demand.miss.knowledge_id;
     if (!live.has(knowledgeId)) continue;
-    // The recorded gap is currently fulfilled: the KC has a canonically
-    // servable question today, so this miss no longer represents open
-    // acquisition work. Keep the event row; re-dispatch resumes if the pool
-    // drains before the miss window expires.
-    if (demand.memberCount > 0) continue;
     let profile = resolveSubjectProfile(null);
     try {
       profile = resolveSubjectProfile(demand.miss.subject_id);

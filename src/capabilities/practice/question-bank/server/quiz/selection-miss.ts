@@ -80,18 +80,47 @@ export interface SelectionMissDemand {
   eventId: string;
   recordedAt: Date;
   miss: SelectionMissV1;
-  /**
-   * Canonically servable pool members for this KC right now (kernel
-   * readServablePoolMembership). `memberCount > 0` means the gap the miss
-   * recorded is currently fulfilled — the KC has servable questions today — so
-   * a supply consumer should not treat the miss as still-open acquisition work.
-   * The miss row is kept: if the pool drains again before the window expires
-   * the same miss resurfaces as unfulfilled on the next read.
-   */
-  memberCount: number;
 }
 
-/** Latest selection_miss per knowledge inside the supply evidence window. A bad payload is skipped. */
+// Reasons whose recorded demand is only "the pool had no servable item". For
+// these, one canonically servable member fulfils the recorded gap. Constrained
+// axes (kind/difficulty/source/family/scorability/quarantine) and
+// INSUFFICIENT_ELIGIBLE_ITEMS can't be re-evaluated from `any member exists`
+// alone, so they stay open until a reason-aware projection exists — fail closed.
+const UNCONSTRAINED_EMPTY_REASONS = new Set<SelectionMissV1['reason']>([
+  'NO_ALLOWED_USE_ITEM',
+  'NO_ACCESSIBLE_ITEM',
+  'NO_INDEPENDENT_FAMILY',
+]);
+
+// The recorded constraint set only has to be self-consistent for an
+// absolute-empty miss: every evaluated count is 0. A row that fails this check
+// is ambiguous — retain it rather than guess it was empty.
+function isConsistentAbsoluteEmpty(miss: SelectionMissV1): boolean {
+  if (miss.selection_policy_version !== DEFAULT_SELECTION_POLICY_VERSION) return false;
+  if (!UNCONSTRAINED_EMPTY_REASONS.has(miss.reason)) return false;
+  const constraints = miss.evaluated_constraints;
+  return (
+    constraints.candidate_count === 0 &&
+    constraints.near_difficulty_count === 0 &&
+    constraints.required_kind_count === 0 &&
+    constraints.trusted_source_count === 0 &&
+    constraints.accessible_count === 0 &&
+    constraints.scorable_count === 0 &&
+    (constraints.independent_family_count === 0 || constraints.independent_family_count === null) &&
+    (constraints.exposed_family_count === 0 || constraints.exposed_family_count === null) &&
+    constraints.quarantined_count === 0
+  );
+}
+
+/**
+ * Latest selection_miss per knowledge inside the supply evidence window whose
+ * recorded gap is still open. A bad payload is skipped. A miss closes only when
+ * its recorded evidence proves an unconstrained empty pool (known absolute-empty
+ * reason + known selection policy + consistent zero candidate count) and the KC
+ * now has a canonically servable member; constrained reasons, unknown policy
+ * versions, and ambiguous constraint shapes stay open.
+ */
 export async function readOpenSelectionMissDemands(
   db: DbLike,
   now: Date,
@@ -117,17 +146,21 @@ export async function readOpenSelectionMissDemands(
     }
     if (seen.has(miss.knowledge_id)) continue;
     seen.add(miss.knowledge_id);
-    demands.push({ eventId: row.id, recordedAt: row.created_at, miss, memberCount: 0 });
+    demands.push({ eventId: row.id, recordedAt: row.created_at, miss });
   }
   // Fulfillment = same current eligible pool the variant-rotation prefetch
-  // serves from. A KC with ≥1 admitted member has its recorded gap satisfied;
-  // keep the event row (day history unchanged) and let the consumer drop it.
+  // serves from (kernel servable-pool membership). Only a proven unconstrained
+  // empty miss closes on memberCount > 0; the event row is kept either way, so
+  // a pool that drains before the window expires resurfaces on the next read.
   const membership = await readServablePoolMembership(
     db,
     demands.map((demand) => demand.miss.knowledge_id),
   );
-  for (const demand of demands) {
-    demand.memberCount = membership.memberCount.get(demand.miss.knowledge_id) ?? 0;
-  }
-  return demands;
+  return demands.filter(
+    (demand) =>
+      !(
+        isConsistentAbsoluteEmpty(demand.miss) &&
+        (membership.memberCount.get(demand.miss.knowledge_id) ?? 0) > 0
+      ),
+  );
 }

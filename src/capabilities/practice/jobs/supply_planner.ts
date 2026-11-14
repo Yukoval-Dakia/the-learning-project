@@ -378,10 +378,7 @@ export async function runSupplyPlanner(
     })),
     jyeoo_budget_remaining: jyeooRemaining,
     selection_misses: selectionMisses
-      // Fulfilled misses (a canonically servable question exists for the KC
-      // today) are no longer open acquisition work; the planner prompt must not
-      // re-request them. The ledger rows stay for history.
-      .filter((row) => liveKnowledgeIds.has(row.miss.knowledge_id) && row.memberCount === 0)
+      .filter((row) => liveKnowledgeIds.has(row.miss.knowledge_id))
       .map((row) => ({
         knowledge_id: row.miss.knowledge_id,
         subject_id: row.miss.subject_id,
@@ -484,7 +481,7 @@ export async function runSupplyPlanner(
   }
   const missByKnowledge = new Map(
     selectionMisses
-      .filter((row) => liveKnowledgeIds.has(row.miss.knowledge_id) && row.memberCount === 0)
+      .filter((row) => liveKnowledgeIds.has(row.miss.knowledge_id))
       .map((row) => [row.miss.knowledge_id, row]),
   );
   if (acceptedPlan !== null) {
