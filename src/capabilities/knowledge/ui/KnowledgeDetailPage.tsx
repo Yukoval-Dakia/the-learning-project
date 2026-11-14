@@ -269,10 +269,12 @@ export default function KnowledgeDetailPage({
             <RotateCcw size={16} aria-hidden="true" />
             复习此点
           </Button>
-          <Button onClick={() => navigate(`/practice?kc=${encodeURIComponent(node.id)}`)}>
-            <Target size={16} aria-hidden="true" />
-            针对此点练习
-          </Button>
+          {node.role === 'kc' && (
+            <Button onClick={() => navigate(`/practice?kc=${encodeURIComponent(node.id)}`)}>
+              <Target size={16} aria-hidden="true" />
+              针对此点练习
+            </Button>
+          )}
         </div>
       </header>
 
