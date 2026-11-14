@@ -49,6 +49,10 @@ export type SlotPlacementT = z.infer<typeof SlotPlacement>;
 const SlotId = z.string().min(1);
 const PartId = z.string().min(1);
 
+// Absent on historical snapshots: serving must prove independence from their
+// complete frozen content. Never default this into old digests.
+const ChoiceOrder = z.enum(['independent', 'fixed']).optional();
+
 // ---------- 槽位原语（discriminated on `kind`） ----------
 
 // 每个槽位显式声明所属 part —— issuance 选择 part 子集时，
@@ -65,6 +69,7 @@ export const SingleChoiceSlot = z.object({
   ...slotBase,
   kind: z.literal('single_choice'),
   options: z.array(ResponseOption).min(2),
+  choice_order: ChoiceOrder,
 });
 
 /** 多选：显式 min/max 约束（≤ options.length）。 */
@@ -72,6 +77,7 @@ export const MultiChoiceSlot = z.object({
   ...slotBase,
   kind: z.literal('multi_choice'),
   options: z.array(ResponseOption).min(2),
+  choice_order: ChoiceOrder,
   min_select: z.number().int().min(1),
   max_select: z.number().int().min(1),
 });
@@ -212,6 +218,7 @@ export const SelectSlot = z.object({
   ...slotBase,
   kind: z.literal('select'),
   items: z.array(SelectItem).min(1),
+  choice_order: ChoiceOrder,
   /** 关系维度（配对 left/right、排序 position/object）；item.coordinates 引用这里的 id。 */
   axes: z.record(z.string(), z.array(SelectAxisEntry).min(1)).optional(),
   /** 每个维度值最多出现几次（一对一配对：{left:1,right:1}）。是输入语义，不是给分规则。 */

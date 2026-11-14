@@ -896,11 +896,13 @@ function legacyChoiceUnitFaithful(stored: ScoringUnitT, canonical: ScoringUnitT)
  * select_key + the printed set rule; any other dropped or rewritten field counts as
  * a scoring change.
  */
-/** Relation axes are display order, not scoring input: right/object arrays are compared
- *  by id so a historical revision whose frozen order predates the display permutation is
- *  still a faithful round trip. Every other slot field stays byte-strict. */
+/** Relation display order and publication-derived choice safety are not scoring
+ * inputs. Authoring round trips must preserve every other slot field. */
 function scoringSlotEqual(stored: ResponseSlotT, canonical: ResponseSlotT): boolean {
-  return stableJson(sortRelationAxes(stored)) === stableJson(sortRelationAxes(canonical));
+  return (
+    stableJson({ ...sortRelationAxes(stored), choice_order: undefined }) ===
+    stableJson({ ...sortRelationAxes(canonical), choice_order: undefined })
+  );
 }
 
 function sortRelationAxes(slot: ResponseSlotT): ResponseSlotT {

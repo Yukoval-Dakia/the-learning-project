@@ -17,8 +17,8 @@ import { QuestionGroupStructure } from './structure';
 // 的明确引用（§3.1）—— 归一化可能重建树 ID，digest 不因 archive 改变（§3.2）。
 //
 // 发题（issuance）时绑定 revision、目标 part、实际材料与选项展示映射；
-// 不能提交时再取 latest（§3.1）。新 serve 默认不 shuffle（§7.3）——
-// “以上都对”/引用字母选项保持原顺序。
+// 不能提交时再取 latest（§3.1）。只有发布时确认可换序的普通选择槽由发题
+// owner 派生新顺序；旧版先从冻结内容确认安全，“以上都对”/引用字母选项保序。
 
 /** 发布版本包络：结构 + 作答要求 + 评分依据 + 执行计划一起版本化。 */
 export const PublishedQuestionRevision = z.object({

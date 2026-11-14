@@ -15,7 +15,7 @@ import {
 // issuance_id_conflict。锁序：question 组根行 FOR UPDATE → 组快照读。
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
 // jsonb reorders keys, so binding equality must canonicalize; otherwise every
 // retry would be misread as a conflict.
@@ -35,6 +35,8 @@ import {
   projectPracticeIssuance,
   validateIssuanceBinding,
 } from '@/core/schema/assessment';
+import { isPlainChoice, resolveChoiceOrder } from '@/core/schema/assessment/choice-order';
+import { orderableOptionIds } from '@/core/schema/assessment/revision';
 import type {
   AutomaticServingDecision,
   ServingUnavailableReason,
@@ -44,6 +46,7 @@ import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import {
   assessment_issuance,
+  event,
   learning_session,
   question,
   question_block,
@@ -510,15 +513,59 @@ async function issueAssessmentInternal(
     }
 
     const revision = revisionRowToContract(revRow);
-    const binding = deriveIssuanceBinding(revision, {
-      part_ids: request.part_ids ?? existingIssuance?.part_ids,
-      option_order_overrides:
-        request.option_order_overrides ??
+    const optionOverrides = {
+      ...(request.option_order_overrides ??
         (existingIssuance
           ? Object.fromEntries(
               existingIssuance.option_order.map((order) => [order.slot_id, order.option_ids]),
             )
-          : undefined),
+          : {})),
+    };
+    if (!capture && !existingIssuance) {
+      for (const slot of resolveChoiceOrder(
+        revision.structure,
+        revision.response_spec,
+        revision.presentation,
+        revision.scoring_basis,
+      ).slots) {
+        if (
+          !isPlainChoice(slot) ||
+          !('choice_order' in slot) ||
+          slot.choice_order !== 'independent' ||
+          optionOverrides[slot.slot_id] != null ||
+          (request.part_ids && !request.part_ids.includes(slot.part_id))
+        )
+          continue;
+        const declared = orderableOptionIds(slot);
+        if (!declared || declared.length < 2) continue;
+        // The group-root lock serializes order selection and insertion. Event sequence
+        // resolves ties even when distinct occurrences share an issued_at timestamp.
+        const [previous] = await tx
+          .select({ orders: assessment_issuance.option_order })
+          .from(assessment_issuance)
+          .innerJoin(
+            event,
+            and(
+              eq(event.subject_id, assessment_issuance.issuance_id),
+              eq(event.action, ASSESSMENT_ISSUANCE_ACTION),
+            ),
+          )
+          .where(
+            and(
+              eq(assessment_issuance.revision_id, revision.revision_id),
+              sql`${assessment_issuance.option_order} @> ${JSON.stringify([{ slot_id: slot.slot_id }])}::jsonb`,
+            ),
+          )
+          .orderBy(desc(event.dispatch_seq))
+          .limit(1);
+        const prior = previous?.orders.find((order) => order.slot_id === slot.slot_id)?.option_ids;
+        const order = prior ?? declared;
+        optionOverrides[slot.slot_id] = [...order.slice(1), order[0]];
+      }
+    }
+    const binding = deriveIssuanceBinding(revision, {
+      part_ids: request.part_ids ?? existingIssuance?.part_ids,
+      option_order_overrides: optionOverrides,
     });
     const bindingIssues = validateIssuanceBinding(binding, revision);
     if (bindingIssues.length > 0) {
