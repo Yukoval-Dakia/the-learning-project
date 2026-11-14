@@ -188,10 +188,16 @@ describe('formal manual candidate and atomic activation', () => {
     const response = await send();
     expect(response.status).toBe(201);
     const result = await response.json();
+    const issuedSlot = issued.practice_dto.response_spec.slots[0];
+    if (issuedSlot.kind !== 'single_choice') throw new Error('seed: expected single_choice');
+    const correctOption = issuedSlot.options.find(
+      (option) => option.option_id === pub.optionIds[1],
+    );
+    if (!correctOption) throw new Error('seed: issued options missing stable id');
     expect(result).toMatchObject({
       status: 'effective',
       judge: { coarse_outcome: 'incorrect' },
-      revealed_solution_md: 'B',
+      revealed_solution_md: `${correctOption.label}. ${correctOption.text}`,
     });
     expect(await testDb().select().from(learning_session)).toMatchObject([
       { id: session.sessionId, status: 'judged' },
@@ -257,7 +263,13 @@ describe('reveal_answer assistance recording', () => {
       issuance_id: issued.issuance.issuance_id,
     });
     if (revealed.status !== 'revealed') throw new Error(revealed.status);
-    expect(revealed.reference_md).toContain('B');
+    const issuedSlot = issued.practice_dto.response_spec.slots[0];
+    if (issuedSlot.kind !== 'single_choice') throw new Error('seed: expected single_choice');
+    const correctOption = issuedSlot.options.find(
+      (option) => option.option_id === pub.optionIds[1],
+    );
+    if (!correctOption) throw new Error('seed: issued options missing stable id');
+    expect(revealed.reference_md).toContain(`${correctOption.label}. ${correctOption.text}`);
     expect(revealed.prompt_md.length).toBeGreaterThan(0);
     expect(revealed.practice_dto.issuance_id).toBe(issued.issuance.issuance_id);
 

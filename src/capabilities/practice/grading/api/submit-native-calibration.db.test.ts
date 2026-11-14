@@ -74,7 +74,7 @@ async function fixture(knowledgeId = `kc_${createId()}`) {
     signals: {},
   });
   const issued = await issueSoloFixture(db, id);
-  const assessment = issued.assessment('A');
+  const assessment = issued.assessment('固定水量，只改变坡度');
   const submit = (extra: Record<string, unknown> = {}) =>
     createAttempt(
       new Request('http://local/api/attempts', {

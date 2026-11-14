@@ -13,14 +13,20 @@ it('appends once, recognizes a matching digest, and marks a changed layer stale'
   const db = testDb();
   const c = norm.normalizeQuestionRowToContract(JSON.parse(RAW) as norm.NormalizableQuestionRow);
   c.response_spec.slots[0].placement = { row: 0, col: 0, label: '1' };
-  const canonical = norm.publishedContractSeal(c).canonical;
   const q = (layer: object) => JSON.stringify(layer).replaceAll("'", "''");
   await db.$client.unsafe(
     `insert into question (id,kind,prompt_md,source,created_at,updated_at) values ('q','x','x','m',now(),now()); insert into question_revision (revision_id,group_id,revision_ordinal,integrity_digest,structure,response_spec,scoring_basis,execution_plan,availability,published_at) values ('r','q',1,'${norm.contractIntegrityDigest(c)}','${q(c.structure)}'::jsonb,'${q(c.response_spec)}'::jsonb,'${q(c.scoring_basis)}'::jsonb,'${q(c.execution_plan)}'::jsonb,'general_pool',now()); insert into question_group_lifecycle (group_id,current_revision_id,availability,scoring_admission_state,scoring_admission_withheld_reason,claim_policy,created_at,updated_at) values ('q','r','general_pool','withheld','unverified_rules','unbounded',now(),now())`,
   );
   const first = await reseal(db, { apply: true });
   const id = first.appended_rows[0].to_revision_id;
-  const job = { question_id: 'q', revision_id: id, expected_revision_digest: canonical };
+  const [stored] = await db.$client.unsafe<{ integrity_digest: string }[]>(
+    `select integrity_digest from question_revision where revision_id = '${id}'`,
+  );
+  const job = {
+    question_id: 'q',
+    revision_id: id,
+    expected_revision_digest: stored.integrity_digest,
+  };
   const stop = async () => Promise.reject(new Error('stop'));
   expect([first.appended, (await reseal(db, { apply: true })).appended]).toEqual([1, 0]);
   expect((await run(db, job, { id: 'd1' }, { runTask: stop })).status).toBe('withheld');
