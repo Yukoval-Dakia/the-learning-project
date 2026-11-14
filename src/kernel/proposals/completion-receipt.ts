@@ -77,7 +77,6 @@ export async function completionReceiptDisplayAllowed(
   receipt: CompletionReceipt,
   subjectKind: 'learning_item' | 'goal' = 'learning_item',
 ): Promise<boolean> {
-  if (!(await completionSourcesCurrent(db, receipt.sources))) return false;
   let ids: string[];
   let sourceRef: string | null;
   let goalNodes: Array<typeof knowledge.$inferSelect> = [];
@@ -159,6 +158,7 @@ export async function completionReceiptDisplayAllowed(
         )
     : [];
   if (births.length !== new Set(ids).size) return false;
+  if (!(await completionSourcesCurrent(db, receipt.sources))) return false;
   const roots = [
     ...receipt.sources.nodes,
     ...births.map((b) => ({ kind: 'event' as const, id: b.anchor_event_id })),
