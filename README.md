@@ -209,6 +209,53 @@ dev 拓扑必须 api（含 Vite 前门）+ worker 两进程齐活（YUK-321 M5 �
 LOCAL_NEXT_PORT=<dev 端口> INTERNAL_TOKEN=<dev:local 打印值> pnpm smoke:local
 ```
 
+### Owned throwaway runtime (evidence runs)
+
+`pnpm owned:practice` runs one self-contained evidence case against a throwaway
+Postgres it creates and removes itself — no dev Postgres, no TEST, no `.env`, no
+provider credentials. Each run owns a `pgvector/pgvector:pg16` container on the
+local OrbStack unix socket (`~/.orbstack/run/docker.sock` or
+`OWNED_DOCKER_SOCK=/abs/path`), capped at 768MiB/1CPU, bound to a random
+127.0.0.1 port (5433/5434/5544/8787 excluded), labelled `tlp.owner=<run id>`.
+The entry holds one local-heavy slot for the whole PG lifetime, applies the
+real `scripts/migrate.ts` + contract-epoch activation, runs the trusted
+workload module under tsx with this worktree's tsconfig, then removes only the
+owned container + volume after re-verifying ownership labels. A workload
+failure or a cleanup miss exits nonzero — never upgraded to PASS.
+The entry refuses to start while any repo-private `.env*` file is present
+(`*.example` excepted): `loadEnv` in a child would otherwise fill unset keys
+from real credentials and bypass the allowlisted env. Each spawned child leads
+its own process group; SIGINT/SIGTERM kill the tracked child *groups* (a
+leader's exit does not end its group — a same-group descendant can outlive it)
+and unwind the same cleanup path — the owned Postgres is still removed, the
+exit just stays nonzero.
+
+```bash
+pnpm owned:practice --evidence-dir /abs/run --case /abs/workload.mts [--server]
+```
+
+`--server` also boots the already-built `dist/server.cjs` on a random loopback
+port and exports `OWNED_API_BASE` + `OWNED_API_PORT`. Injected before the case
+module loads: `DATABASE_URL` (owned), `INTERNAL_TOKEN` (fresh per run),
+`OWNED_OUT`, `OWNED_RUN_ID`, `OWNED_PG_PORT`, `OWNED_REPO_BASE`,
+`OWNED_FIXTURE` (the canonical fixture helper path). A preload guard confines
+child traffic to those two loopback ports, denies `$HOME/.*` credential reads
+and repo `.env*` reads (copy/stream included), denies outbound fetch without
+retaining the URL, and falls back bare-specifier resolution to this repo so
+the case can `import postgres from 'postgres'` and `import ... from '@/...'`
+or `'#owned-fixture'`. Evidence dir gets raw stdout/stderr per stage,
+`pins.json` (source/package/lock/bundle shas + head), `commands.json`,
+`timings.json`, `container.json`, `cleanup.json` and `finish.json`.
+
+`createCanonicalPracticeFixture(db, {tag, items, key})` in
+`scripts/lib/owned-fixture.ts` drives one synthetic choice group through the
+real manual import → `publishQuestionGroup` → epoch path and returns the actual
+stored `integrity_digest`, revision id and stable ids; callers then issue as
+many real `issueAssessment` occurrences as the scenario needs (never fake
+admission/seal/mastery). Dirty-tree runs are refused unless every dirty file
+sits inside this owned-runtime's own file set; the working diff is pinned into
+evidence either way.
+
 模型能力目录（YUK-924 / YUK-1563）：worker 启动时和每天从 models.dev 拉取
 `api.json`，写入 `model_catalog_cache`（`src/server/boss/start-worker.ts`）。API 启动时
 也从该行 hydrate，并每 60 秒检查 version 变化后重载（`server/index.ts`
