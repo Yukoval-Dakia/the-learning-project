@@ -292,7 +292,7 @@ function TaskFailureAlertsPanel({
           flush
         >
           <div className="adm-table-scroll">
-            <table className="adm-table">
+            <table className="adm-table adm-table-wide">
               <thead>
                 <tr>
                   <th scope="col">影响</th>
@@ -336,7 +336,7 @@ function TaskFailureAlertsPanel({
           flush
         >
           <div className="adm-table-scroll">
-            <table className="adm-table">
+            <table className="adm-table adm-table-wide">
               <thead>
                 <tr>
                   <th scope="col">进程</th>
