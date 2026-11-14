@@ -57,6 +57,7 @@ import {
   putWorksheetExportPdf,
   worksheetPdfBlobKey,
 } from '@/capabilities/practice/session/server/worksheet/pdf-store';
+import { resolveWorksheetRenderAppOrigin } from '@/core/config/server/env';
 import type { Db } from '@/db/client';
 
 // src/ui/lib/api.ts TOKEN_STORAGE_KEY —— 打印页的 /api 调用从这里读 token。
@@ -89,6 +90,10 @@ const RENDER_DEADLINE_MS = 180_000;
 /** loopback 与 compose 内部服务名；不接受来自 job 数据或 env 的任意外站。 */
 const ALLOWED_RENDER_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]', 'app']);
 
+/**
+ * worker-side boot origin: unset -> localhost; explicit empty -> permanent failure;
+ * non-empty is schema-parsed before the same host allowlist runs.
+ */
 function resolveRenderOrigin(raw: string): string {
   let url: URL;
   try {
@@ -437,8 +442,18 @@ export async function runWorksheetRender(
   deps: { appOrigin?: string; internalToken?: string; signal?: AbortSignal } = {},
 ): Promise<WorksheetRenderResult> {
   try {
-    const appOrigin =
-      deps.appOrigin ?? process.env.WORKSHEET_RENDER_APP_ORIGIN?.trim() ?? 'http://localhost:8787';
+    let appOrigin: string;
+    try {
+      appOrigin =
+        deps.appOrigin ?? resolveWorksheetRenderAppOrigin(process.env.WORKSHEET_RENDER_APP_ORIGIN);
+    } catch (error) {
+      throw new WorksheetRenderPermanentError(
+        'worksheet_render: WORKSHEET_RENDER_APP_ORIGIN is invalid',
+        {
+          cause: error,
+        },
+      );
+    }
     if (appOrigin === '') {
       throw new WorksheetRenderPermanentError(
         'worksheet_render: WORKSHEET_RENDER_APP_ORIGIN is empty',

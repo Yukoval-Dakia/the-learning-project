@@ -32,6 +32,7 @@ const server = {
   COPILOT_SUBAGENT_ENABLED: optionalString,
   DASHSCOPE_API_KEY: optionalString,
   DATABASE_URL: z.string().url(),
+  DB_POOL_MAX: optionalString,
   DELIVERY_API_BASE: optionalString,
   DELIVERY_API_PORT: optionalString,
   DOCKER_HOST: optionalString,
@@ -192,6 +193,7 @@ export const BOOT_ENV_OWNERS = {
   COPILOT_SUBAGENT_ENABLED: 'hot',
   DASHSCOPE_API_KEY: 'secret',
   DATABASE_URL: 'boot',
+  DB_POOL_MAX: 'boot',
   DELIVERY_API_BASE: 'script',
   DELIVERY_API_PORT: 'script',
   DOCKER_HOST: 'test',
@@ -324,6 +326,33 @@ export function resolveApiPort(rawApiPort: string | undefined): number {
     throw new Error(`API_PORT must be a positive integer, got: ${JSON.stringify(rawApiPort)}`);
   }
   return parsed;
+}
+
+/**
+ * Single parse point for the restart-only Postgres pool cap. This stays independent
+ * from getServerEnv because audits and boot preparation may parse it before DATABASE_URL exists.
+ */
+export function resolveDbPoolMax(rawPoolMax: string | undefined): number | undefined {
+  if (rawPoolMax === undefined || rawPoolMax === '') return undefined;
+  const trimmed = rawPoolMax.trim();
+  if (trimmed === '')
+    throw new Error(`DB_POOL_MAX must be a positive integer, got: ${JSON.stringify(rawPoolMax)}`);
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`DB_POOL_MAX must be a positive integer, got: ${JSON.stringify(rawPoolMax)}`);
+  }
+  return parsed;
+}
+
+/**
+ * Single parse point for the worker-side print-page origin. Empty is a deliberate
+ * permanent failure; unset keeps the local default.
+ */
+export function resolveWorksheetRenderAppOrigin(rawOrigin: string | undefined): string {
+  if (rawOrigin === undefined) return 'http://localhost:8787';
+  const trimmed = rawOrigin.trim();
+  if (trimmed === '') return '';
+  return z.string().url().parse(trimmed);
 }
 
 export type BossAutomationMode = 'enabled' | 'disabled';
