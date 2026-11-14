@@ -7,13 +7,16 @@ type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
 
 export type CorrectionStatus =
-  // 'active' carries the latest winning receipt id when one exists (a restore
-  // leaves the target active *because of* that receipt). Callers that compare a
-  // specific correction's recency need it; state-only readers are unaffected.
-  | { state: 'active'; correction_event_id: string | null; replacement_event_id: null }
+  | { state: 'active'; correction_event_id: null; replacement_event_id: null }
   | { state: 'retracted'; correction_event_id: string; replacement_event_id: null }
   | { state: 'marked_wrong'; correction_event_id: string; replacement_event_id: null }
   | { state: 'superseded'; correction_event_id: string; replacement_event_id: string };
+
+/** Canonical state plus the receipt that won the timestamp/dispatch/id fold. */
+export interface CorrectionStatusWithReceipt {
+  readonly status: CorrectionStatus;
+  readonly winning_correction_event_id: string | null;
+}
 
 export function activeCorrectionStatus(): CorrectionStatus {
   return { state: 'active', correction_event_id: null, replacement_event_id: null };
@@ -72,9 +75,23 @@ export async function getCorrectionStatuses(
   targetEventIds: string[],
   opts: { createdBefore?: Date } = {},
 ): Promise<Map<string, CorrectionStatus>> {
+  const receipts = await getCorrectionStatusesWithReceipts(db, targetEventIds, opts);
+  return new Map([...receipts].map(([targetEventId, receipt]) => [targetEventId, receipt.status]));
+}
+
+export async function getCorrectionStatusesWithReceipts(
+  db: DbLike,
+  targetEventIds: string[],
+  opts: { createdBefore?: Date } = {},
+): Promise<Map<string, CorrectionStatusWithReceipt>> {
   const ids = Array.from(new Set(targetEventIds));
-  const statuses = new Map<string, CorrectionStatus>();
-  for (const id of ids) statuses.set(id, activeCorrectionStatus());
+  const statuses = new Map<string, CorrectionStatusWithReceipt>();
+  for (const id of ids) {
+    statuses.set(id, {
+      status: activeCorrectionStatus(),
+      winning_correction_event_id: null,
+    });
+  }
   if (ids.length === 0) return statuses;
 
   const rows = await db
@@ -107,31 +124,39 @@ export async function getCorrectionStatuses(
     switch (correction_kind) {
       case 'retract':
         statuses.set(targetEventId, {
-          state: 'retracted',
-          correction_event_id: row.id,
-          replacement_event_id: null,
+          status: {
+            state: 'retracted',
+            correction_event_id: row.id,
+            replacement_event_id: null,
+          },
+          winning_correction_event_id: row.id,
         });
         break;
       case 'mark_wrong':
         statuses.set(targetEventId, {
-          state: 'marked_wrong',
-          correction_event_id: row.id,
-          replacement_event_id: null,
+          status: {
+            state: 'marked_wrong',
+            correction_event_id: row.id,
+            replacement_event_id: null,
+          },
+          winning_correction_event_id: row.id,
         });
         break;
       case 'supersede':
         if (!replacement_event_id) continue;
         statuses.set(targetEventId, {
-          state: 'superseded',
-          correction_event_id: row.id,
-          replacement_event_id,
+          status: {
+            state: 'superseded',
+            correction_event_id: row.id,
+            replacement_event_id,
+          },
+          winning_correction_event_id: row.id,
         });
         break;
       case 'restore':
         statuses.set(targetEventId, {
-          state: 'active',
-          correction_event_id: row.id,
-          replacement_event_id: null,
+          status: activeCorrectionStatus(),
+          winning_correction_event_id: row.id,
         });
         break;
     }

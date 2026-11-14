@@ -12,7 +12,11 @@ import { canonicalHash } from '@/core/migration/canonical';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { cause_category_overlay, event } from '@/db/schema';
-import { getCorrectionStatuses, writeEvent } from '@/kernel/events';
+import {
+  getCorrectionStatuses,
+  getCorrectionStatusesWithReceipts,
+  writeEvent,
+} from '@/kernel/events';
 import {
   lockEventCorrectionSource,
   lockEventCorrectionsAll,
@@ -515,7 +519,7 @@ export const causeCategoryProposalRetractApplier: ProposalRetractApplier = async
     // Canonical fold, under the locks: the winning receipt id per target. A
     // learner mark_wrong/retract (or restore) committed after the accept is the
     // current correction truth — the recheck below never overwrites it.
-    const statuses = await getCorrectionStatuses(tx, undoTargets);
+    const receipts = await getCorrectionStatusesWithReceipts(tx, undoTargets);
     for (const outcome of relabelOutcomes) {
       if (
         !outcome ||
@@ -541,10 +545,11 @@ export const causeCategoryProposalRetractApplier: ProposalRetractApplier = async
           typeof (outcome as { correction_event_id?: unknown }).correction_event_id === 'string'
             ? (outcome as { correction_event_id: string }).correction_event_id
             : null;
-        const originalStatus = statuses.get(original_event_id);
+        const originalReceipt = receipts.get(original_event_id);
         if (
-          originalStatus !== undefined &&
-          originalStatus.correction_event_id === acceptCorrectionId
+          originalReceipt?.status.state === 'superseded' &&
+          originalReceipt.status.correction_event_id === acceptCorrectionId &&
+          originalReceipt.winning_correction_event_id === acceptCorrectionId
         ) {
           // Restore the original first: its latest correction becomes 'restore',
           // so it returns to 'active' — before the replacement is retracted the
@@ -572,11 +577,10 @@ export const causeCategoryProposalRetractApplier: ProposalRetractApplier = async
         // still in this accept's materialized state. A learner mark_wrong /
         // retract / restore on it is the current truth and must not be
         // cancelled by a stale revert.
-        const replacementStatus = statuses.get(replacement_event_id);
+        const replacementReceipt = receipts.get(replacement_event_id);
         if (
-          replacementStatus !== undefined &&
-          replacementStatus.state === 'active' &&
-          replacementStatus.correction_event_id === null
+          replacementReceipt?.status.state === 'active' &&
+          replacementReceipt.winning_correction_event_id === null
         ) {
           await writeEvent(tx, {
             id: `evt_cause_relabel_revert_${canonicalHash({ proposal: input.proposalId, replacement: replacement_event_id }).slice(0, 24)}`,

@@ -12,7 +12,7 @@ import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { cause_category_overlay } from '@/db/schema/knowledge';
-import { getCorrectionStatuses } from '@/kernel/events';
+import { getCorrectionStatusesWithReceipts } from '@/kernel/events';
 import {
   lockEventCorrectionSource,
   lockEventCorrectionsAll,
@@ -60,8 +60,6 @@ interface CauseCheck {
   readonly categoryId: string;
   /** Event ids this accept's own effect materialized; not "later" content. */
   readonly ownEventIds: ReadonlySet<string>;
-  /** This accept's supersede correction ids; restoring any other correction is learner loss. */
-  readonly ownSupersedeIds: ReadonlySet<string>;
   /** Original → replacement event pairs the accept wrote. */
   readonly relabelledPairs: readonly RelabelledPair[];
 }
@@ -85,23 +83,10 @@ function ownRelabelEventIds(ratePayload: unknown): ReadonlySet<string> {
   return ids;
 }
 
-/** This accept's own supersede correction ids; only these may be "restored" away by undo. */
-function ownSupersedeCorrectionIds(ratePayload: unknown): ReadonlySet<string> {
-  const outcomes = (ratePayload as { relabel_outcomes?: unknown } | undefined)?.relabel_outcomes;
-  const ids = new Set<string>();
-  if (!Array.isArray(outcomes)) return ids;
-  for (const outcome of outcomes) {
-    if (!outcome || typeof outcome !== 'object') continue;
-    if ((outcome as { status?: unknown }).status !== 'relabelled') continue;
-    const value = (outcome as Record<string, unknown>).correction_event_id;
-    if (typeof value === 'string' && value.length > 0) ids.add(value);
-  }
-  return ids;
-}
-
 interface RelabelledPair {
   readonly originalId: string;
-  readonly replacementId: string;
+  readonly replacementId: string | null;
+  readonly supersedeCorrectionId: string | null;
 }
 
 /** Original → replacement pairs this accept materialized, for the learner-correction block. */
@@ -114,11 +99,16 @@ function ownRelabelledPairs(ratePayload: unknown): RelabelledPair[] {
     if ((outcome as { status?: unknown }).status !== 'relabelled') continue;
     const originalId = (outcome as Record<string, unknown>).original_event_id;
     const replacementId = (outcome as Record<string, unknown>).replacement_event_id;
+    const supersedeCorrectionId = (outcome as Record<string, unknown>).correction_event_id;
     if (typeof originalId === 'string' && originalId.length > 0) {
       pairs.push({
         originalId,
         replacementId:
-          typeof replacementId === 'string' && replacementId.length > 0 ? replacementId : '',
+          typeof replacementId === 'string' && replacementId.length > 0 ? replacementId : null,
+        supersedeCorrectionId:
+          typeof supersedeCorrectionId === 'string' && supersedeCorrectionId.length > 0
+            ? supersedeCorrectionId
+            : null,
       });
     }
   }
@@ -141,7 +131,6 @@ async function inspectCauseCategories(
       proposalId: input.proposalId,
       categoryId,
       ownEventIds: ownRelabelEventIds(input.ratePayload),
-      ownSupersedeIds: ownSupersedeCorrectionIds(input.ratePayload),
       relabelledPairs: ownRelabelledPairs(input.ratePayload),
     });
   }
@@ -220,24 +209,23 @@ async function inspectCauseCategories(
       const targetIds = check.relabelledPairs.flatMap((pair) =>
         pair.replacementId ? [pair.originalId, pair.replacementId] : [pair.originalId],
       );
-      const statuses = await getCorrectionStatuses(db, targetIds);
+      const receipts = await getCorrectionStatusesWithReceipts(db, targetIds);
       const originalLearnerCorrected = check.relabelledPairs.some((pair) => {
-        const status = statuses.get(pair.originalId);
+        const receipt = receipts.get(pair.originalId);
         return (
-          status === undefined ||
-          status.correction_event_id === null ||
-          !check.ownSupersedeIds.has(status.correction_event_id)
+          receipt?.status.state !== 'superseded' ||
+          receipt.status.correction_event_id !== pair.supersedeCorrectionId ||
+          receipt.winning_correction_event_id !== pair.supersedeCorrectionId
         );
       });
       if (originalLearnerCorrected) {
         verdicts.set(check.proposalId, block('relabelled_original_learner_corrected'));
       } else {
         const replacementLearnerCorrected = check.relabelledPairs.some((pair) => {
-          if (!pair.replacementId) return false;
-          const status = statuses.get(pair.replacementId);
-          return (
-            status === undefined || status.state !== 'active' || status.correction_event_id !== null
-          );
+          const replacementId = pair.replacementId;
+          if (!replacementId) return false;
+          const receipt = receipts.get(replacementId);
+          return receipt?.status.state !== 'active' || receipt.winning_correction_event_id !== null;
         });
         if (replacementLearnerCorrected) {
           verdicts.set(check.proposalId, block('relabelled_replacement_learner_corrected'));
