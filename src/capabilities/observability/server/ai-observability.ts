@@ -23,18 +23,6 @@ async function withAdminRunReadSnapshot<T>(
       accessMode: 'read only',
     });
   }
-
-  const settings = await db.execute<{ isolation: string; read_only: string }>(sql`
-    select current_setting('transaction_isolation') as isolation,
-           current_setting('transaction_read_only') as read_only
-  `);
-  const setting = settings[0];
-  if (
-    setting?.read_only !== 'on' ||
-    (setting.isolation !== 'repeatable read' && setting.isolation !== 'serializable')
-  ) {
-    throw new Error('admin run reads require a read-only snapshot transaction');
-  }
   return read(db);
 }
 

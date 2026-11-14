@@ -52,7 +52,8 @@ describe('admin run cost snapshot', () => {
         const detail = await getAdminRunTimeline(testDb(), runId);
         return {
           run: detail?.run,
-          timelineCostEvents: detail?.timeline.filter((event) => event.type === 'cost_ledger') ?? [],
+          timelineCostEvents:
+            detail?.timeline.filter((event) => event.type === 'cost_ledger') ?? [],
         };
       },
     },
@@ -80,7 +81,9 @@ describe('admin run cost snapshot', () => {
     await blockerReady.promise;
 
     let writerDone: Promise<boolean> | undefined;
-    let readDone: Promise<{ run?: { ledger_rows: number }; timelineCostEvents: unknown[] }> | undefined;
+    let readDone:
+      | Promise<{ run?: { ledger_rows: number }; timelineCostEvents: unknown[] }>
+      | undefined;
     try {
       writerDone = writeAiTaskAttemptFinished(db, {
         id: runId,
