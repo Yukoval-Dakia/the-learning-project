@@ -358,6 +358,7 @@ export interface ProposalCardProps {
 }
 
 const MERGE_BLOCKED_WORDS: Readonly<Record<string, string>> = {
+  completion_evidence_unavailable: '这条完成建议的依据暂不可用；可以忽略它。',
   blocks_missing: '找不到可以合并的题块。',
   session_mismatch: '这些题块和这条提议说的不是同一次录入。',
   unknown_source: '这些题块不是来自同一份资料，或者找不到原资料。',

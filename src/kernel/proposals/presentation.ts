@@ -651,10 +651,22 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
     summary: (payload) => {
       const change = recordOf(payload.proposed_change);
 
-      const signals = Array.isArray(change?.triggering_signals)
-        ? change.triggering_signals.map(readableToken).filter(Boolean).join('、')
-        : null;
-      return compact([summaryItem('建议', '标记学习项已完成'), summaryItem('依据', signals)]);
+      const summary = recordOf(change?.completion_summary);
+      return summary
+        ? compact([
+            summaryItem('知识点', String(summary.knowledge_count)),
+            summaryItem(
+              '最低掌握度',
+              typeof summary.minimum_mastery === 'number'
+                ? `${Math.round(summary.minimum_mastery * 100)}%`
+                : null,
+            ),
+            summaryItem('各知识点独立答对证据', String(summary.minimum_evidence)),
+            summaryItem('截至', summary.observed_at),
+          ])
+        : [summaryItem('依据', '暂不可用')].filter(
+            (item): item is ProposalSummaryItem => item !== null,
+          );
     },
   },
   relearn: {

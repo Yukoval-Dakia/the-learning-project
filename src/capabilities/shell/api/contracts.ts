@@ -180,6 +180,7 @@ export const ProposalInboxRowResponseSchema = z.object({
   // accept. Other kinds and non-pending rows are always null.
   not_acceptable_reason: z
     .enum([
+      'completion_evidence_unavailable',
       'blocks_missing',
       'not_draft',
       'session_mismatch',

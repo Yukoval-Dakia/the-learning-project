@@ -2,6 +2,12 @@ import { and, asc, desc, eq, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { artifact, completion_evidence, event, learning_item, learning_record } from '@/db/schema';
 import {
+  bindCompletionEvidenceRead,
+  completionReceiptDisplayAllowed,
+  completionReceiptSummary,
+  parseCompletionReceipt,
+} from '@/kernel/proposals/completion-receipt';
+import {
   bodyBlockSummaries,
   excerpt,
   knowledgeContext,
@@ -168,12 +174,30 @@ async function executeGetLearningItemContext(
       .where(eq(completion_evidence.learning_item_id, item.id))
       .orderBy(desc(completion_evidence.decided_at))
       .limit(20);
-    output.evidence = evidence.map((row) => ({
-      id: row.id,
-      path: row.path,
-      summary: excerpt(JSON.stringify(row.evidence_json), 160),
-      created_at: row.decided_at.toISOString(),
-    }));
+    output.evidence = [];
+    for (const row of evidence) {
+      const parsed = parseCompletionReceipt(row.evidence_json.accepted_receipt);
+      const original = parseCompletionReceipt(row.evidence_json.proposed_receipt);
+      const askId = ctx.learnerAskEventId ?? ctx.causedByEventId;
+      const taskRunId = ctx.logTaskRunId ?? ctx.taskRunId;
+      const allowed =
+        Boolean(askId && taskRunId) &&
+        parsed !== null &&
+        original !== null &&
+        (await completionReceiptDisplayAllowed(ctx.db, original)) &&
+        (await completionReceiptDisplayAllowed(ctx.db, parsed));
+      if (allowed && askId && taskRunId)
+        await bindCompletionEvidenceRead(ctx.db, { askId, taskRunId, itemId: item.id }, [
+          original,
+          parsed,
+        ]);
+      output.evidence.push({
+        id: row.id,
+        path: row.path,
+        summary: allowed ? completionReceiptSummary(parsed) : '完成依据暂不可用',
+        created_at: row.decided_at.toISOString(),
+      });
+    }
   }
   const recentActivity: NonNullable<GetLearningItemOutput['recent_activity']> = [];
   if (include.has('recent_events')) {

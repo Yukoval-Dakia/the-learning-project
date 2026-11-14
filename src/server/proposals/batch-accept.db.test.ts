@@ -13,6 +13,10 @@ import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import {
+  seedCompletionLearningItem,
+  seedCompletionProposal as seedNativeProposal,
+} from '../../../tests/helpers/native-completion';
 import { acceptAiProposal } from './accept-action';
 import {
   batchAcceptProposals,
@@ -24,30 +28,11 @@ import { retractAiProposal } from './retract-action';
 const NOW = new Date('2026-11-08T00:00:00Z');
 
 async function seedLearningItem(id: string): Promise<void> {
-  await testDb()
-    .insert(learning_item)
-    .values({
-      id,
-      source: 'manual',
-      title: `学习项 ${id}`,
-      status: 'pending',
-      created_at: NOW,
-      updated_at: NOW,
-    });
+  await seedCompletionLearningItem(testDb(), id);
 }
 
 async function seedCompletionProposal(proposalId: string, learningItemId: string): Promise<void> {
-  await writeAiProposal(testDb(), {
-    id: proposalId,
-    actor_ref: 'agent:copilot',
-    payload: {
-      kind: 'completion',
-      target: { subject_kind: 'learning_item', subject_id: learningItemId },
-      reason_md: 'copilot 判定可以标记完成',
-      evidence_refs: [],
-      proposed_change: { learning_item_id: learningItemId },
-    },
-  });
+  await seedNativeProposal(testDb(), proposalId, learningItemId);
 }
 
 // question_edit declares a retract path but refuses once the edit is applied —
@@ -315,7 +300,17 @@ describe('proposal batch confirmation', () => {
     await migrateCanonicalProjections(db);
     // The target learning_item does not exist, so the canonical accept throws
     // before any effect — the request still resolves the full batch identity.
-    await seedCompletionProposal('lc_f1', 'li_missing');
+    await writeAiProposal(db, {
+      id: 'lc_f1',
+      actor_ref: 'synthetic-fixture',
+      payload: {
+        kind: 'relearn',
+        target: { subject_kind: 'learning_item', subject_id: 'li_missing' },
+        reason_md: '合成缺失学习项',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_missing' },
+      },
+    });
 
     const res = await batchAcceptProposals(db, { proposal_ids: ['lc_f1', 'p_gone'] });
     expect(res.items.map((entry) => entry.status)).toEqual(['failed', 'failed']);

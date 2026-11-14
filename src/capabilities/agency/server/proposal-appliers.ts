@@ -22,14 +22,19 @@ import {
   asPlainRecord,
   ensureAcceptOnly,
   requiredString,
-  stringArray,
 } from '@/kernel/proposals/applier-helpers';
+import { readStoredCompletionReceipt } from '@/kernel/proposals/completion-receipt';
 import {
   type ProposalAcceptEffectOutcome,
   type RecordedProposalRate,
   runProposalAccept,
 } from '@/kernel/proposals/decision-protocol';
 import type { ProposalAcceptInput } from '@/kernel/proposals/types';
+import {
+  rethrowNativeMasteryBusy,
+  withFencedNativeMasteryRead,
+} from '@/kernel/read-models/native-mastery-basis';
+import { completionSourcesCurrent } from '@/kernel/read-models/usage-policy';
 // Completion/relearn record subject-keyed actions, then materialize through the
 // single structural writer. Approval and row locking stay in this owner transaction.
 import {
@@ -45,6 +50,10 @@ import {
   acceptLearningIntent,
 } from './learning-intent';
 import { learningIntentTopic, sealLearningIntentOutlineReceipt } from './learning-intent-request';
+import {
+  originalCompletionEvidenceStillCurrent,
+  readCompletionReceipt,
+} from './learning-item-completion-policy';
 import type { ProposalInboxRow } from './proposal-lifecycle';
 
 export interface AgencyApplierOpts {
@@ -402,79 +411,91 @@ export async function acceptCompletionProposal(
       }
       return item;
     },
-    effect: async (
-      { tx, writeRate },
-      item,
-    ): Promise<ProposalAcceptEffectOutcome<CompletionAcceptResult>> => {
-      const evidenceJson = {
-        ...asPlainRecord(change.evidence_json),
-        proposal_id: proposalId,
-        triggering_signals: stringArray(change.triggering_signals),
-      };
-      // Serialize the state check, event append and projection on the same row lock.
-      const [current] = await tx
-        .select()
-        .from(learning_item)
-        .where(and(eq(learning_item.id, learningItemId), isNull(learning_item.archived_at)))
-        .for('update');
-      if (!current || current.version !== item.version || current.status !== item.status) {
-        throw new ApiError('conflict', 'learning_item changed before proposal acceptance', 409);
-      }
-      if (!(await hasLearningItemGenesisAnchor(tx, learningItemId))) {
-        throw new Error('learning_item requires canonical projection migration before mutation');
-      }
-      const now = await nextProjectionEventTime(tx, 'learning_item', learningItemId, new Date());
-      // One clock for the action, evidence and decision. Derived fields remain untouched.
-      await writeEvent(tx, {
-        id: newId(),
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'experimental:learning_item_complete',
-        subject_kind: 'learning_item',
-        subject_id: learningItemId,
-        outcome: 'success',
-        payload: {},
-        caused_by_event_id: proposalId,
-        created_at: now,
-        ingest_at: now,
-      });
+    effect: async ({
+      tx,
+      writeRate,
+    }): Promise<ProposalAcceptEffectOutcome<CompletionAcceptResult>> =>
+      withFencedNativeMasteryRead(tx, async (reader) => {
+        if (opts.actor?.kind === 'agent')
+          throw new ApiError('conflict', 'completion requires a human decision', 409);
+        const original = await readStoredCompletionReceipt(tx, proposalId);
+        if (!original || original.item_id !== learningItemId)
+          throw new ApiError('conflict', 'completion has no verified receipt', 409);
+        const currentReceipt = await readCompletionReceipt(
+          tx,
+          reader,
+          learningItemId,
+          new Date(),
+          original.sources.nodes,
+        );
+        if (
+          !currentReceipt ||
+          !(await completionSourcesCurrent(tx, original.sources)) ||
+          !originalCompletionEvidenceStillCurrent(original, currentReceipt)
+        )
+          throw new ApiError('conflict', 'completion evidence is no longer current', 409);
+        const [item] = await tx
+          .select()
+          .from(learning_item)
+          .where(eq(learning_item.id, learningItemId));
+        if (!item) throw new ApiError('not_found', 'learning item missing', 404);
+        const evidenceJson = {
+          proposal_id: proposalId,
+          proposed_receipt: original,
+          accepted_receipt: currentReceipt,
+        };
+        const now = await nextProjectionEventTime(tx, 'learning_item', learningItemId, new Date());
+        // One clock for the action, evidence and decision. Derived fields remain untouched.
+        await writeEvent(tx, {
+          id: newId(),
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'experimental:learning_item_complete',
+          subject_kind: 'learning_item',
+          subject_id: learningItemId,
+          outcome: 'success',
+          payload: {},
+          caused_by_event_id: proposalId,
+          created_at: now,
+          ingest_at: now,
+        });
 
-      await tx.insert(completion_evidence).values({
-        id: newId(),
-        learning_item_id: learningItemId,
-        path: 'ai_propose',
-        evidence_json: evidenceJson,
-        decided_at: now,
-      });
-
-      // The accept `rate` event is the proposal-decision signal. It is
-      // subject_kind='event' (chained to the proposal), NOT subject_kind='learning_item', so the
-      // learning_item Q1 fold never gathers it; it is the proposal inbox's decision marker.
-      const rateEventId = await writeRate({
-        created_at: now,
-        payload: {
-          materialized_learning_item_id: learningItemId,
-          // Pin the EXACT pre-accept state so retract restores it instead of guessing.
-          // completion accepts pending|in_progress; record which (and the prior completed_at,
-          // normally null) here.
-          materialized_prior_status: item.status,
-          materialized_prior_completed_at: item.completed_at
-            ? item.completed_at.toISOString()
-            : null,
-        },
-      });
-      // Materialize canonical structural state from the events in this transaction.
-      await projectLearningItemGuarded(tx, learningItemId);
-      return {
-        status: 'accepted',
-        result: {
-          kind: 'completion',
-          rate_event_id: rateEventId,
+        await tx.insert(completion_evidence).values({
+          id: newId(),
           learning_item_id: learningItemId,
-        },
-      };
-    },
-  });
+          path: 'ai_propose',
+          evidence_json: evidenceJson,
+          decided_at: now,
+        });
+
+        // The accept `rate` event is the proposal-decision signal. It is
+        // subject_kind='event' (chained to the proposal), NOT subject_kind='learning_item', so the
+        // learning_item Q1 fold never gathers it; it is the proposal inbox's decision marker.
+        const rateEventId = await writeRate({
+          created_at: now,
+          payload: {
+            materialized_learning_item_id: learningItemId,
+            // Pin the EXACT pre-accept state so retract restores it instead of guessing.
+            // completion accepts pending|in_progress; record which (and the prior completed_at,
+            // normally null) here.
+            materialized_prior_status: item.status,
+            materialized_prior_completed_at: item.completed_at
+              ? item.completed_at.toISOString()
+              : null,
+          },
+        });
+        // Materialize canonical structural state from the events in this transaction.
+        await projectLearningItemGuarded(tx, learningItemId);
+        return {
+          status: 'accepted',
+          result: {
+            kind: 'completion',
+            rate_event_id: rateEventId,
+            learning_item_id: learningItemId,
+          },
+        };
+      }),
+  }).catch(rethrowNativeMasteryBusy);
   return result;
 }
 

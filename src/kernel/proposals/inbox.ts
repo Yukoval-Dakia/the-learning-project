@@ -35,7 +35,10 @@ import {
   evaluateBlockMergeAdmission,
   loadBlockMergeAdmissionContext,
 } from '@/kernel/proposals/block-merge-admission';
-import { legacyKnowledgeProposalForLearner } from '@/kernel/proposals/learner-read';
+import {
+  legacyKnowledgeProposalForLearner,
+  projectCompletionForLearner,
+} from '@/kernel/proposals/learner-read';
 import {
   type ProposalPresentation,
   loadProposalPresentations,
@@ -44,6 +47,7 @@ import {
   type ProposalSignalSnapshot,
   loadProposalSignalsForRows,
 } from '@/kernel/proposals/signals';
+import { parseCompletionReceipt } from './completion-receipt';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -71,7 +75,7 @@ export interface ProposalInboxRow {
    * stored facts cannot currently prove the merge. accept is still hard-blocked
    * on the same proof; this field only explains why the card cannot be accepted.
    */
-  not_acceptable_reason: BlockMergeIneligibilityReason | null;
+  not_acceptable_reason: BlockMergeIneligibilityReason | 'completion_evidence_unavailable' | null;
   /**
    * Server-derived: this pending row may join a batch confirmation. Only true
    * for B-strength kinds with an owner retract path; the UI must not keep its
@@ -869,6 +873,7 @@ async function projectLoadedProposalRows(
     });
   }
 
+  for (const row of out) await projectCompletionForLearner(db, row);
   await annotateBlockMergeAdmission(db, out);
 
   // Presentation may isolate optional reads in a savepoint on this same Tx.
@@ -974,6 +979,7 @@ export async function getProposalInboxRow(
     signals: null,
     presentation: null,
   };
+  await projectCompletionForLearner(db, row);
   await annotateBlockMergeAdmission(db, [row]);
   // Finish the presentation savepoint before another read uses this Tx.
   const presentationByProposalId = await loadProposalPresentations(db, [row]);
@@ -1098,4 +1104,41 @@ export async function pendingProposalWithCooldown(
     status: 'pending',
   });
   return rows.some((row) => row.kind === kind && row.payload.cooldown_key === cooldownKey);
+}
+
+/** Completion producer history includes real terminal decisions; no learner payload or presentation is returned. */
+export async function readCompletionProposalHistory(tx: Tx) {
+  const rows = await tx
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:proposal'),
+        sql`coalesce(${event.payload}->'ai_proposal'->>'kind', ${event.payload}->>'kind') = 'completion'`,
+      ),
+    )
+    .orderBy(asc(event.created_at), asc(event.id));
+  const ids = rows.map((r) => r.id);
+  const rates = await loadLatestRateByProposal(tx, ids);
+  const corrections = await loadCorrectionDecisionByProposal(tx, ids);
+  return rows.flatMap((row) => {
+    const payload = safeDeriveLegacyAiProposal(row);
+    if (payload?.kind !== 'completion') return [];
+    const parsed = parseCompletionReceipt(payload.proposed_change.receipt);
+    if (!payload.target.subject_id) return [];
+    return [
+      {
+        id: row.id,
+        itemId: payload.target.subject_id,
+        verifiedReceipt: parsed?.item_id === payload.target.subject_id,
+        status: deriveProposalStatus(row, corrections.get(row.id), rates.get(row.id)),
+        proposedAt: row.created_at,
+        decidedAt: corrections.get(row.id)?.decided_at ?? rates.get(row.id)?.created_at ?? null,
+        evidenceDigest: parsed?.evidence_identity_digest ?? null,
+        qualifyingGroups: (parsed?.knowledge ?? []).flatMap((k) =>
+          k.evidence.filter((e) => e.correct).map((e) => `${k.id}:${e.groupId}`),
+        ),
+      },
+    ];
+  });
 }
