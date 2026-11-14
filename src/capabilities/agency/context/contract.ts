@@ -17,12 +17,12 @@ import {
   steeringWindowCoversToday,
 } from '@/core/steering';
 import type { Db, Tx } from '@/db/client';
+import { readLearnerProfilesAsBatch } from '@/kernel/learner-profile';
 import {
   type ActiveGoal,
   listActiveGoalsWithResolvedScope,
 } from '@/kernel/read-models/active-goal-scope';
 import { readCauseJudgment } from '@/kernel/read-models/cause-judgment';
-import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { shanghaiLabel } from './delta';
 import type { ContractSection } from './types';
@@ -205,7 +205,7 @@ export async function readContractSection(
   let signalNotes: string[] = [];
   const scopeKcs = activeGoal?.scope_knowledge_ids ?? [];
   if (scopeKcs.length > 0) {
-    const judgment = await readLearnerJudgments(db, {
+    const judgment = await readLearnerProfilesAsBatch(db, {
       knowledge_ids: scopeKcs,
       context: 'any',
       as_of: opts.now,

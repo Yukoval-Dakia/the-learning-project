@@ -98,6 +98,8 @@ export {
   intervention,
   kc_typed_state,
   learner_axis_state,
+  learner_profile,
+  learner_profile_refresh_intent,
   mastery_state,
   material_fsrs_state,
   placement_starter_attempt,
