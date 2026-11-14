@@ -489,6 +489,39 @@ export interface ActiveLearningItem {
   user_pinned: boolean;
 }
 
+export interface LearningItemRecord {
+  id: string;
+  source: string;
+  source_ref: string | null;
+  title: string;
+  knowledge_ids: string[];
+  primary_artifact_id: string | null;
+  status: string;
+  archived_at: Date | null;
+}
+
+/** Read one live item for a planning caller; folds stay the source of row truth. */
+export async function readLearningItemRecord(
+  db: DbLike,
+  id: string,
+): Promise<LearningItemRecord | null> {
+  const [row] = await db
+    .select({
+      id: learning_item.id,
+      source: learning_item.source,
+      source_ref: learning_item.source_ref,
+      title: learning_item.title,
+      knowledge_ids: learning_item.knowledge_ids,
+      primary_artifact_id: learning_item.primary_artifact_id,
+      status: learning_item.status,
+      archived_at: learning_item.archived_at,
+    })
+    .from(learning_item)
+    .where(eq(learning_item.id, id))
+    .limit(1);
+  return row ?? null;
+}
+
 /**
  * Active items are not archived and are either in progress or pinned, oldest first.
  * The `archived_at` guard is explicit because archiving only sets that column; it
