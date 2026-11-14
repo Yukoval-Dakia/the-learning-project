@@ -24,7 +24,7 @@ function KnowledgeNoteContinuation({ notes }: { notes: readonly KnowledgeNoteLin
               </a>
               <a
                 className="un-st-button un-st-text"
-                href={`/notes/${encodeURIComponent(note.note_id)}?entry=${encodeURIComponent(note.knowledge_id)}`}
+                href={`/notes/${encodeURIComponent(note.note_id)}?entry=${encodeURIComponent(note.knowledge_id)}&issuance=${encodeURIComponent(note.source.issuance_id)}&question=${encodeURIComponent(note.source.question_id)}`}
               >
                 打开笔记
               </a>

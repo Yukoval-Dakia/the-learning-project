@@ -47,7 +47,9 @@ function helpWords(help: NonNullable<AttemptEvidence['assistance']>): string {
         : `看过第 ${help.max_dose + 1} 个提示`
       : help.kinds.includes('chat_context')
         ? '和学伴聊过这题'
-        : '看没看过帮助没记全';
+        : help.kinds.includes('note')
+          ? '看过笔记'
+          : '看没看过帮助没记全';
   return `${seen}，这次不算独立做的`;
 }
 

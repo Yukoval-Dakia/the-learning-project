@@ -37,7 +37,7 @@ export interface FormalAttemptPreview {
     status: 'independent' | 'assisted' | 'unknown';
     event_ids: string[];
     max_dose: number | null;
-    kinds: Array<'hint' | 'solution' | 'chat_context'>;
+    kinds: Array<'hint' | 'solution' | 'chat_context' | 'note'>;
     phase: 'before_submit' | 'after_submit' | null;
   } | null;
   automatic_commit: boolean;

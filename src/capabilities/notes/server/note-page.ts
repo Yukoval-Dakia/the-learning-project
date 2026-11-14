@@ -7,6 +7,7 @@ import {
   type BacklinksByArtifactType,
   groupBacklinksByArtifactType,
 } from '@/capabilities/notes/server/block-refs';
+import { noteBodyIsEmpty } from '@/capabilities/notes/server/note-generation-fallback';
 import {
   type NoteGenerationFailure,
   readNoteGenerationFailure,
@@ -19,9 +20,12 @@ import type {
 import { InteractiveArtifactAttrs } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { stripInteractiveAnswerAttributes } from '@/kernel/learning-content';
+import { recordStudyAssistanceExposure } from '@/kernel/records/study-reference';
 import { bodyBlocksToNoteSections } from '@/kernel/read-models/note-sections';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 import { readVisibleArtifactBacklinks } from './visible-artifact-backlinks';
 
@@ -79,6 +83,88 @@ export interface NotePage {
   related_learning_items: NotePageRelatedItem[];
   created_at: string;
   updated_at: string;
+}
+
+export interface PracticeNoteOpenInput {
+  id: string;
+  issuance_id: string;
+  question_id: string;
+  entry_knowledge_id: string;
+}
+
+export interface PracticeNoteOpenResult {
+  page: NotePage;
+  exposure: {
+    event_id: string;
+    kind: 'note';
+    phase: 'after_submit';
+    content_digest: string;
+    note_id: string;
+    note_version: number;
+  };
+}
+
+function practiceNoteOpenInput(input: PracticeNoteOpenInput): PracticeNoteOpenInput {
+  const invalid = Object.values(input).some(
+    (value) => typeof value !== 'string' || value.trim().length === 0,
+  );
+  if (invalid) {
+    throw new ApiError('validation_error', 'note, issuance, question, and entry are required', 400);
+  }
+  return input;
+}
+
+/**
+ * Opens the exact page snapshot being returned and records it as post-submit
+ * assistance. Exposure ordering stays with the records owner inside the
+ * issuance lock; the response never rereads the artifact after commit.
+ */
+export async function openPracticeNotePage(
+  db: Db,
+  input: PracticeNoteOpenInput,
+): Promise<PracticeNoteOpenResult> {
+  const location = practiceNoteOpenInput(input);
+  const page = await loadNotePage(db, location.id);
+  if (!page) {
+    throw new ApiError('not_found', `note ${location.id} not found`, 404);
+  }
+  if (!(NOTE_TYPES as readonly string[]).includes(page.type)) {
+    throw new ApiError('not_a_note', 'practice notes only open note pages', 409);
+  }
+  const knowledgeIds = page.knowledge_ids;
+  const activeLabels = new Set(page.labels.map((label) => label.id));
+  if (
+    !knowledgeIds.includes(location.entry_knowledge_id) ||
+    !activeLabels.has(location.entry_knowledge_id)
+  ) {
+    throw new ApiError('note_context_mismatch', 'note does not belong to this entry', 409);
+  }
+  if (noteBodyIsEmpty(page.body_blocks)) {
+    throw new ApiError('note_body_unavailable', 'note body is unavailable', 409);
+  }
+  const contentDigest = `sha256:${sha256CanonicalJson({
+    format: 'practice-note-open/v1',
+    note_id: page.id,
+    note_type: page.type,
+    note_version: page.version,
+    title: page.title,
+    body_blocks: page.body_blocks,
+  })}`;
+  const exposure = await recordStudyAssistanceExposure(db, {
+    issuanceId: location.issuance_id,
+    questionId: location.question_id,
+    kind: 'note',
+    contentDigest,
+    note: {
+      id: page.id,
+      version: page.version,
+      entryKnowledgeId: location.entry_knowledge_id,
+    },
+  });
+  if (typeof exposure === 'string') {
+    throw new ApiError('exposure_identity_conflict', 'note exposure identity is inconsistent', 409);
+  }
+  return { page, exposure };
 }
 
 /**

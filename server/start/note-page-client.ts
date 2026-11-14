@@ -9,12 +9,29 @@ import {
   getStartNoteAiChanges,
   getStartNotePage,
   getStartNoteReferences,
+  openStartPracticeNote,
 } from './note-page-function';
 
 export const startNotePageClient: NotePageClient = async (id) =>
   NotePageJsonResponseSchema.parse(
     JSON.parse(await getStartNotePage({ fetch: authenticatedStartFetch, data: { id } })),
   );
+
+export const startPracticeNotePageClient = (context: {
+  issuance_id: string;
+  question_id: string;
+  entry_knowledge_id: string;
+}): NotePageClient => {
+  return async (id) =>
+    NotePageJsonResponseSchema.parse(
+      JSON.parse(
+        await openStartPracticeNote({
+          fetch: authenticatedStartFetch,
+          data: { id, ...context },
+        }),
+      ).page,
+    );
+};
 
 export const startNoteAiChangesClient: NoteAiChangesClient = async (id) =>
   JSON.parse(await getStartNoteAiChanges({ fetch: authenticatedStartFetch, data: { id } }));

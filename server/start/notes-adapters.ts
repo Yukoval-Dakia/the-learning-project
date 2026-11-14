@@ -6,6 +6,24 @@ import type { NoteListQuery } from '@/capabilities/notes/public';
 import type { Db, Tx } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 
+export async function openStartPracticeNotePage(
+  input: {
+    id: string;
+    issuance_id: string;
+    question_id: string;
+    entry_knowledge_id: string;
+  },
+  options: { database?: Db } = {},
+) {
+  try {
+    const { openPracticeNotePage } = await import('@/capabilities/notes/public');
+    const database = options.database ?? (await import('@/db/client')).db;
+    return await openPracticeNotePage(database, input);
+  } catch (error) {
+    throw errorResponse(error);
+  }
+}
+
 // Called after token/epoch authorization. Notes owns validation and the presence write.
 export async function heartbeatStartNoteEditing(body: string) {
   try {
@@ -143,6 +161,7 @@ export async function readStartNoteEntityCard(id: string) {
 export const notesAdapters = {
   blurStartNoteEditing,
   heartbeatStartNoteEditing,
+  openStartPracticeNotePage,
   readStartNoteAiChanges,
   readStartNoteEntityCard,
   readStartNoteList,
