@@ -89,7 +89,7 @@ export async function acceptGoalCompletionProposal(
           created_at: now,
           payload: {
             materialized_goal_id: goalId,
-            materialized_prior_status: 'active',
+            materialized_goal_prior_status: 'active',
             materialized_goal_version: current.item_version + 1,
           },
         });
@@ -120,7 +120,7 @@ export async function retractGoalCompletionProposal(
   const [current] = await tx.select().from(goal).where(eq(goal.id, goalId)).for('update');
   if (current?.status !== 'done') return;
   if (
-    payload.materialized_prior_status !== 'active' ||
+    payload.materialized_goal_prior_status !== 'active' ||
     payload.materialized_goal_version !== current.version
   )
     throw new ApiError('conflict', 'goal changed after completion; cannot retract', 409);

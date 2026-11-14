@@ -4,7 +4,7 @@ import {
   proposeComputedCompletion,
   runLearningItemCompletionNightly,
 } from '@/capabilities/agency/server/learning-item-completion-producer';
-import { completion_evidence, event, knowledge, learning_item } from '@/db/schema';
+import { completion_evidence, event, goal, knowledge, learning_item } from '@/db/schema';
 import { getProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { createManualGoal, updateGoalStatus } from '@/kernel/records/goal-commands';
@@ -160,7 +160,14 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
           expect(row.payload.proposed_change.completion_summary !== undefined).toBe(active);
         }
       }
-      if (retirement !== 'accept') {
+      if (retirement === 'accept') {
+        await retractAiProposal(db, proposal.proposal_id);
+        const [restored] = await db
+          .select({ status: goal.status })
+          .from(goal)
+          .where(eq(goal.id, goalId));
+        expect(restored?.status).toBe('active');
+      } else {
         await expect(acceptAiProposal(db, proposal.proposal_id)).rejects.toMatchObject({
           status: 409,
         });
