@@ -49,6 +49,27 @@ function categoryIdOf(payload: AiProposalPayloadT): string | null {
 interface CauseCheck {
   readonly proposalId: string;
   readonly categoryId: string;
+  /** Event ids this accept's own effect materialized; not "later" content. */
+  readonly ownEventIds: ReadonlySet<string>;
+}
+
+/** Own relabel rows are part of this accept; counting them as later use would block every undo. */
+function ownRelabelEventIds(ratePayload: unknown): ReadonlySet<string> {
+  const outcomes = (ratePayload as { relabel_outcomes?: unknown } | undefined)?.relabel_outcomes;
+  const ids = new Set<string>();
+  if (!Array.isArray(outcomes)) return ids;
+  for (const outcome of outcomes) {
+    if (!outcome || typeof outcome !== 'object') continue;
+    for (const key of [
+      'replacement_event_id',
+      'correction_event_id',
+      'original_event_id',
+    ] as const) {
+      const value = (outcome as Record<string, unknown>)[key];
+      if (typeof value === 'string' && value.length > 0) ids.add(value);
+    }
+  }
+  return ids;
 }
 
 async function inspectCauseCategories(
@@ -63,7 +84,11 @@ async function inspectCauseCategories(
       verdicts.set(input.proposalId, genericUndoBlock('failed', 'apply_record_missing'));
       continue;
     }
-    checks.push({ proposalId: input.proposalId, categoryId });
+    checks.push({
+      proposalId: input.proposalId,
+      categoryId,
+      ownEventIds: ownRelabelEventIds(input.ratePayload),
+    });
   }
   if (checks.length === 0) return verdicts;
 
@@ -81,9 +106,14 @@ async function inspectCauseCategories(
 
   // Judge events store the cause under `cause`; manual user causes store it at
   // the payload root.
-  const usedCategoryIds = new Set<string>();
-  for (const categoryId of categoryIds) {
-    const [hit] = await db
+  const usedCategoryIds = new Map<string, Set<string>>();
+  for (const check of checks) {
+    const categoryId = check.categoryId;
+    if (usedCategoryIds.has(categoryId)) continue;
+    // The hit could be one of this accept's own replacement rows. A second scan
+    // scoped to non-own rows distinguishes a genuinely-later independent
+    // citation from the accept's own materialization — only the former blocks.
+    const citingRows = await db
       .select({ id: event.id })
       .from(event)
       .where(
@@ -95,9 +125,9 @@ async function inspectCauseCategories(
             OR ${event.payload} ->> 'primary_category' = ${categoryId}
           )`,
         ),
-      )
-      .limit(1);
-    if (hit) usedCategoryIds.add(categoryId);
+      );
+    const ids = new Set(citingRows.map((row) => row.id));
+    usedCategoryIds.set(categoryId, ids);
   }
 
   for (const check of checks) {
@@ -118,7 +148,10 @@ async function inspectCauseCategories(
       verdicts.set(check.proposalId, block('cause_not_active'));
       continue;
     }
-    if (usedCategoryIds.has(check.categoryId)) {
+    const citingIds = usedCategoryIds.get(check.categoryId);
+    const hasIndependentUse =
+      citingIds !== undefined && [...citingIds].some((id) => !check.ownEventIds.has(id));
+    if (hasIndependentUse) {
       verdicts.set(check.proposalId, block('cause_used_in_attribution'));
     }
     if (!verdicts.has(check.proposalId)) {

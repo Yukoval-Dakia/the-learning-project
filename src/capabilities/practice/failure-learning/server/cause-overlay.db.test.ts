@@ -6,7 +6,7 @@
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { event, knowledge, question } from '@/db/schema';
+import { event, knowledge, proposal_signals, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { writeAiProposal } from '@/kernel/proposals/writer';
@@ -213,9 +213,13 @@ describe('YUK-2130 accept → canonical relabel + decision watermark', () => {
   //   'other' rows are relabelled, or pre-accept 'other' rows still count toward the recurrence
   //   floor and re-invoke the paid task.
   it('accept relabels its evidence via supersede; post-accept tally excludes pre-accept others', async () => {
-    // 3 条 evidence 'other'（触发提案那批）+ 2 条不在 evidence_refs 的旧 'other'。
-    // 若 accept 水位失效，它们会和 accept 后那条新 other 一起凑满 floor=3 →
-    // producer 会再调 LLM；水位正确则 tally=1，未到 floor，直接返回。
+    // 3 条 evidence 'other'（T0=9:0x，触发提案那批）+ 2 条不在 evidence_refs 的
+    // 'other'，落在 T0 与 accept(T3=now) 之间的 T1/T2（11:0x）。这正是决策水位
+    // 与「样本最晚水位」的分界线：水位取错时 T1/T2 越界，与 accept 后那条新
+    // other 一起凑满 floor=3 → producer 再调 LLM；水位正确则 tally=1，未到
+    // floor 直接返回。测试不靠 runTaskFn 抛错（旁路 catch 会吞掉）——用弃权
+    // stub 让 producer 走到「写冷却」的真实落库分支，再断言 proposal_signals
+    // 没有 cooldown 行：水位漏 → 任务跑 → abstain → 冷却落库 → 断言失败。
     for (const index of [0, 1, 2]) {
       await seedOtherJudgedFailure(
         `att_evidence_${index}`,
@@ -227,7 +231,7 @@ describe('YUK-2130 accept → canonical relabel + decision watermark', () => {
       await seedOtherJudgedFailure(
         `att_unlisted_${index}`,
         `judge_unlisted_${index}`,
-        new Date(Date.UTC(2026, 7, 10, 8, index)),
+        new Date(Date.UTC(2026, 7, 10, 11, index)),
       );
     }
 
@@ -258,19 +262,29 @@ describe('YUK-2130 accept → canonical relabel + decision watermark', () => {
     ).toBe('other');
 
     // accept 水位之后来一条真 'other'：tally 只该见到它（1 < floor=3），
-    // producer 未到付费任务就返回。水位若漏，2 条 unlisted 旧 other 会让 tally=3
-    // → runTaskFn 被调 → 抛出即失败。
+    // producer 未到付费任务就返回，signals 里没有冷却行。水位若漏，2 条
+    // unlisted T1/T2 旧 other 会让 tally=3 → runTaskFn 被调 → abstain →
+    // cooldown_until 落库 → 断言失败。
     await seedOtherJudgedFailure('att_post', 'judge_post', new Date());
     const { resolveSubjectProfile } = await import('@/subjects/profile');
-    const runTaskFn = async () => {
-      throw new Error('paid task must not run: pre-accept others leaked past the watermark');
-    };
-    await expect(
-      maybeProposeCauseCategoryFromOthers({
-        db: testDb(),
-        profile: resolveSubjectProfile(SUBJECT_DOMAIN),
-        runTaskFn,
-      }),
-    ).resolves.toBeUndefined();
+    // Abstaining model: producer reaches its "paid step ran, decided not to
+    // propose" branch and persists a durable cooldown row — observable business
+    // state, not a mock interaction.
+    const abstainTask = async () => ({
+      text: JSON.stringify({ action: 'abstain' }),
+      task_run_id: 'tr_abstain',
+      cost_usd: 0.001,
+    });
+    await maybeProposeCauseCategoryFromOthers({
+      db: testDb(),
+      profile: resolveSubjectProfile(SUBJECT_DOMAIN),
+      runTaskFn: abstainTask,
+    });
+    const cooldownRows = await testDb()
+      .select({ cooldown_until: proposal_signals.cooldown_until })
+      .from(proposal_signals)
+      .where(eq(proposal_signals.cooldown_key, `cause_category:${SUBJECT_DOMAIN}`));
+    // No paid naming pass ran on pre-accept evidence: no producer cooldown written.
+    expect(cooldownRows[0]?.cooldown_until ?? null).toBeNull();
   });
 });

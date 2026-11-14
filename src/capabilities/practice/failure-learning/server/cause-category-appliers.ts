@@ -4,18 +4,19 @@
 // cause_category_overlay 的唯一写边界（audit:schema 的 write path）；行落地后
 // 进入 attribution 合并词表（listActiveCauseCategoryOverlays）。
 //
-// YUK-2130 —— accept 时把提议 evidence_refs 里仍是 effective 'other' 的
-// judge / user_cause 事件逐个写替代事件 + correct(supersede)：mistakes /
-// weakpoints / tally 消费方沿 effective-truth 链看到新类目，原判留档可查，
-// 重放按确定性 id 幂等。rate payload 记录 `other_watermark`（被回标证据里最晚
-// 的 effective event created_at；没有可回标证据时退化为 accept 时刻）让生产
-// 者只统计水位之后的「真新」other。
+// Accept supersedes still-effective 'other' evidence without mutating originals;
+// deterministic event ids preserve replay identity. The recurrence watermark is
+// decision time, so older unlisted evidence cannot immediately buy another naming.
 import { and, eq, inArray } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { cause_category_overlay, event } from '@/db/schema';
 import { getCorrectionStatuses, writeEvent } from '@/kernel/events';
+import {
+  lockEventCorrectionSource,
+  lockEventCorrectionsAll,
+} from '@/kernel/events/correction-lock';
 import { ApiError } from '@/kernel/http';
 import type {
   ProposalAcceptApplier,
@@ -26,6 +27,7 @@ import { requireLaterProposalCorrection } from '@/kernel/proposals';
 import {
   asPlainRecord,
   ensureAcceptOnly,
+  findExistingRateEvent,
   requiredString,
 } from '@/kernel/proposals/applier-helpers';
 import {
@@ -73,6 +75,7 @@ type RelabelOutcome =
       original_event_id: string;
       replacement_event_id: string;
       correction_event_id: string;
+      question_id: string;
       effective_created_at: string;
     }
   | { status: 'skipped'; event_id: string; reason: string };
@@ -87,13 +90,16 @@ function relabelCorrectionId(proposalId: string, originalEventId: string): strin
 
 /**
  * 把仍是 effective 'other' 的 evidence 事件逐个 canonical supersede 到
- * `categoryId`。返回每条的处置 + 所有被回标行里最晚的 effective created_at
- * （作 other_watermark；没有可回标的就返回 null，调用方退化为 accept 时刻）。
+ * `categoryId`。返回每条的处置（含被回标行的原 effective created_at 审计
+ * 元数据；决策水位由调用方用 accept 时刻记）。
  *
  * 原 event 行不动（append-only）：新建一条同形事件（judge → judge /
  * user_cause → user_cause）把 primary_category 换成新类目，再写
  * correct(supersede) 指向它。effective-truth 链上的消费方——mistakes /
  * weakpoints / tally——自动读替代事件，原判保留在 correction_state 里。
+ *
+ * Canonical correction locks keep concurrent learner corrections from being
+ * overwritten by a supersede based on stale correction state.
  */
 async function relabelOtherEvidenceToCategory(
   tx: Tx,
@@ -104,11 +110,16 @@ async function relabelOtherEvidenceToCategory(
     reasonMd: string;
     now: Date;
   },
-): Promise<{ outcomes: RelabelOutcome[]; watermark: Date | null }> {
+): Promise<{ outcomes: RelabelOutcome[] }> {
   const outcomes: RelabelOutcome[] = [];
-  let watermark: Date | null = null;
   const ids = [...new Set(input.evidenceEventIds)];
-  if (ids.length === 0) return { outcomes, watermark };
+  if (ids.length === 0) return { outcomes };
+
+  // Use the canonical correction lock order before inspecting effective state.
+  await lockEventCorrectionsAll(tx);
+  for (const targetId of [...ids].sort()) {
+    await lockEventCorrectionSource(tx, targetId);
+  }
 
   const rows = await tx.select().from(event).where(inArray(event.id, ids));
   const rowById = new Map(rows.map((row) => [row.id, row]));
@@ -185,8 +196,12 @@ async function relabelOtherEvidenceToCategory(
         // Canonical anchor is the attempt (subject_id == caused_by keeps the
         // failure-attempts anchorKeyFor lookup symmetric for chained reads).
         caused_by_event_id: original.caused_by_event_id ?? original.subject_id,
-        task_run_id: original.task_run_id,
-        cost_micro_usd: original.cost_micro_usd,
+        // Reclassification is not a new paid execution: leave run/cost unset so
+        // the weekly cost sum does not double-count and no second receipt is
+        // forged for the original task run. Origin provenance stays via
+        // relabelled_from_event_id + the deterministic correction chain.
+        task_run_id: null,
+        cost_micro_usd: null,
         created_at: input.now,
       });
     } else {
@@ -210,8 +225,8 @@ async function relabelOtherEvidenceToCategory(
           relabelled_from_event_id: originalId,
         },
         caused_by_event_id: original.caused_by_event_id ?? original.subject_id,
-        task_run_id: original.task_run_id,
-        cost_micro_usd: original.cost_micro_usd,
+        task_run_id: null,
+        cost_micro_usd: null,
         created_at: input.now,
       });
     }
@@ -234,17 +249,16 @@ async function relabelOtherEvidenceToCategory(
       created_at: input.now,
     });
 
-    const effectiveAt = original.created_at;
-    if (watermark === null || effectiveAt > watermark) watermark = effectiveAt;
     outcomes.push({
       status: 'relabelled',
       original_event_id: originalId,
       replacement_event_id: replacementId,
       correction_event_id: correctionId,
-      effective_created_at: effectiveAt.toISOString(),
+      question_id: questionId,
+      effective_created_at: original.created_at.toISOString(),
     });
   }
-  return { outcomes, watermark };
+  return { outcomes };
 }
 
 // 防绕过：生产者契约是 ov_ 命名空间；applier 也守住——非 ov_ id 会在合并词表
@@ -395,9 +409,11 @@ export const causeCategoryProposalAcceptApplier: ProposalAcceptApplier = async (
         reasonMd: `accepted cause_category proposal ${input.proposalId} → ${prepared.categoryId}`,
         now,
       });
-      // 决策水位 = 被回标证据里最晚 effective created_at（无证据时退化为 accept
-      // 时刻）。生产者 tally 只统计水位之后仍是 'other' 的新样本。
-      const otherWatermark = relabel.watermark ?? now;
+      // 决策水位 = accept 时刻本身（不是被回标样本的最晚 created_at）。否则
+      // evidence T0 < 未列 other T1,T2 < accept T3 时，T1/T2 越过水位与 accept
+      // 后一条新 other 一起凑满 floor，立刻再触发一次付费命名。accept 之前的
+      // other 一律不算「新复发」；是否回标只影响样本自身的 effective 类目。
+      const otherWatermark = now;
 
       const rateEventId = await writeRate({
         created_at: now,
@@ -433,6 +449,9 @@ export const causeCategoryProposalAcceptApplier: ProposalAcceptApplier = async (
 // 时，retract 未落地那张不许归档别人 accept 的活行（mistake_variant 同款归属
 // 语义）。proposal 从未被 accept（pending 即 retract，行不存在）、行非本
 // proposal 所立、或已归档时幂等 no-op。
+//
+// Canonical restore/retract receipts undo this accept's supersede chain while
+// retaining append-only originals and deterministic replay identities.
 export const causeCategoryProposalRetractApplier: ProposalRetractApplier = async (db, input) => {
   const tx = db as Tx;
   const change = asPlainRecord(input.proposal.payload.proposed_change);
@@ -461,4 +480,67 @@ export const causeCategoryProposalRetractApplier: ProposalRetractApplier = async
     .update(cause_category_overlay)
     .set({ archived_at: input.correction_at, updated_at: input.correction_at })
     .where(ownedRow);
+
+  // Undo both sides of the recorded supersede, through the correction owner.
+  const rate = await findExistingRateEvent(tx, input.proposalId);
+  const relabelOutcomes = (rate?.payload as { relabel_outcomes?: unknown } | undefined)
+    ?.relabel_outcomes;
+  if (Array.isArray(relabelOutcomes)) {
+    for (const outcome of relabelOutcomes) {
+      if (
+        !outcome ||
+        typeof outcome !== 'object' ||
+        (outcome as { status?: unknown }).status !== 'relabelled'
+      ) {
+        continue;
+      }
+      const { replacement_event_id, original_event_id } = outcome as {
+        replacement_event_id?: unknown;
+        original_event_id?: unknown;
+      };
+      const affectedRefs =
+        typeof (outcome as { question_id?: unknown }).question_id === 'string'
+          ? [{ kind: 'question' as const, id: (outcome as { question_id: string }).question_id }]
+          : [{ kind: 'open_inquiry' as const, id: input.proposalId }];
+      if (typeof original_event_id === 'string') {
+        // Restore the original first: its latest correction becomes 'restore',
+        // so it returns to 'active' — before the replacement is retracted the
+        // chain would otherwise keep resolving to the (now-retracted) leaf.
+        await writeEvent(tx, {
+          id: `evt_cause_relabel_restore_${canonicalHash({ proposal: input.proposalId, original: original_event_id }).slice(0, 24)}`,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: original_event_id,
+          outcome: 'success',
+          payload: {
+            correction_kind: 'restore',
+            reason_md: `retract cause_category accept ${input.proposalId} — restore original label`,
+            affected_refs: affectedRefs,
+          },
+          caused_by_event_id: input.proposalId,
+          created_at: input.correction_at,
+        });
+      }
+      if (typeof replacement_event_id === 'string') {
+        await writeEvent(tx, {
+          id: `evt_cause_relabel_revert_${canonicalHash({ proposal: input.proposalId, replacement: replacement_event_id }).slice(0, 24)}`,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: replacement_event_id,
+          outcome: 'success',
+          payload: {
+            correction_kind: 'retract',
+            reason_md: `retract cause_category accept ${input.proposalId} — undo relabel replacement`,
+            affected_refs: affectedRefs,
+          },
+          caused_by_event_id: input.proposalId,
+          created_at: input.correction_at,
+        });
+      }
+    }
+  }
 };
