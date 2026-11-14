@@ -22,7 +22,7 @@ const composedRouteLoaders: Readonly<Record<string, () => Promise<RouteHandler>>
   },
   batchRetractAutoAppliedProposals: async () => {
     const [{ batchRetractAutoAppliedProposals }, { db }, { errorResponse }] = await Promise.all([
-      import('@/server/proposals/batch-retract'),
+      import('@/server/orchestration/proposal-decisions/batch-retract'),
       import('@/db/client'),
       import('@/kernel/http'),
     ]);
@@ -37,7 +37,7 @@ const composedRouteLoaders: Readonly<Record<string, () => Promise<RouteHandler>>
   },
   batchAcceptProposals: async () => {
     const [{ batchAcceptProposals }, { db }, { errorResponse }] = await Promise.all([
-      import('@/server/proposals/batch-accept'),
+      import('@/server/orchestration/proposal-decisions/batch-accept'),
       import('@/db/client'),
       import('@/kernel/http'),
     ]);
