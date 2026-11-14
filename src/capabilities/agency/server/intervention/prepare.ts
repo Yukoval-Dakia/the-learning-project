@@ -1,8 +1,5 @@
 import { inArray } from 'drizzle-orm';
-import type {
-  InterventionPackageT,
-  InterventionPreparationAttemptT,
-} from '@/core/schema/intervention';
+import type { InterventionPreparationAttemptT } from '@/core/schema/intervention';
 import {
   CurrentInterventionPackageReviewAudit,
   InterventionPreparationAttempt,
@@ -19,6 +16,7 @@ import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/kernel/read-models
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { recommendPedagogy } from './recommend';
+import { readCurrentConjecturePriorInterventions } from './snapshot';
 import {
   type InterventionRecord,
   activateIntervention,
@@ -201,8 +199,7 @@ async function bindAttemptToRecord(
     failures.push('agency:lineage_mismatch');
   }
   if (
-    !record.recommendation ||
-    record.recommendation.kind !== 'recommendation' ||
+    record.recommendation?.kind !== 'recommendation' ||
     attempt.package.method_id !== record.recommendation.method_id ||
     attempt.package.method_definition_version !== record.recommendation.method_definition_version
   ) {
@@ -349,8 +346,7 @@ async function bindAttemptToRecord(
         (locale) => row?.prompt_fingerprint === expected.promptFingerprints[locale],
       );
       if (
-        !row ||
-        row.status !== 'success' ||
+        row?.status !== 'success' ||
         row.task_kind !== expected.taskKind ||
         row.input_hash !== expected.inputHash ||
         !Object.values(expected.promptFingerprints).includes(row.prompt_fingerprint ?? '') ||
@@ -370,6 +366,20 @@ async function bindAttemptToRecord(
     ...attempt,
     deterministic_failure_codes: [...new Set(failures)].sort(),
   });
+}
+
+async function recommendationOutcomeBecameIneffective(
+  db: Db,
+  record: InterventionRecord,
+): Promise<boolean> {
+  const currentRecommendation = record.recommendation;
+  if (currentRecommendation?.kind !== 'recommendation') return false;
+  return (await readCurrentConjecturePriorInterventions(db, record.conjecture_event_id)).some(
+    (intervention) =>
+      intervention.method_id === currentRecommendation.method_id &&
+      intervention.outcome === 'ineffective' &&
+      intervention.conjecture_event_id === record.conjecture_event_id,
+  );
 }
 
 function passingAttempt(
@@ -428,10 +438,15 @@ export async function prepareInterventionWave(
     const subjectProfile = await resolveSubjectProfileForKnowledgeIdsStrict(db, [
       record.snapshot.conjecture.knowledge_id,
     ]);
+    const currentPriorInterventions = await readCurrentConjecturePriorInterventions(
+      db,
+      record.conjecture_event_id,
+    );
     const recommendation = await recommendPedagogy({
       snapshot: record.snapshot,
       runTaskFn,
       subjectProfile,
+      currentPriorInterventions,
     });
     record = await saveRecommendation(db, record, recommendation, deps.now?.() ?? new Date());
   }
@@ -487,6 +502,22 @@ export async function prepareInterventionWave(
     );
     if (attemptStageGuard.status === 'terminal') return attemptStageGuard.result;
     record = attemptStageGuard.record;
+    if (await recommendationOutcomeBecameIneffective(db, record)) {
+      const failed = await failInterventionPreparation(db, {
+        interventionId: record.id,
+        version: record.version,
+        expectedPreparationJobId: input.preparationJobId,
+        failureCode: 'recommendation_outcome_stale',
+        now: deps.now?.() ?? new Date(),
+      });
+      return {
+        status: 'preparation_failed',
+        intervention_id: failed.id,
+        version: failed.version,
+        reason_code: failed.failure_code ?? 'recommendation_outcome_stale',
+        idempotent: false,
+      };
+    }
 
     // Crash/recovery can resume after an attempt was appended but before it was
     // activated. Re-bind every persisted attempt against current deterministic

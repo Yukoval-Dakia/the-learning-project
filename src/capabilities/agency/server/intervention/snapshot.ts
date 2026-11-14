@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { getConfig, getConfigFlag } from '@/core/config/store';
 import {
@@ -91,6 +91,53 @@ export function interventionDeliveryMode(env: NodeJS.ProcessEnv): InterventionDe
   return getConfigFlag(AUTO_INTERVENTION_EXPANSION_ENABLED, env) ? 'eligible' : 'shadow';
 }
 
+export async function readCurrentConjecturePriorInterventions(
+  db: DbLike,
+  conjectureEventId: string,
+): Promise<InterventionSnapshotT['prior_interventions']> {
+  const rows = await db
+    .select({
+      id: intervention.id,
+      version: intervention.version,
+      conjecture_event_id: intervention.conjecture_event_id,
+      outcome: intervention.outcome,
+      recommendation_json: intervention.recommendation_json,
+      package_json: intervention.package_json,
+    })
+    .from(intervention)
+    .where(
+      and(
+        eq(intervention.status, 'settled'),
+        isNotNull(intervention.outcome),
+        eq(intervention.conjecture_event_id, conjectureEventId),
+      ),
+    )
+    .orderBy(desc(intervention.updated_at), desc(intervention.version));
+
+  return rows.flatMap((row) => {
+    const recommendation = PedagogyRecommendation.safeParse(row.recommendation_json);
+    const packageResult = InterventionPackage.safeParse(row.package_json);
+    if (
+      !recommendation.success ||
+      recommendation.data.kind !== 'recommendation' ||
+      !packageResult.success ||
+      row.outcome === null
+    ) {
+      return [];
+    }
+    return [
+      {
+        intervention_id: row.id,
+        version: row.version,
+        conjecture_event_id: row.conjecture_event_id,
+        method_id: recommendation.data.method_id,
+        method_definition_version: recommendation.data.method_definition_version,
+        outcome: row.outcome,
+      },
+    ];
+  });
+}
+
 export async function buildInterventionSnapshotFromProbeResult(
   db: DbLike,
   input: {
@@ -174,45 +221,9 @@ export async function buildInterventionSnapshotFromProbeResult(
     : null;
   const ruleBasedness = await getKcRuleBasedness(db, change.knowledge_id);
 
-  const priorRows = await db
-    .select({
-      id: intervention.id,
-      version: intervention.version,
-      outcome: intervention.outcome,
-      recommendation_json: intervention.recommendation_json,
-      package_json: intervention.package_json,
-    })
-    .from(intervention)
-    .where(
-      and(
-        eq(intervention.status, 'settled'),
-        isNotNull(intervention.outcome),
-        sql`${intervention.snapshot_json} #>> '{conjecture,knowledge_id}' = ${change.knowledge_id}`,
-      ),
-    )
-    .orderBy(desc(intervention.updated_at), desc(intervention.version))
-    .limit(20);
-  const priorInterventions = priorRows.flatMap((row) => {
-    const recommendation = PedagogyRecommendation.safeParse(row.recommendation_json);
-    const packageResult = InterventionPackage.safeParse(row.package_json);
-    if (
-      !recommendation.success ||
-      recommendation.data.kind !== 'recommendation' ||
-      !packageResult.success ||
-      row.outcome === null
-    ) {
-      return [];
-    }
-    return [
-      {
-        intervention_id: row.id,
-        version: row.version,
-        method_id: recommendation.data.method_id,
-        method_definition_version: recommendation.data.method_definition_version,
-        outcome: row.outcome,
-      },
-    ];
-  });
+  const priorInterventions = (
+    await readCurrentConjecturePriorInterventions(db, probeResult.conjecture_event_id)
+  ).slice(0, 20);
 
   const evidenceRefs = Array.from(
     new Map(

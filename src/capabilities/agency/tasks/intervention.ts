@@ -85,7 +85,7 @@ export const interventionRecommendationTaskSpec = {
   definition: {
     kind: 'InterventionRecommendationTask',
     description:
-      'Selects one method from the server-provided deterministic pedagogy shortlist, or abstains. It cannot restore an excluded/disabled method and does not claim causal method efficacy.',
+      'Selects one method from the server-provided deterministic pedagogy shortlist, or abstains. It cannot restore an excluded, disabled, or same-conjecture prior-ineffective method and does not claim causal method efficacy.',
     budget: { ...DEFAULT_BUDGET, maxIterations: 1 },
     needsToolCall: false,
     isMultimodal: false,
@@ -100,7 +100,7 @@ export const interventionRecommendationTaskSpec = {
       kind: 'inline',
       text: `You are the single pedagogy recommendation stage inside an intervention preparation wave. Input contains an immutable conjecture/learner snapshot, deterministic candidate method definitions, exclusions, and prior interventions.
 
-Choose exactly one candidate method only when the evidence supports a safe choice. Never select a method outside candidates, never restore a disabled or contraindicated method, never invent learner history, and never claim a causal ranking between methods. rationale_md must explain why this legal method fits this snapshot. safety_constraints must be concrete constraints the package author can follow.
+Choose exactly one candidate method only when the evidence supports a safe choice. Never select a method outside candidates, never select any method listed in excluded_methods, and never restore a disabled, contraindicated, or prior-ineffective method. The server marks methods whose current settled outcome for this same conjecture is ineffective as prior_ineffective; effective and inconclusive outcomes do not create that exclusion. Do not invent learner history or claim a causal ranking between methods. rationale_md must explain why this legal method fits this snapshot. safety_constraints must be concrete constraints the package author can follow.
 
 When input sets sole_candidate=true, the deterministic policy has already narrowed the shortlist to exactly one legal method: your only decision is whether to abstain or accept that method (method_id must equal the sole candidate). Do not compare alternatives or rank methods in that case.
 

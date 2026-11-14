@@ -39,6 +39,7 @@ import {
   lockInterventionInstance,
   lockInterventionSource,
 } from './intervention-lock';
+import { readCurrentConjecturePriorInterventions } from './snapshot';
 
 type DbLike = Db | Tx;
 type InterventionRow = typeof intervention.$inferSelect;
@@ -309,7 +310,7 @@ export async function activateIntervention(
       );
     }
     if (current.preparation_job_id !== input.preparationJobId) return current;
-    if (!current.recommendation || current.recommendation.kind !== 'recommendation') {
+    if (current.recommendation?.kind !== 'recommendation') {
       throw new Error('intervention cannot activate without a concrete recommendation');
     }
     // Correction writers take this same transaction-level lock before INSERT.
@@ -334,8 +335,24 @@ export async function activateIntervention(
       [current.source_probe_result_event_id],
       { validateDirectChain: true },
     );
-    if (effective.get(current.source_probe_result_event_id) !== 'active') {
-      const failureCode = 'source_evidence_inactive';
+    const currentPriorInterventions = await readCurrentConjecturePriorInterventions(
+      tx,
+      current.conjecture_event_id,
+    );
+    const currentRecommendation = current.recommendation;
+    const failureCode =
+      effective.get(current.source_probe_result_event_id) !== 'active'
+        ? 'source_evidence_inactive'
+        : currentRecommendation.kind === 'recommendation' &&
+            currentPriorInterventions.some(
+              (intervention) =>
+                intervention.method_id === currentRecommendation.method_id &&
+                intervention.outcome === 'ineffective' &&
+                intervention.conjecture_event_id === current.conjecture_event_id,
+            )
+          ? 'recommendation_outcome_stale'
+          : null;
+    if (failureCode) {
       const [failed] = await tx
         .update(intervention)
         .set({
