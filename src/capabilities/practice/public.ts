@@ -1,5 +1,6 @@
 // Stable server contract for consumers outside the practice capability.
 
+import { runHostOperationInstallation } from '@/kernel/host-operation';
 import { loadReviewDueReader } from './scheduling/public';
 
 export {
@@ -72,8 +73,8 @@ export {
 // covers API / Start acceptance hosts, the release rehearsal, and DB tests;
 // installPracticeWorker adds the worker-only bindings. Repair scripts needing
 // only model pins install installModelAdmissionPins via grading/public directly.
-// Each install fills an independent process-wide slot — order is explicit, no
-// timing coupling. An uninstalled port call throws HostOperationNotInstalledError.
+// Each phase completes once and is safe to request reentrantly. An uninstalled
+// port call throws HostOperationNotInstalledError.
 
 // Binds the operations Practice owns behind kernel ports that API routes and worker
 // jobs both call. Hosts call this before serving or mounting handlers.
@@ -134,8 +135,7 @@ async function installTodayPracticeRecompose(): Promise<void> {
   installSteeringDeferredDueCount((db, now) => countSteeringDeferredDueReviews(db, { now }));
 }
 
-/** Every port an API, Start acceptance, rehearsal or test host needs, in an explicit order. */
-export async function installPracticeHost(): Promise<void> {
+async function installPracticeHostPhase(): Promise<void> {
   await installPracticeHostOperationPorts();
   const { installModelAdmissionPins } = await import('./grading/public');
   await installModelAdmissionPins();
@@ -143,9 +143,12 @@ export async function installPracticeHost(): Promise<void> {
   installSchedulingCandidateRebuild();
 }
 
-/** Worker bindings: the host set plus worker-only facts and paid stages. */
-export async function installPracticeWorker(): Promise<void> {
-  await installPracticeHost();
+/** Every port an API, Start acceptance, rehearsal or test host needs, in an explicit order. */
+export function installPracticeHost(): Promise<void> {
+  return runHostOperationInstallation('practice', 'host', () => installPracticeHostPhase());
+}
+
+async function installPracticeWorkerPhase(): Promise<void> {
   const [
     { installDailyReviewPlanFacts },
     { installInterventionAuthorStages },
@@ -159,6 +162,12 @@ export async function installPracticeWorker(): Promise<void> {
   await installTodayPracticeRecompose();
   await installInterventionAuthorStages();
   await installInterventionDiagnosticLeaves();
+}
+
+/** Worker bindings: the ready host set plus additive worker-only facts and paid stages. */
+export async function installPracticeWorker(): Promise<void> {
+  await installPracticeHost();
+  await runHostOperationInstallation('practice', 'worker', installPracticeWorkerPhase);
 }
 
 export type { CoverageLatticeRead } from './supply/public';
