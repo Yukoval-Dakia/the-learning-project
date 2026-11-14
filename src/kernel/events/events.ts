@@ -3,7 +3,7 @@
 import { and, desc, eq, gte, ne, sql } from 'drizzle-orm';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { type EventT, parseEvent } from '@/core/schema/event';
-import { publicAssistancePayload } from '@/core/schema/event/assistance-publication';
+import { publicEventPayload } from '@/core/schema/event/public-payload';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { lockEventCorrectionSource, lockEventCorrectionsAll } from './correction-lock';
@@ -29,7 +29,7 @@ function rowToParseInput(row: typeof event.$inferSelect): Parameters<typeof pars
     subject_kind: row.subject_kind,
     subject_id: row.subject_id,
     outcome: row.outcome,
-    payload: publicAssistancePayload(row.action, row.payload),
+    payload: publicEventPayload(row.action, row.payload),
     caused_by_event_id: row.caused_by_event_id ?? undefined,
     task_run_id: row.task_run_id ?? undefined,
     cost_micro_usd: row.cost_micro_usd ?? undefined,

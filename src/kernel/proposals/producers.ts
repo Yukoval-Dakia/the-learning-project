@@ -143,44 +143,6 @@ export async function writeLearningItemProposal(
   });
 }
 
-export interface WriteCompletionProposalInput extends CommonProducerInput {
-  // YUK-270 — defaults to 'learning_item_maintenance' (the autonomous maintenance
-  // pass). Conversational callers (Copilot's propose_learning_item_completion)
-  // pass their callerActor.ref so conversation audit/replay/inbox attribution
-  // record the real triggering actor, not the maintenance batch.
-  actor_ref?: string;
-  learning_item_id: string;
-  triggering_signals: string[];
-  evidence_json?: Record<string, unknown>;
-}
-
-export async function writeCompletionProposal(
-  db: DbLike,
-  input: WriteCompletionProposalInput,
-): Promise<string> {
-  return writeAiProposal(db, {
-    id: input.id,
-    actor_ref: input.actor_ref ?? 'learning_item_maintenance',
-    payload: {
-      kind: 'completion',
-      target: { subject_kind: 'learning_item', subject_id: input.learning_item_id },
-      reason_md: input.reason_md,
-      evidence_refs: input.evidence_refs ?? [],
-      proposed_change: {
-        learning_item_id: input.learning_item_id,
-        triggering_signals: input.triggering_signals,
-        evidence_json: input.evidence_json ?? {},
-      },
-      rollback_plan: { action: 'write correction event and clear ai_propose completion evidence' },
-      cooldown_key: `completion:${input.learning_item_id}`,
-    },
-    task_run_id: input.task_run_id ?? null,
-    caused_by_event_id: input.caused_by_event_id ?? null,
-    cost_usd: input.cost_usd,
-    created_at: input.created_at,
-  });
-}
-
 export interface WriteRelearnProposalInput extends CommonProducerInput {
   // YUK-270 — defaults to 'learning_item_maintenance' (the autonomous maintenance
   // pass). Conversational callers (Copilot's propose_learning_item_relearn) pass

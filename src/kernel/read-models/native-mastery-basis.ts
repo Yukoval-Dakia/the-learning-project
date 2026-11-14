@@ -1,11 +1,25 @@
-// Native contribution closure for read-only progress. Numeric mastery remains canonical.
+// Native contribution closure; progress and fenced commands share canonical facts.
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { ThetaSnapshot } from '@/core/schema/event/state-snapshot';
+import {
+  type FrozenCompletionSources,
+  NativeCompletionEvidence,
+} from '@/core/schema/learning-item-completion';
 import type { Tx } from '@/db/client';
-import { evaluation, event, materialized_id_index, source_document } from '@/db/schema';
+import { tryLearningStateWriteLock } from '@/db/learning-state-lock';
+import {
+  evaluation,
+  event,
+  item_calibration,
+  knowledge,
+  materialized_id_index,
+  source_document,
+} from '@/db/schema';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { filterActiveRows } from '@/kernel/events/active-rows';
 import { allowedEventIds } from '@/kernel/events/derivation-policy';
+import { ApiError } from '@/kernel/http';
 import { LearningScope } from './assessment-learning-scope';
 import { liveAppliedSettlements, loadSettlementEvents } from './assessment-settlements';
 import { nativeAttemptOutcome, resolveVerdictsForNativeAttempts } from './assessment-verdict';
@@ -14,6 +28,8 @@ import { type MasteryProjection, getMasteryProjection } from './mastery-projecti
 import {
   type PurposeSource,
   allowedQuestionIds,
+  lockCompletionSources,
+  readCompletionSources,
   readSourceUsageEpochs,
   sourceAllowsDerivation,
 } from './usage-policy';
@@ -77,6 +93,10 @@ export interface NativeMasteryBasis {
   reasons: string[];
   pendingCount: number;
   occurrences: NativeMasteryOccurrence[];
+  proof: z.infer<typeof NativeCompletionEvidence>[];
+  genesis: string | null;
+  sources: FrozenCompletionSources['nodes'];
+  calibrationIds: string[];
 }
 
 /** Current explicit document purpose; standalone authored sources use the canonical lineage gate. */
@@ -101,6 +121,10 @@ export async function readNativeMasteryBasis(tx: Tx, ids: string[], asOf: Date) 
     current_setting('transaction_read_only') AS readonly`);
   if (mode[0]?.isolation !== 'repeatable read' || mode[0]?.readonly !== 'on')
     throw new Error('native mastery basis requires a read-only repeatable-read snapshot');
+  return collectNativeMasteryBasis(tx, ids, asOf);
+}
+
+async function collectNativeMasteryBasis(tx: Tx, ids: string[], asOf: Date) {
   const result = new Map<string, NativeMasteryBasis>(
     ids.map((id) => [
       id,
@@ -112,6 +136,10 @@ export async function readNativeMasteryBasis(tx: Tx, ids: string[], asOf: Date) 
         reasons: [],
         pendingCount: 0,
         occurrences: [],
+        proof: [],
+        genesis: null,
+        sources: [],
+        calibrationIds: [],
       },
     ]),
   );
@@ -142,6 +170,11 @@ export async function readNativeMasteryBasis(tx: Tx, ids: string[], asOf: Date) 
   const birthById = new Map(births.map((b) => [b.id, b.anchor]));
   for (const id of ids) {
     const anchor = birthById.get(id);
+    const fact = result.get(id);
+    if (fact && anchor) {
+      fact.genesis = anchor;
+      fact.sources.push({ kind: 'event', id: anchor });
+    }
     if (!anchor || !(await progressSourceAllowed(tx, { kind: 'event', id: anchor })))
       block([id], 'purpose_unavailable', true);
   }
@@ -222,6 +255,10 @@ export async function readNativeMasteryBasis(tx: Tx, ids: string[], asOf: Date) 
   const allowedQuestions = await allowedQuestionIds(tx, questionIds);
   for (const row of relevantAnswers) {
     const scope = scopeOf(row);
+    for (const id of scope)
+      result
+        .get(id)
+        ?.sources.push({ kind: 'event', id: row.id }, { kind: 'question', id: row.subject_id });
     if (!allowed.has(row.id) || !allowedQuestions.has(row.subject_id)) {
       block(scope, 'purpose_unavailable', true);
       continue;
@@ -386,6 +423,51 @@ export async function readNativeMasteryBasis(tx: Tx, ids: string[], asOf: Date) 
         if (!allowedQuestions.has(plan.theta.anchorQuestionId))
           block([id], 'purpose_unavailable', true);
       }
+      const groupLedger = settlementRows.filter(
+        (r) => r.payload.evaluation_group_id === v.evaluation_group_id,
+      );
+      const groupSnapshots = rows.filter(
+        (r) =>
+          r.action === 'experimental:state_snapshot' &&
+          groupLedger.some((s) => s.id === r.payload.attempt_event_id),
+      );
+      const groupCaptures = [...verdicts]
+        .filter(([, m]) => m.evaluation_group_id === v.evaluation_group_id)
+        .map(([capture]) => capture)
+        .sort();
+      const sourceEvents = [
+        ...groupCaptures,
+        ...members.flatMap((m) => {
+          const receipt = receipts.get(m.submission.submission_id);
+          return receipt ? [receipt.id] : [];
+        }),
+        ...groupLedger.map((r) => r.id),
+        ...groupSnapshots.map((r) => r.id),
+      ];
+      fact.sources.push(...sourceEvents.map((id) => ({ kind: 'event' as const, id })));
+      for (const s of groupLedger) {
+        const plan = plans.get(s.id);
+        if (plan?.theta.applied) fact.calibrationIds.push(plan.theta.anchorQuestionId);
+        if (plan?.calibration) fact.calibrationIds.push(plan.calibration.questionId);
+      }
+      fact.sources.push(...fact.calibrationIds.map((id) => ({ kind: 'question' as const, id })));
+      fact.proof.push(
+        NativeCompletionEvidence.parse({
+          groupId: v.evaluation_group_id,
+          anchorId: v.revision.group_id,
+          occurredAt: occurredAt.toISOString(),
+          correct: fullCorrect,
+          adverse: down || outcome === 'failure' || outcome === 'partial',
+          submissions: [...new Set(members.map((m) => m.submission.submission_id))].sort(),
+          issuances: [...new Set(members.map((m) => m.issuance.issuance_id))].sort(),
+          revisions: [...new Set(members.map((m) => m.revision.revision_id))].sort(),
+          captures: groupCaptures,
+          evaluationId: v.effective.evaluation_id,
+          generation: v.head.generation,
+          settlements: groupLedger.map((r) => r.id).sort(),
+          snapshots: groupSnapshots.map((r) => r.id).sort(),
+        }),
+      );
       fact.occurrences.push({
         groupId: v.evaluation_group_id,
         anchorId: v.revision.group_id,
@@ -467,4 +549,122 @@ export async function readNativeMasteryBasis(tx: Tx, ids: string[], asOf: Date) 
     if (!fact.displayAllowed) fact.occurrences = [];
   }
   return result;
+}
+
+export interface FencedNativeMasteryReader {
+  read(
+    ids: string[],
+    sources: FrozenCompletionSources['nodes'],
+    asOf: Date,
+  ): Promise<{
+    facts: Map<string, NativeMasteryBasis>;
+    sources: FrozenCompletionSources | null;
+    calibration: Array<{ question_id: string; beta: number }>;
+  }>;
+}
+
+/** A callback capability cannot survive its fences. The caller must let every error abort its outer transaction. */
+export async function withFencedNativeMasteryRead<T>(
+  tx: Tx,
+  work: (reader: FencedNativeMasteryReader) => Promise<T>,
+): Promise<T> {
+  const [mode] = await tx.execute<{ isolation: string; readonly: string }>(sql`SELECT
+    current_setting('transaction_isolation') AS isolation, current_setting('transaction_read_only') AS readonly`);
+  if (mode?.isolation !== 'read committed' || mode.readonly !== 'off')
+    throw new Error('completion requires read-write read-committed');
+  await tx.execute(sql`SET LOCAL jit = off`);
+  await tx.execute(sql`SET LOCAL lock_timeout = '1ms'`);
+  await tx.execute(sql`SET LOCAL statement_timeout = '2000ms'`);
+  await tx.execute(sql`LOCK TABLE event IN SHARE ROW EXCLUSIVE MODE NOWAIT`);
+  await tx.execute(sql`LOCK TABLE evaluation IN SHARE ROW EXCLUSIVE MODE NOWAIT`);
+  if (!(await tryLearningStateWriteLock(tx)))
+    throw new ApiError('completion_busy', '完成证据正在更新，请稍后重试。', 409);
+  let active = true;
+  const started = performance.now();
+  try {
+    const value = await work({
+      read: async (ids, extraSources, asOf) => {
+        if (!active) throw new Error('completion fact capability expired');
+        const unique = [...new Set(ids)].sort();
+        if (!unique.length) return { facts: new Map(), sources: null, calibration: [] };
+        await tx
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(inArray(knowledge.id, unique))
+          .orderBy(knowledge.id)
+          .for('share', { noWait: true });
+        await tx
+          .select()
+          .from(materialized_id_index)
+          .where(
+            and(
+              eq(materialized_id_index.subject_kind, 'knowledge'),
+              inArray(materialized_id_index.materialized_id, unique),
+            ),
+          )
+          .orderBy(materialized_id_index.materialized_id)
+          .for('share', { noWait: true });
+        const discovered = await collectNativeMasteryBasis(tx, unique, asOf);
+        const roots = [...extraSources, ...[...discovered.values()].flatMap((f) => f.sources)];
+        const sources = await readCompletionSources(tx, roots);
+        if (!sources) return { facts: discovered, sources: null, calibration: [] };
+        const anchors = [
+          ...new Set([...discovered.values()].flatMap((f) => f.calibrationIds)),
+        ].sort();
+        const calibration = anchors.length
+          ? await tx
+              .select({
+                question_id: item_calibration.question_id,
+                beta: sql<number>`coalesce(${item_calibration.b_post}, ${item_calibration.b_anchor}, ${item_calibration.b})`,
+              })
+              .from(item_calibration)
+              .where(
+                and(
+                  inArray(item_calibration.question_id, anchors),
+                  eq(item_calibration.track, 'hard'),
+                ),
+              )
+              .orderBy(item_calibration.question_id)
+              .for('share', { noWait: true })
+          : [];
+        await lockCompletionSources(tx, sources);
+        const facts = await collectNativeMasteryBasis(tx, unique, asOf);
+        const currentSources = await readCompletionSources(tx, [
+          ...extraSources,
+          ...[...facts.values()].flatMap((f) => f.sources),
+        ]);
+        const currentAnchors = [
+          ...new Set([...facts.values()].flatMap((f) => f.calibrationIds)),
+        ].sort();
+        if (
+          sha256CanonicalJson(currentSources) !== sha256CanonicalJson(sources) ||
+          sha256CanonicalJson(currentAnchors) !== sha256CanonicalJson(anchors)
+        )
+          throw new ApiError('conflict', 'completion dependencies changed; retry', 409);
+        if (
+          calibration.length !== anchors.length ||
+          calibration.some((c) => !Number.isFinite(c.beta))
+        )
+          return { facts, sources: null, calibration: [] };
+        if (performance.now() - started > 2000)
+          throw new ApiError('conflict', 'completion fact budget exhausted; retry', 409);
+        return { facts, sources, calibration };
+      },
+    });
+    if (performance.now() - started > 2000)
+      throw new ApiError('completion_busy', '完成证据检查超时，请稍后重试。', 409);
+    return value;
+  } finally {
+    active = false;
+  }
+}
+
+/** Normalize only after the outer transaction has rolled back. */
+export function rethrowNativeMasteryBusy(error: unknown): never {
+  if (error && typeof error === 'object') {
+    if ('code' in error && (error.code === '55P03' || error.code === '57014'))
+      throw new ApiError('completion_busy', '完成证据正在更新，请稍后重试。', 409);
+    if ('cause' in error && error.cause) rethrowNativeMasteryBusy(error.cause);
+  }
+  throw error;
 }

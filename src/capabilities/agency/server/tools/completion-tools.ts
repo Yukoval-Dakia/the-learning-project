@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { writeCompletionProposal, writeRelearnProposal } from '@/kernel/proposals/producers';
+import { writeRelearnProposal } from '@/kernel/proposals/producers';
+import { proposeComputedCompletion } from '../learning-item-completion-producer';
 import {
   type LearningItemProposalOutput,
   LearningItemProposalOutputSchema,
@@ -9,18 +10,8 @@ import {
 } from './proposal-tool-support';
 import type { DomainTool, ToolContext } from './types';
 
-const CompletionSignalSchema = z.enum([
-  'mastery_high_persisted',
-  'check_all_passed',
-  'no_recent_mistake',
-  'user_stated_understanding',
-]);
-
 const ProposeLearningItemCompletionInputSchema = z.object({
   learning_item_id: z.string().min(1),
-  triggering_signals: z.array(CompletionSignalSchema).min(1),
-  evidence_event_ids: z.array(z.string().min(1)).optional(),
-  reasoning: z.string().min(1).max(2000),
 });
 
 type ProposeLearningItemCompletionInput = z.infer<typeof ProposeLearningItemCompletionInputSchema>;
@@ -30,40 +21,15 @@ async function proposeLearningItemCompletionExecute(
   raw: ProposeLearningItemCompletionInput,
 ): Promise<LearningItemProposalOutput> {
   const input = ProposeLearningItemCompletionInputSchema.parse(raw);
-  const item = await getActiveLearningItem(ctx.db, input.learning_item_id);
-  if (!item) return { status: 'skipped:not_found', learning_item_id: input.learning_item_id };
-  if (item.status !== 'pending' && item.status !== 'in_progress') {
-    return {
-      status: 'skipped:invalid_state',
-      learning_item_id: input.learning_item_id,
-      reason: item.status,
-    };
-  }
-  const cooldownKey = `completion:${input.learning_item_id}`;
-  if (await pendingProposalWithCooldown(ctx.db, 'completion', cooldownKey)) {
-    return { status: 'skipped:duplicate_pending', learning_item_id: input.learning_item_id };
-  }
-
   const actorRef =
     ctx.callerActor?.kind === 'agent' && ctx.callerActor.ref
       ? ctx.callerActor.ref
       : 'learning_item_maintenance';
-  const proposalId = await writeCompletionProposal(ctx.db, {
-    actor_ref: actorRef,
-    learning_item_id: input.learning_item_id,
-    triggering_signals: input.triggering_signals,
-    evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
-    evidence_json: { evidence_event_ids: input.evidence_event_ids ?? [] },
-    reason_md: input.reasoning,
-    task_run_id: ctx.taskRunId,
-    caused_by_event_id: ctx.causedByEventId ?? null,
+  return proposeComputedCompletion(ctx.db, input.learning_item_id, {
+    actorRef,
+    taskRunId: ctx.taskRunId,
+    causedByEventId: ctx.causedByEventId,
   });
-  return {
-    status: 'proposed',
-    proposal_id: proposalId,
-    learning_item_id: input.learning_item_id,
-    auto_applied: false,
-  };
 }
 
 export const proposeLearningItemCompletionTool: DomainTool<
@@ -72,7 +38,7 @@ export const proposeLearningItemCompletionTool: DomainTool<
 > = {
   name: 'propose_learning_item_completion',
   description:
-    'Propose that a pending/in_progress LearningItem is ready for completion. Writes a completion proposal only; status transition and ai_propose evidence stay in accept owner routes.',
+    'Check server-owned native evidence for a learning item and propose completion only when all knowledge points qualify. The learner must accept; model claims are not evidence.',
   effect: 'propose',
   inputSchema: ProposeLearningItemCompletionInputSchema,
   outputSchema: LearningItemProposalOutputSchema,
