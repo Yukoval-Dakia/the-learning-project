@@ -28,7 +28,7 @@ const CreateAttemptBodyBaseSchema = z.object({
   // 逐字不变。上界与 core/limits.ts 的 reasoning_trace 共享 REASONING_TRACE_MAX_LEN。
   reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).nullable().optional(),
   // 学生对本次作答的主观把握（1-5 整数），落到 review event payload.self_confidence。
-  // **observe-only**：server 只透传落库，绝不进 θ̂ / FSRS / 判分。
+  // 与 judge confidence 分开；仅在封存策略允许时细分自动复习评级，不改变判分或 θ̂。
   self_confidence: z.number().int().min(1).max(5).nullable().optional(),
   latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
   session_id: z.string().min(1).nullable().optional(),

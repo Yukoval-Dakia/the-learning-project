@@ -2,7 +2,7 @@
 // 断言契约：受助事件照实记 dose/phase；封存收据与 θ/FSRS/mastery 不被提交后揭示改写；
 // 客户端自报洗不掉服务端受助事实；v1 事件永不升级为独立、永不伪造 max_dose。
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, mastery_state, material_fsrs_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -38,63 +38,104 @@ describe('assistance evidence separation', () => {
 
   // @invariant grading: a post-submit reference reveal records an
   // after_submit exposure but never rewrites the sealed submission receipt, the
-  // attempt's θ/FSRS/mastery writes, or any learning state — the facts sealed at
+  // attempt's θ/FSRS/mastery writes, or its confidence/speed scheduling decision — facts sealed at
   // submit time stay the settlement inputs
   // @fails-if the reveal event mutates the sealed receipt (status/max_dose/phase
   // drift), mints another submission event, or moves mastery_state /
   // material_fsrs_state rows after the commit
-  it('seals the submission receipt at commit; post-submit reveal changes nothing', async () => {
-    const db = testDb();
-    const f = await nativeSoloHttpFixture(db);
-    const issuanceId = f.body().assessment.issuance_id;
+  it.each([
+    { capture: {}, rating: 'good', interval: 600_000 },
+    { capture: { self_confidence: 5, latency_ms: 10_000 }, rating: 'easy', interval: 691_200_000 },
+    { capture: { self_confidence: 1, latency_ms: 180_000 }, rating: 'hard', interval: 360_000 },
+    { capture: { self_confidence: 5, latency_ms: 0 }, rating: 'good', interval: 600_000 },
+    { capture: { self_confidence: 5 }, rating: 'good', interval: 600_000 },
+    { capture: { latency_ms: 180_000 }, rating: 'hard', interval: 360_000 },
+    { capture: { self_confidence: 3, latency_ms: 10_000 }, rating: 'good', interval: 600_000 },
+    { capture: { self_confidence: 1, latency_ms: 10_000 }, rating: 'hard', interval: 360_000 },
+    {
+      capture: { self_confidence: 5, latency_ms: 10_000, auto_rate: false, rating: 'hard' },
+      rating: 'hard',
+      interval: 360_000,
+    },
+  ])(
+    'seals the scheduling decision at commit; retry and reveal preserve it ($rating, $capture)',
+    async ({ capture, rating, interval }) => {
+      const db = testDb();
+      const f = await nativeSoloHttpFixture(db);
+      const issuanceId = f.body().assessment.issuance_id;
 
-    const http = await createAttempt(nativeHttpRequest(f.body()));
-    expect(http.status).toBe(200);
-    const body = await http.json();
-    expect(body).toMatchObject({
-      status: 'effective',
-      evidence: {
-        assistance: {
-          status: 'independent',
-          max_dose: null,
-          kinds: [],
-          phase: 'before_submit',
+      const http = await createAttempt(nativeHttpRequest(f.body(capture)));
+      expect(http.status).toBe(200);
+      const body = await http.json();
+      expect(body).toMatchObject({
+        status: 'effective',
+        evidence: {
+          assistance: {
+            status: 'independent',
+            max_dose: null,
+            kinds: [],
+            phase: 'before_submit',
+          },
+          verdict: { outcome: 'correct' },
         },
-        verdict: { outcome: 'correct' },
-      },
-    });
-    const submissionId = body.assessment.submission_id;
-    const snapshot = async () => ({
-      mastery: await db.select().from(mastery_state),
-      fsrs: await db.select().from(material_fsrs_state),
-      receipt: await readSubmissionAssistanceReceipt(db, submissionId),
-      submissions: await db
-        .select()
-        .from(event)
-        .where(eq(event.action, 'experimental:assessment_submission')),
-    });
-    const before = await snapshot();
-    expect(before.receipt).toMatchObject({
-      status: 'independent',
-      max_dose: null,
-      kinds: [],
-      phase: 'before_submit',
-    });
+      });
+      const submissionId = body.assessment.submission_id;
+      const snapshot = async () => ({
+        mastery: await db.select().from(mastery_state),
+        fsrs: await db.select().from(material_fsrs_state),
+        receipts: await db
+          .select()
+          .from(event)
+          .where(
+            inArray(event.action, [
+              'experimental:assessment_attempt',
+              'experimental:assessment_settlement',
+            ]),
+          ),
+        receipt: await readSubmissionAssistanceReceipt(db, submissionId),
+        submissions: await db
+          .select()
+          .from(event)
+          .where(eq(event.action, 'experimental:assessment_submission')),
+      });
+      const before = await snapshot();
+      const plan = before.receipts.find(
+        (row) => row.action === 'experimental:assessment_settlement',
+      )?.payload.replay_inputs as {
+        rating: string;
+        occurrenceAt: string;
+        kcRatings: { rating: string }[];
+      };
+      expect(plan.rating).toBe(rating);
+      expect(plan.kcRatings[0]?.rating).toBe(rating);
+      expect(before.fsrs[0].due_at.getTime() - Date.parse(plan.occurrenceAt)).toBe(interval);
+      const replay = await createAttempt(
+        nativeHttpRequest(f.body({ ...capture, self_confidence: 2, latency_ms: 999_999 })),
+      );
+      expect(replay.status).toBe(200);
+      expect(await snapshot()).toEqual(before);
+      expect(before.receipt).toMatchObject({
+        status: 'independent',
+        max_dose: null,
+        kinds: [],
+        phase: 'before_submit',
+      });
 
-    const reveal = await revealFrozenStudyReference(db, issuanceId);
-    expect(reveal.reference_md).not.toBeNull();
-    const exposures = await exposuresFor(issuanceId);
-    expect(exposures).toHaveLength(1);
-    expect(exposures[0].payload).toMatchObject({
-      version: 2,
-      kind: 'solution',
-      impact: 'answer_help',
-      dose: null,
-      phase: 'after_submit',
-    });
+      const reveal = await revealFrozenStudyReference(db, issuanceId);
+      expect(reveal.reference_md).not.toBeNull();
+      const exposures = await exposuresFor(issuanceId);
+      expect(exposures).toHaveLength(1);
+      expect(exposures[0].payload).toMatchObject({
+        version: 2,
+        kind: 'solution',
+        impact: 'answer_help',
+        dose: null,
+        phase: 'after_submit',
+      });
 
-    expect(await snapshot()).toEqual(before);
-  });
+      expect(await snapshot()).toEqual(before);
+    },
+  );
 
   // @invariant concurrency: self_claim follows the rating operation, not the
   // submission replay flag — a submission sealed by an advice preview still

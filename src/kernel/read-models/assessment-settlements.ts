@@ -2,14 +2,16 @@
 // Write, replay and candidate reconstruction remain with the settlement owner.
 
 import { and, eq, gte, or, sql } from 'drizzle-orm';
+import type { z } from 'zod';
 import { settlementReversions } from '@/core/assessment-settlement-liveness';
 import type {
   CandidateReplayInput,
   SealedCandidateInput,
   candidateObservations,
 } from '@/core/scheduling/candidate';
-import type { FsrsRatingLabel, KcObservation } from '@/core/schema/assessment';
+import type { KcObservation } from '@/core/schema/assessment';
 import type { KcEvidenceApply, KcWrongCauseT } from '@/core/schema/assessment/kc-mastery-evidence';
+import type { FsrsRating } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
@@ -78,7 +80,7 @@ export interface SettlementPlan {
   provenance: { source: 'automatic' | 'manual' | 'self_report'; assisted: boolean };
   verdict: { verdict: string; reason: string; points: number | null; normalized: number | null };
   /** null means do not schedule. Unsupported and unratable verdicts stay null. */
-  rating: 'again' | 'hard' | 'good' | null;
+  rating: z.infer<typeof FsrsRating> | null;
   /** 'user' = explicit activation choice or manual/self_report provenance. */
   ratingSource: 'verdict' | 'user' | 'none';
   /** Sealed on the settlement evidence. Replay keeps this mapping instead of today's labels. */
@@ -91,7 +93,7 @@ export interface SettlementPlan {
    * Per-KC FSRS ratings sealed with the plan. Absence is a legacy plan and keeps
    * the shared `rating` behaviour; an abstaining KC is present with `rating: null`.
    */
-  kcRatings?: Array<{ knowledgeId: string; rating: FsrsRatingLabel | null }>;
+  kcRatings?: Array<{ knowledgeId: string; rating: z.infer<typeof FsrsRating> | null }>;
   kcObservations: KcObservation[];
   /** Which KC dragged the attempt. null only on plans sealed before this field existed. */
   kcWrongCause?: KcWrongCauseT;

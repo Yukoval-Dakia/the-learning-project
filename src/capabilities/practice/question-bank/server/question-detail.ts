@@ -120,7 +120,7 @@ export interface QuestionDetailTimelineEntry {
     secondary_labels: Record<string, string>;
   } | null;
   // review-only
-  fsrs_rating?: 'again' | 'hard' | 'good';
+  fsrs_rating?: 'again' | 'hard' | 'good' | 'easy';
 }
 
 export interface QuestionDetail {

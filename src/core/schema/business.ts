@@ -282,7 +282,7 @@ export const Cause = z.object({
   user_edited: z.boolean().default(false),
 });
 
-export const FsrsRating = z.enum(['again', 'hard', 'good']);
+export const FsrsRating = z.enum(['again', 'hard', 'good', 'easy']);
 export const FsrsCardState = z.enum(['new', 'learning', 'review', 'relearning']);
 
 // Mirrors ts-fsrs v5 Card. JSON column reads must FsrsState.parse() to coerce

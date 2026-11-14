@@ -5,6 +5,7 @@
 
 import { and, eq, inArray } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
+import { automaticSchedulingRating } from '@/core/scheduling/attempt-rating';
 import {
   CandidateFactSchema,
   candidateObservations,
@@ -95,6 +96,7 @@ interface SettlementScope {
   frozenLearningScope: boolean;
   capture: NonNullable<ActivationSettleInput['forgettingCapture']>;
   assistance: 'independent' | 'assisted' | 'unknown';
+  schedulingPolicy: unknown;
 }
 
 export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<SettlementScope> {
@@ -199,6 +201,7 @@ export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<S
     typeof original?.payload[key] === 'number' ? original.payload[key] : null;
   return {
     frozenLearningScope: frozen !== null,
+    schedulingPolicy: original?.payload.scheduling_policy,
     capture: input.forgettingCapture ?? {
       hints_used: numeric('hints_used'),
       final_hint_level: numeric('final_hint_level'),
@@ -291,9 +294,20 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
   // candidate 引擎的 forgettingSuppressed 同型）；用户显式自评（userRating）不受影响。
   const autoRatingSuppressed =
     provenance.source === 'automatic' && (provenance.assisted || learnerAssisted);
+  const automaticRating =
+    provenance.source === 'automatic'
+      ? automaticSchedulingRating({
+          verdict: verdict.verdict,
+          normalized: verdict.normalized,
+          policy: scope.schedulingPolicy,
+          difficulty: scope.groupRow?.difficulty,
+          confidence: scope.capture.self_confidence,
+          durationMs: scope.capture.latency_ms,
+        })
+      : ratingForVerdict(verdict.verdict);
   const rating = scope.preserveScheduling
     ? null
-    : (input.userRating ?? (autoRatingSuppressed ? null : ratingForVerdict(verdict.verdict)));
+    : (input.userRating ?? (autoRatingSuppressed ? null : automaticRating));
   const ratingSource: SettlementPlan['ratingSource'] =
     rating === null
       ? 'none'
@@ -314,7 +328,13 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
           const observation = observations.find((row) => row.kc_id === knowledgeId);
           const direction = observation?.direction;
           const observationRating =
-            direction === 'up' ? 'good' : direction === 'down' ? 'again' : null;
+            direction === 'up'
+              ? verdict.verdict === 'correct' && verdict.normalized === 1
+                ? automaticRating
+                : 'good'
+              : direction === 'down'
+                ? 'again'
+                : null;
           return {
             knowledgeId,
             rating: scope.preserveScheduling
@@ -401,7 +421,7 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
     ? [
         {
           maximum: 1,
-          earned: rating === 'good' ? 1 : rating === 'hard' ? 0.5 : 0,
+          earned: rating === 'good' || rating === 'easy' ? 1 : rating === 'hard' ? 0.5 : 0,
           shares: fsrsSubjects.map((subject) => ({
             skillId: subject.id,
             share: 1 / fsrsSubjects.length,

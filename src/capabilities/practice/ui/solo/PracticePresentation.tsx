@@ -34,7 +34,7 @@ type Engine = ReturnType<typeof usePracticeSubmit>;
 type Frozen = Extract<Engine['issuance'], { status: 'ready' }>['frozen'];
 type Figure = Frozen['materials'][number];
 const ratings: readonly Rating[] = ['again', 'hard', 'good'];
-const ratingLabels = { again: '再练', hard: '模糊', good: '会了' };
+const ratingLabels = { again: '再练', hard: '模糊', good: '会了', easy: '轻松' };
 // About 30 s of successful reads at the poller's backoff; a loose first number, no timer needed.
 const LONG_WAIT_POLLS = 8;
 const APPEAL_REASON_MAX = 2000;
@@ -355,8 +355,7 @@ export function PracticePresentation(props: PracticePresentationProps) {
           submit.canSubmit,
           '请完成作答，或等待当前操作结束',
         );
-      // Open questions only, like the working box; a diagnostic stays a one-shot measurement.
-      if (shouldOfferProcessBox(draft.isChoice) && !question.isInterventionDiagnostic)
+      if (!question.isInterventionDiagnostic)
         submission.confidence = {
           value: submit.selfConfidence,
           availability: submit.judging ? { kind: 'busy', reason: '正在提交' } : { kind: 'enabled' },

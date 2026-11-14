@@ -23,14 +23,14 @@ export type AttemptTimelineEvent =
       kind: 'review';
       event_id: string;
       created_at_sec: number;
-      fsrs_rating: 'again' | 'hard' | 'good';
+      fsrs_rating: 'again' | 'hard' | 'good' | 'easy';
       outcome: 'success' | 'failure';
       duration_ms: number | null;
     };
 
 const ATTEMPT_OUTCOMES = new Set(['success', 'failure', 'partial', 'pending', 'unsupported']);
 const REVIEW_OUTCOMES = new Set(['success', 'failure']);
-const RATINGS = new Set(['again', 'hard', 'good']);
+const RATINGS = new Set(['again', 'hard', 'good', 'easy']);
 
 export function toAttemptTimelineEvents(entries: QFullTimelineEntry[]): AttemptTimelineEvent[] {
   const out: AttemptTimelineEvent[] = [];

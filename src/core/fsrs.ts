@@ -9,6 +9,7 @@ const RATING_MAP: Record<RatingLabel, Grade> = {
   again: Rating.Again,
   hard: Rating.Hard,
   good: Rating.Good,
+  easy: Rating.Easy,
 };
 
 const STATE_TO_STRING: Record<State, FsrsStateData['state']> = {

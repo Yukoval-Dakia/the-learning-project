@@ -6742,13 +6742,13 @@ export interface operations {
                                 ratingPolicy: {
                                     outcomeToRating: {
                                         /** @enum {string} */
-                                        correct: "again" | "hard" | "good";
+                                        correct: "again" | "hard" | "good" | "easy";
                                         /** @enum {string} */
-                                        incorrect: "again" | "hard" | "good";
+                                        incorrect: "again" | "hard" | "good" | "easy";
                                         /** @enum {string} */
-                                        partial: "again" | "hard" | "good";
+                                        partial: "again" | "hard" | "good" | "easy";
                                         /** @enum {string|null} */
-                                        unsupported: "again" | "hard" | "good" | null;
+                                        unsupported: "again" | "hard" | "good" | "easy" | null;
                                     };
                                 };
                             };
@@ -7010,13 +7010,13 @@ export interface operations {
                         ratingPolicy?: {
                             outcomeToRating: {
                                 /** @enum {string} */
-                                correct: "again" | "hard" | "good";
+                                correct: "again" | "hard" | "good" | "easy";
                                 /** @enum {string} */
-                                incorrect: "again" | "hard" | "good";
+                                incorrect: "again" | "hard" | "good" | "easy";
                                 /** @enum {string} */
-                                partial: "again" | "hard" | "good";
+                                partial: "again" | "hard" | "good" | "easy";
                                 /** @enum {string|null} */
-                                unsupported: "again" | "hard" | "good" | null;
+                                unsupported: "again" | "hard" | "good" | "easy" | null;
                             };
                         };
                     } | {
@@ -7809,13 +7809,13 @@ export interface operations {
                         ratingPolicy?: {
                             outcomeToRating: {
                                 /** @enum {string} */
-                                correct: "again" | "hard" | "good";
+                                correct: "again" | "hard" | "good" | "easy";
                                 /** @enum {string} */
-                                incorrect: "again" | "hard" | "good";
+                                incorrect: "again" | "hard" | "good" | "easy";
                                 /** @enum {string} */
-                                partial: "again" | "hard" | "good";
+                                partial: "again" | "hard" | "good" | "easy";
                                 /** @enum {string|null} */
-                                unsupported: "again" | "hard" | "good" | null;
+                                unsupported: "again" | "hard" | "good" | "easy" | null;
                             };
                         };
                     } | {
@@ -10338,7 +10338,7 @@ export interface operations {
                     part_ref?: string | null;
                     question_id?: string;
                     /** @enum {string} */
-                    rating: "again" | "hard" | "good";
+                    rating: "again" | "hard" | "good" | "easy";
                     reasoning_trace?: string | null;
                     /** @default [] */
                     referenced_knowledge_ids?: string[];
@@ -10623,7 +10623,7 @@ export interface operations {
                     part_ref?: string | null;
                     question_id: string;
                     /** @enum {string} */
-                    rating: "again" | "hard" | "good";
+                    rating: "again" | "hard" | "good" | "easy";
                     reasoning_trace?: string | null;
                     /** @default [] */
                     referenced_knowledge_ids?: string[];
@@ -10908,7 +10908,7 @@ export interface operations {
                     part_ref?: string | null;
                     question_id?: string;
                     /** @enum {string} */
-                    rating: "again" | "hard" | "good";
+                    rating: "again" | "hard" | "good" | "easy";
                     reasoning_trace?: string | null;
                     /** @default [] */
                     referenced_knowledge_ids?: string[];
@@ -10953,7 +10953,7 @@ export interface operations {
                             self_claim: {
                                 confidence: number | null;
                                 /** @enum {string|null} */
-                                rating: "again" | "hard" | "good" | null;
+                                rating: "again" | "hard" | "good" | "easy" | null;
                             } | null;
                             verdict: {
                                 /** @enum {string} */
@@ -10985,7 +10985,7 @@ export interface operations {
                             route: string;
                             score: number | null;
                             /** @enum {string|null} */
-                            suggested_rating: "again" | "hard" | "good" | null;
+                            suggested_rating: "again" | "hard" | "good" | "easy" | null;
                             telemetry?: unknown;
                         } & {
                             [key: string]: unknown;
@@ -11019,7 +11019,7 @@ export interface operations {
                             /** @enum {string|null} */
                             score: null;
                             /** @enum {string|null} */
-                            suggested_rating: "again" | "hard" | "good" | null;
+                            suggested_rating: "again" | "hard" | "good" | "easy" | null;
                             telemetry?: unknown;
                         } & {
                             [key: string]: unknown;
@@ -11055,7 +11055,7 @@ export interface operations {
                             route: string;
                             score: number | null;
                             /** @enum {string|null} */
-                            suggested_rating: "again" | "hard" | "good" | null;
+                            suggested_rating: "again" | "hard" | "good" | "easy" | null;
                             telemetry?: unknown;
                         } & {
                             [key: string]: unknown;
@@ -11089,7 +11089,7 @@ export interface operations {
                             /** @enum {string|null} */
                             score: null;
                             /** @enum {string|null} */
-                            suggested_rating: "again" | "hard" | "good" | null;
+                            suggested_rating: "again" | "hard" | "good" | "easy" | null;
                             telemetry?: unknown;
                         } & {
                             [key: string]: unknown;
@@ -11163,7 +11163,7 @@ export interface operations {
                             latency_ms: number | null;
                             question_id: string;
                             /** @enum {string} */
-                            rating: "again" | "hard" | "good";
+                            rating: "again" | "hard" | "good" | "easy";
                             response_md: string | null;
                         };
                     };
@@ -20570,7 +20570,7 @@ export interface operations {
                                         self_claim: {
                                             confidence: number | null;
                                             /** @enum {string|null} */
-                                            rating: "again" | "hard" | "good" | null;
+                                            rating: "again" | "hard" | "good" | "easy" | null;
                                         } | null;
                                         verdict: {
                                             /** @enum {string} */
@@ -21322,7 +21322,7 @@ export interface operations {
                                 self_claim: {
                                     confidence: number | null;
                                     /** @enum {string|null} */
-                                    rating: "again" | "hard" | "good" | null;
+                                    rating: "again" | "hard" | "good" | "easy" | null;
                                 } | null;
                                 verdict: {
                                     /** @enum {string} */
@@ -26833,7 +26833,7 @@ export interface operations {
                                                     self_claim: {
                                                         confidence: number | null;
                                                         /** @enum {string|null} */
-                                                        rating: "again" | "hard" | "good" | null;
+                                                        rating: "again" | "hard" | "good" | "easy" | null;
                                                     } | null;
                                                     verdict: {
                                                         /** @enum {string} */
@@ -28575,7 +28575,7 @@ export interface operations {
                                                         self_claim: {
                                                             confidence: number | null;
                                                             /** @enum {string|null} */
-                                                            rating: "again" | "hard" | "good" | null;
+                                                            rating: "again" | "hard" | "good" | "easy" | null;
                                                         } | null;
                                                         verdict: {
                                                             /** @enum {string} */
@@ -29826,7 +29826,7 @@ export interface operations {
                                                     self_claim: {
                                                         confidence: number | null;
                                                         /** @enum {string|null} */
-                                                        rating: "again" | "hard" | "good" | null;
+                                                        rating: "again" | "hard" | "good" | "easy" | null;
                                                     } | null;
                                                     verdict: {
                                                         /** @enum {string} */
@@ -39858,7 +39858,7 @@ export interface operations {
                         advice: {
                             evidence_score: number | null;
                             /** @enum {string|null} */
-                            rating: "again" | "hard" | "good" | null;
+                            rating: "again" | "hard" | "good" | "easy" | null;
                             reason: string;
                         };
                         automatic_commit: boolean;
@@ -39889,7 +39889,7 @@ export interface operations {
                                 self_claim: {
                                     confidence: number | null;
                                     /** @enum {string|null} */
-                                    rating: "again" | "hard" | "good" | null;
+                                    rating: "again" | "hard" | "good" | "easy" | null;
                                 } | null;
                                 verdict: {
                                     /** @enum {string} */
@@ -39921,7 +39921,7 @@ export interface operations {
                                 route: string;
                                 score: number | null;
                                 /** @enum {string|null} */
-                                suggested_rating: "again" | "hard" | "good" | null;
+                                suggested_rating: "again" | "hard" | "good" | "easy" | null;
                                 telemetry?: unknown;
                             } & {
                                 [key: string]: unknown;
@@ -39955,7 +39955,7 @@ export interface operations {
                                 /** @enum {string|null} */
                                 score: null;
                                 /** @enum {string|null} */
-                                suggested_rating: "again" | "hard" | "good" | null;
+                                suggested_rating: "again" | "hard" | "good" | "easy" | null;
                                 telemetry?: unknown;
                             } & {
                                 [key: string]: unknown;
@@ -39979,7 +39979,7 @@ export interface operations {
                             self_claim: {
                                 confidence: number | null;
                                 /** @enum {string|null} */
-                                rating: "again" | "hard" | "good" | null;
+                                rating: "again" | "hard" | "good" | "easy" | null;
                             } | null;
                             verdict: {
                                 /** @enum {string} */
@@ -40012,7 +40012,7 @@ export interface operations {
                             /** @enum {string} */
                             score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
                             /** @enum {string|null} */
-                            suggested_rating: "again" | "hard" | "good" | null;
+                            suggested_rating: "again" | "hard" | "good" | "easy" | null;
                             task_run_id?: string;
                             telemetry?: unknown;
                         } | {
@@ -40046,7 +40046,7 @@ export interface operations {
                             /** @enum {string} */
                             score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
                             /** @enum {string|null} */
-                            suggested_rating: "again" | "hard" | "good" | null;
+                            suggested_rating: "again" | "hard" | "good" | "easy" | null;
                             task_run_id?: string;
                             telemetry?: unknown;
                         };

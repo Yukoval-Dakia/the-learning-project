@@ -61,7 +61,7 @@ export async function dispatchNativeAttempt(
   options: {
     enabled: boolean;
     capture: FormalAttemptCapture;
-    userRating?: 'again' | 'hard' | 'good';
+    userRating?: 'again' | 'hard' | 'good' | 'easy';
     /** A candidate an earlier synchronous preview sealed: the worker activates exactly it. */
     activationIntent?: ActivateEvaluationIntentT;
     requireUnassistedModelEvidence?: boolean;
