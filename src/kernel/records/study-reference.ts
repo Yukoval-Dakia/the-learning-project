@@ -17,7 +17,6 @@ import { resolveChoiceOrder } from '@/core/schema/assessment/choice-order';
 import { orderableOptionIds } from '@/core/schema/assessment/revision';
 import type { HintPublicationT } from '@/core/schema/event/assistance-publication';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
-import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import type { Db, Tx } from '@/db/client';
 import {
   assessment_issuance,
@@ -26,6 +25,7 @@ import {
   question,
   question_revision,
 } from '@/db/schema';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 
@@ -463,7 +463,11 @@ async function recordNoteExposure(
         version: input.note.version,
       })
     ) {
-      throw new ApiError('exposure_identity_conflict', 'note exposure identity is inconsistent', 409);
+      throw new ApiError(
+        'exposure_identity_conflict',
+        'note exposure identity is inconsistent',
+        409,
+      );
     }
     return receipt;
   }
@@ -480,10 +484,7 @@ async function recordNoteExposure(
   return receipt;
 }
 
-function noteProvenanceMatches(
-  value: unknown,
-  expected: { id: string; version: number },
-): boolean {
+function noteProvenanceMatches(value: unknown, expected: { id: string; version: number }): boolean {
   if (!value || typeof value !== 'object') return false;
   const note = value as Record<string, unknown>;
   return note.id === expected.id && note.version === expected.version;

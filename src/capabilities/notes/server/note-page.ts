@@ -7,11 +7,11 @@ import {
   type BacklinksByArtifactType,
   groupBacklinksByArtifactType,
 } from '@/capabilities/notes/server/block-refs';
-import { noteBodyIsEmpty } from '@/capabilities/notes/server/note-generation-fallback';
 import {
   type NoteGenerationFailure,
   readNoteGenerationFailure,
 } from '@/capabilities/notes/server/note-generation-failure';
+import { noteBodyIsEmpty } from '@/capabilities/notes/server/note-generation-fallback';
 import type {
   ArtifactBodyBlocksT,
   ArtifactHistoryEntryT,
@@ -20,12 +20,12 @@ import type {
 import { InteractiveArtifactAttrs } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { ApiError } from '@/kernel/http';
 import { stripInteractiveAnswerAttributes } from '@/kernel/learning-content';
-import { recordStudyAssistanceExposure } from '@/kernel/records/study-reference';
 import { bodyBlocksToNoteSections } from '@/kernel/read-models/note-sections';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { recordStudyAssistanceExposure } from '@/kernel/records/study-reference';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 import { readVisibleArtifactBacklinks } from './visible-artifact-backlinks';
 

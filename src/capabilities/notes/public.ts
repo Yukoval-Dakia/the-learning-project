@@ -42,8 +42,7 @@ export { installNotesHostOperations } from './server/host-operations';
 export type { NoteListQuery, NoteListResponse } from './server/note-list-read';
 export { loadNoteList } from './server/note-list-read';
 export type { PracticeNoteOpenInput, PracticeNoteOpenResult } from './server/note-page';
-export { openPracticeNotePage } from './server/note-page';
-export { loadNotePage } from './server/note-page';
+export { loadNotePage, openPracticeNotePage } from './server/note-page';
 export { enqueueMasteryNoteRefine, enqueueNoteRefineTrigger } from './server/note-refine-triggers';
 export type { NoteSummary } from './server/notes-read';
 export {
