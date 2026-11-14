@@ -32,6 +32,12 @@ export type StreamSource =
   | 'intervention';
 export type StreamStatus = 'pending' | 'in_progress' | 'done' | 'skipped';
 
+export interface StreamKnowledgeNote {
+  knowledge_id: string;
+  note_id: string;
+  title: string;
+}
+
 export interface StreamItem {
   id: string;
   position: number;
@@ -43,6 +49,7 @@ export interface StreamItem {
   status: StreamStatus;
   estimated_minutes: number;
   knowledge_name: string | null;
+  knowledge_notes: StreamKnowledgeNote[];
   paper_title: string | null;
   verdict: 'again' | 'hard' | 'good' | null;
   completed_at: string | null;

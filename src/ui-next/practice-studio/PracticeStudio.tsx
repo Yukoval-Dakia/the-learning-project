@@ -1,11 +1,40 @@
 import { MessageSquareQuote, Paperclip } from 'lucide-react';
 import { Mascot } from '@/ui-next/public';
-import type { ReadingProps, Submission } from './contracts';
+import type { KnowledgeNoteLink, ReadingProps, Submission } from './contracts';
 import { ConfidenceScale, IntentButton, NoticeBlock } from './controls';
 import { PracticeFeedback } from './PracticeFeedback';
 import { PracticeField } from './PracticeFields';
 import './studio.css';
 import './renderers.css';
+
+function KnowledgeNoteContinuation({ notes }: { notes: readonly KnowledgeNoteLink[] }) {
+  return (
+    <nav className="un-st-knowledge-notes" aria-label="相关知识点与笔记">
+      <h3>接着看</h3>
+      <ul>
+        {notes.map((note) => (
+          <li key={note.note_id} className="un-st-knowledge-note-row">
+            <p>{note.title}</p>
+            <div className="un-st-knowledge-note-links">
+              <a
+                className="un-st-button un-st-text"
+                href={`/knowledge/${encodeURIComponent(note.knowledge_id)}`}
+              >
+                查看知识点
+              </a>
+              <a
+                className="un-st-button un-st-text"
+                href={`/notes/${encodeURIComponent(note.note_id)}?entry=${encodeURIComponent(note.knowledge_id)}`}
+              >
+                打开笔记
+              </a>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
 
 function SubmissionStatus({
   submission: s,
@@ -82,6 +111,11 @@ export function PracticeStudio(p: ReadingProps) {
   const q = page.question;
   const primary = q.submission.primary;
   const afterFeedback = q.revelation.kind === 'revealed';
+  const result = q.revelation.kind === 'revealed' ? q.revelation.result : undefined;
+  const knowledgeNotes =
+    result && (result.verdict === 'incorrect' || result.verdict === 'partial')
+      ? result.knowledgeNotes
+      : undefined;
   const actionRow = (
     <div ref={lifecycle?.submitActionsRef} className="un-st-submit">
       {q.submission.confidence && (
@@ -200,7 +234,16 @@ export function PracticeStudio(p: ReadingProps) {
           revelation={q.revelation}
           intents={intents}
           renderers={renderers}
-          actions={afterFeedback ? actionRow : undefined}
+          actions={
+            afterFeedback ? (
+              <>
+                {knowledgeNotes && knowledgeNotes.length > 0 && (
+                  <KnowledgeNoteContinuation notes={knowledgeNotes} />
+                )}
+                {actionRow}
+              </>
+            ) : undefined
+          }
         />
       </div>
       <section className="un-st-study-tools" aria-label="辅助工具">
