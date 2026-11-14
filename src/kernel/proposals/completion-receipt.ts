@@ -81,7 +81,7 @@ export async function completionReceiptDisplayAllowed(
   if (subjectKind === 'goal') {
     const [currentGoal] = await db.select().from(goal).where(eq(goal.id, receipt.item_id));
     if (
-      !currentGoal ||
+      currentGoal?.status !== 'active' ||
       currentGoal.steering !== null ||
       !(
         (currentGoal.source === 'manual' && currentGoal.source_ref === null) ||
