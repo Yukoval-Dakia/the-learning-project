@@ -20,6 +20,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, CircleAlert, Clock, Target, Upload } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
+import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button, UiNextRoot } from '@/ui-next/public';
 import { OnboardingError, OnboardingState } from './OnboardingStatus';
@@ -51,7 +52,11 @@ const clamp01 = (v: number | undefined, fb: number) => Math.max(0, Math.min(1, v
 
 type Conf = 'none' | 'low' | 'ok';
 // Says what the band does, not how far to trust it: a few answers can already narrow it.
-const CONF_LABEL: Record<Conf, string> = { none: '未测', low: '区间还宽', ok: '区间已收窄' };
+const CONF_LABEL: Record<Conf, string> = {
+  none: '未测',
+  low: '初步 · 低置信',
+  ok: '区间已收窄',
+};
 // Confidence bucket for a KC: untested (no evidence) → none; otherwise the projection's
 // low_confidence flag decides low vs ok.
 const confOf = (kc: ProfileKc): Conf => {
@@ -271,6 +276,7 @@ function ProfileBody({
               kc={k}
               verdict={showVerify ? verdictById.get(k.id) : undefined}
               rcState={rcState}
+              navigate={navigate}
             />
           ))}
         </div>
@@ -290,6 +296,7 @@ function ProfileBody({
                   kc={k}
                   verdict={showVerify ? verdictById.get(k.id) : undefined}
                   rcState={rcState}
+                  navigate={navigate}
                 />
               ))}
             </div>
@@ -355,10 +362,12 @@ function KcRow({
   kc,
   verdict,
   rcState,
+  navigate,
 }: {
   kc: ProfileKc;
   verdict?: RcKcVerdict;
   rcState: ReturnType<typeof useRecompute>['state'];
+  navigate: (to: string) => void;
 }) {
   const untested = !kc.tested || kc.evidence_count === 0;
   const conf = confOf(kc);
@@ -376,6 +385,21 @@ function KcRow({
 
   // YUK-495 #41 — calm ochre hairline on a KC whose displayed numbers don't re-derive.
   const drifted = verdict?.kind === 'drift';
+
+  // YUK-1587 — evidence presentation: a low-confidence row states its evidence-record count
+  // and 「初步」 instead of a numeric interval (evidence count = records, not questions
+  // answered independently correctly; the wire carries no per-attempt refs to show here).
+  // The band itself keeps its qualitative shape; only the printed number is withheld.
+  const bandLabel = kc.low_confidence ? '初步' : `可能区间 ${pct(lo)}–${pct(hi)}`;
+  const evidenceLabel = untested ? '暂无证据记录' : `${kc.evidence_count} 条证据记录`;
+
+  const draftObjection = () => {
+    setCompanionFocus({ kind: 'knowledge', id: kc.id, title: kc.name });
+    openCopilot(
+      `我想核对并提出异议：知识点「${kc.name}」。起始画像显示 ${kc.evidence_count} 条证据记录${kc.low_confidence ? '，标为初步 · 低置信' : '，区间已收窄'}。请先查看原始依据，再讨论是否需要纠正。我的补充是：`,
+      { send: false },
+    );
+  };
 
   return (
     <div
@@ -400,10 +424,19 @@ function KcRow({
             </div>
             <div className="un-ob-band-axis">
               <span>较弱</span>
-              <span>
-                可能区间 {pct(lo)}–{pct(hi)}
-              </span>
+              <span>{bandLabel}</span>
               <span>较稳</span>
+            </div>
+            <div className="un-ob-kc-actions">
+              <Button
+                variant="ghost"
+                onClick={() => navigate(`/knowledge/${encodeURIComponent(kc.id)}`)}
+              >
+                查看知识点与依据
+              </Button>
+              <Button variant="ghost" onClick={draftObjection}>
+                提出异议
+              </Button>
             </div>
           </>
         )}
@@ -413,7 +446,7 @@ function KcRow({
         <span className="un-ob-conf" data-conf={conf}>
           {CONF_LABEL[conf]}
         </span>
-        <span className="un-ob-kc-ev">{untested ? '0 题' : `${kc.evidence_count} 题记录`}</span>
+        <span className="un-ob-kc-ev">{evidenceLabel}</span>
       </div>
     </div>
   );
