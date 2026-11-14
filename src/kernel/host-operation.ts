@@ -142,13 +142,13 @@ function equivalentHostOperations(left: unknown, right: unknown): boolean {
 export function installHostOperation<T>(key: string, operation: T): void {
   const registry = sharedRegistry();
   const installed = registry.get(key);
-  if (
-    installed !== undefined &&
-    !equivalentHostOperations(registeredOperation(installed), operation)
-  ) {
-    throw new HostOperationConflictError(
-      `host operation "${key}" is already installed with a different operation`,
-    );
+  if (installed !== undefined) {
+    if (!equivalentHostOperations(registeredOperation(installed), operation)) {
+      throw new HostOperationConflictError(
+        `host operation "${key}" is already installed with a different operation`,
+      );
+    }
+    return;
   }
   registry.set(key, {
     phase: 'direct',
