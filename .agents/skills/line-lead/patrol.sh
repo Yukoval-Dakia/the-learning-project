@@ -9,7 +9,7 @@ FIELDS='number,headRefName,isDraft,mergeStateStatus,updatedAt,statusCheckRollup'
 open=$(gh pr list --state open --limit 100 --json "$FIELDS")
 merged=$(gh pr list --state merged --limit 200 --json number,headRefName,mergedAt)
 
-jq -rn --argjson open "$open" --argjson merged "$merged" --argjson slots "$SLOTS" '
+out=$(jq -rn --argjson open "$open" --argjson merged "$merged" --argjson slots "$SLOTS" '
   def line: if test("^ui/") then "ui" elif test("^arch/") then "arch" elif test("^feat/") then "feat" else "other" end;
   def ts: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
   def mins($t): ((now - $t) / 60 | floor);
@@ -39,7 +39,20 @@ jq -rn --argjson open "$open" --argjson merged "$merged" --argjson slots "$SLOTS
       | "ACTION \($l) #\(.number) 与 main 冲突：追 main"),
     (if $active < $slots then "ACTION \($l) 只有 \($active)/\($slots) 个槽在动：现在派 \($slots - $active) 个写手" else empty end),
     (if $hour == 0 then "ACTION \($l) 过去 60 分钟没有合并：报出最接近合并的 PR 和它差的那一步" else empty end)
-'
+')
+echo "$out"
 
 other=$(jq '[.[] | select(.headRefName | test("^(ui|arch|feat|dependabot)/") | not)] | length' <<<"$open")
 echo "UNASSIGNED open=$other（分支没有 ui/ arch/ feat/ 前缀，不计入任何线）"
+
+if [ "${PATROL_QUEUE:-0}" = "1" ]; then
+  for l in ui arch feat; do
+    msg=$(echo "$out" | { rg "^LINE $l|^ACTION $l" || true; })
+    [ -n "$msg" ] || continue
+    if codex queue --thread "lead-$l" --message "$msg" --resume >/dev/null 2>&1; then
+      echo "QUEUED lead-$l"
+    else
+      echo "QUEUE_FAILED lead-$l（线程名不存在或 daemon 不在线）"
+    fi
+  done
+fi
