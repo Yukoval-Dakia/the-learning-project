@@ -142,7 +142,9 @@ export async function requestFailureLearning(
     return { status: 'ignored', reason: 'verdict_overturned' };
   }
 
-  const failure = await getFailureAttemptForDerivationById(deps.db, input.attemptEventId);
+  const failure = await getFailureAttemptForDerivationById(deps.db, input.attemptEventId, {
+    causeEditable: true,
+  });
   if (!failure) return { status: 'ignored', reason: 'attempt_not_active' };
   if (failure.user_cause) return { status: 'ignored', reason: 'user_cause_present' };
 
@@ -178,6 +180,7 @@ async function attributeFailure(
   const loaded = await getFailureAttemptWithReasoningTraceForDerivationById(
     deps.db,
     attemptEventId,
+    { causeEditable: true },
   );
   if (!loaded) {
     return { status: 'skipped', reason: 'attempt_not_active', modelInvoked: false };

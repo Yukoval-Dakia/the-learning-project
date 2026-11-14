@@ -102,7 +102,9 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     return { status: 'skipped:not_a_failure_attempt' };
   }
 
-  const failure = await getFailureAttemptForDerivationById(db, attemptEventId);
+  const failure = await getFailureAttemptForDerivationById(db, attemptEventId, {
+    causeEditable: true,
+  });
   if (!failure) return { status: 'skipped:attempt_not_active' };
   const native = failure.assessment ? await loadNativeFailureContext(db, attemptEventId) : null;
   if (failure.assessment && !native) return { status: 'skipped:question_not_found' };
@@ -291,7 +293,9 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
       await acquireLearningStateWriteLock(tx);
       await lockAssessmentEvaluationGroup(tx, native.evaluationGroupId);
       const current = await loadNativeFailureContext(tx, attemptEventId);
-      const currentFailure = await getFailureAttemptForDerivationById(tx, attemptEventId);
+      const currentFailure = await getFailureAttemptForDerivationById(tx, attemptEventId, {
+        causeEditable: true,
+      });
       if (
         !current ||
         current.evaluationId !== native.evaluationId ||

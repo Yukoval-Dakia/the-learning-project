@@ -808,16 +808,20 @@ export async function getFailureAttemptWithReasoningTraceById(
 export async function getFailureAttemptForDerivationById(
   db: DbLike,
   attemptEventId: string,
+  opts: Pick<GetFailureAttemptsOpts, 'causeEditable'> = {},
 ): Promise<FailureAttempt | null> {
-  return (await loadFailureAttemptById(db, attemptEventId, true))?.failure ?? null;
+  return (
+    (await loadFailureAttemptById(db, attemptEventId, true, opts.causeEditable))?.failure ?? null
+  );
 }
 
 /** Derivation-facing sibling of {@link getFailureAttemptWithReasoningTraceById}. */
 export async function getFailureAttemptWithReasoningTraceForDerivationById(
   db: DbLike,
   attemptEventId: string,
+  opts: Pick<GetFailureAttemptsOpts, 'causeEditable'> = {},
 ): Promise<FailureAttemptWithReasoningTrace | null> {
-  return loadFailureAttemptById(db, attemptEventId, true);
+  return loadFailureAttemptById(db, attemptEventId, true, opts.causeEditable);
 }
 
 /**
