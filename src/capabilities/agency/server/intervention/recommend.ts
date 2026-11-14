@@ -89,7 +89,7 @@ export async function recommendPedagogy(
       snapshot: input.snapshot,
       candidate_methods: candidates,
       excluded_methods: excluded,
-      prior_interventions: priorInterventions.slice(-20),
+      prior_interventions: priorInterventions.slice(0, 20),
       ...(candidateIds.length === 1 ? { sole_candidate: true } : {}),
       output_contract: {
         allowed_method_ids: candidateIds,
