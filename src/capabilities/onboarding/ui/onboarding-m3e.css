@@ -828,6 +828,13 @@
   font-size: 0.75rem;
 }
 
+[data-ui-next] .un-ob-kc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 8px;
+}
+
 [data-ui-next] .un-ob-kc-conf {
   display: grid;
   justify-items: end;
