@@ -43,7 +43,7 @@ export function registerPruneWorkflow(
 /** The prune family's mount adapter; owned here so the manifest stays a pure
  *  job contribution and the host never enumerates member names. */
 export const pruneFamily: DurableFamilyAdapter = {
-  label: PRUNE_FAMILY,
+  label: 'prune',
   required: true,
   requiredPeers: ['review-orphan', 'session-orphan'],
   members: [

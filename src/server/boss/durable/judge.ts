@@ -10,7 +10,7 @@ import {
 } from '@/server/durable/judge-worker';
 
 export const judgeFamily: DurableFamilyAdapter = {
-  label: JUDGE_FAMILY,
+  label: 'judge',
   required: false,
   requiredPeers: ['prune', 'review-orphan', 'session-orphan'],
   members: [

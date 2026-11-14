@@ -13,7 +13,7 @@ import {
 } from '@/server/durable/review-orphan-worker';
 
 export const reviewOrphanFamily: DurableFamilyAdapter = {
-  label: REVIEW_ORPHAN_FAMILY,
+  label: 'review-orphan',
   required: true,
   requiredPeers: ['prune', 'session-orphan'],
   members: [
