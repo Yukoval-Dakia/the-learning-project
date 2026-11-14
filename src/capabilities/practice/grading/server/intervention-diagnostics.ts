@@ -6,7 +6,7 @@ import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionDiagnosticQuestionMetadata,
 } from '@/core/schema/intervention';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { getEventById } from '@/kernel/events';
 import {
@@ -19,12 +19,12 @@ import {
   initialSchedulingState,
   retireQuestionFsrsState,
 } from '@/kernel/records/scheduling-state';
-import { streamLocalDate } from '@/kernel/stream-date';
+import { resolveLearningDayDate } from '@/kernel/stream-date';
 import { projectEvaluationToJudgeResult } from './judge/evaluation-authority';
 import { readJudgeQuestionActivity } from './judge-run-observation';
 
-function resolveInterventionStreamLocalDate(now: Date): string {
-  return streamLocalDate(now);
+function resolveInterventionStreamLocalDate(tx: Tx, now: Date): Promise<string> {
+  return resolveLearningDayDate(tx, now);
 }
 
 export const interventionDiagnosticLeaves: InterventionDiagnosticLeaves = {

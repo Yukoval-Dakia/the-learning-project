@@ -14,7 +14,7 @@ import type {
 } from '@/kernel/manifest';
 import { loadActivityTier } from '@/kernel/read-models/activity-tier';
 import { LEARNING_ACTIVITY_ACTIONS } from '@/kernel/read-models/learner-activity';
-import { streamLocalDate } from '@/kernel/stream-date';
+import { resolveLearningDayDate } from '@/kernel/stream-date';
 import { getStartedBoss } from '@/server/boss/client';
 import { buildSeededSelectionRng } from './selection-seed';
 import { composeNightly, resolveSelectionPolicy } from './stream-store';
@@ -74,7 +74,9 @@ export function buildLearnerReturnWakeHandler(
     console.log(
       `[learner_return_wake] compose policy=${policy.policy} statisticalOnly=${statisticalOnly}`,
     );
-    const date = streamLocalDate(row.created_at);
+    // 与读路径同一学习日裁定：触发事件本身是学习者活动，streak 含它 → 深夜唤醒
+    // 仍落在延续的学习日，不会在零点边界另产流。
+    const date = await resolveLearningDayDate(db, row.created_at);
     const added = await composeNightly(db, date, {
       policy,
       composeDeps: {

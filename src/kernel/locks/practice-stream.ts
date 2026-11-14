@@ -22,6 +22,17 @@ export async function lockPracticeStreamPartition(
   await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${key}))`);
 }
 
+/**
+ * Global carry-admission for learning-day carry-forward. Any transaction that
+ * will lock more than one `stream:compose:<date>` partition takes this first:
+ * canonical order is admission -> target -> sources (ascending), so a holder
+ * never waits on another carry tx's target partition and no two-transaction
+ * cycle exists. Re-entrant per transaction like every xact advisory lock.
+ */
+export async function lockPracticeStreamCarryAdmission(db: Db | Tx): Promise<void> {
+  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext('stream:carry-forward'))`);
+}
+
 /** Scope identity for a knowledge-scoped stream, so two first opens create one session. */
 export async function lockPracticeStreamScope(
   tx: Tx,

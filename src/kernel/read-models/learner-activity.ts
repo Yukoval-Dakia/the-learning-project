@@ -88,6 +88,78 @@ export async function loadLastLearnerEventAt(db: DbLike, before?: Date): Promise
 }
 
 /**
+ * Start of the learner's current continuous-activity streak: the timestamp of the
+ * earliest derivation-allowed learner activity in the run whose every consecutive
+ * gap — between neighbouring activities and between the newest activity and `now` —
+ * is under `gapMs`. Returns null when the newest allowed activity is already at
+ * least `gapMs` old (or there is no activity at all): the streak is closed and the
+ * caller treats "now" as a fresh learning day. Only `actor_kind='user'` events in
+ * LEARNING_ACTIVITY_ACTIONS count. Rows carrying a settlement `generated_by`
+ * `generated_by='workflow_judge'` rows are settlement writes stamped at
+ * workflow-completion time, not a live learner action — they cannot re-open or
+ * extend a streak. Provenances stamped at the learner's own action moment (a
+ * user-reviewed import/capture, a retry, a rescue) and unprovenanced events
+ * still count.
+ *
+ * The walk is bounded: it stops at the first gap that closes the streak, so a
+ * long active history is not scanned. `before` bounds the window end (defaults to
+ * now) so callers can resolve a learning day "as of" an earlier instant.
+ */
+export async function loadLearnerActivityStreakStart(
+  db: DbLike,
+  gapMs: number,
+  before: Date = new Date(),
+): Promise<Date | null> {
+  let cursor: { at: Date; id: string } | undefined;
+  // Newest allowed activity in the streak so far. Each next allowed row must sit
+  // within `gapMs` of the activity one step newer than it (`previous`), which is
+  // `before` for the first allowed row.
+  let previous: Date = before;
+  let streakOldest: Date | null = null;
+  for (;;) {
+    const rows = await db
+      .select({ id: event.id, at: event.created_at })
+      .from(event)
+      .where(
+        and(
+          eq(event.actor_kind, 'user'),
+          inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]),
+          lt(event.created_at, before),
+          // Only background settlement writes are excluded: 'workflow_judge'
+          // rows are stamped at workflow-completion time, not the learner's
+          // action moment. Human-timed provenances (ingestion_capture,
+          // user_retry, rescue) and unprovenanced events still count.
+          sql`coalesce(${event.payload}->>'generated_by', '') <> 'workflow_judge'`,
+          cursor
+            ? or(
+                lt(event.created_at, cursor.at),
+                and(eq(event.created_at, cursor.at), lt(event.id, cursor.id)),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(event.created_at), desc(event.id))
+      .limit(32);
+    if (!rows.length) return streakOldest;
+    const allowed = await allowedEventIds(
+      db,
+      rows.map((row) => row.id),
+    );
+    for (const row of rows) {
+      if (!allowed.has(row.id)) continue;
+      const at = asDate(row.at);
+      if (at === null) continue;
+      if (previous.getTime() - at.getTime() >= gapMs) return streakOldest;
+      streakOldest = at;
+      previous = at;
+    }
+    if (rows.length < 32) return streakOldest;
+    const last = rows[rows.length - 1];
+    cursor = { at: last.at, id: last.id };
+  }
+}
+
+/**
  * Graded outcome of native attempt anchors, whose event row stores outcome null.
  * Pending, self-reported and unsupported verdicts carry no right/wrong bit and are
  * left out.
