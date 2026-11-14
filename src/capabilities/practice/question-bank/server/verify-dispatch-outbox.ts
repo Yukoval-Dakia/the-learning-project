@@ -872,7 +872,7 @@ export async function recoverOrphanVerifyDispatches(
           .orderBy(
             sql`CASE WHEN ${recoveryArm} THEN (SELECT v.created_at FROM ${event} v
           WHERE v.subject_kind = 'question' AND v.subject_id = ${question.id} AND v.action = 'experimental:source_verify'
-          ORDER BY v.created_at DESC, v.id DESC LIMIT 1) ELSE ${question.created_at} END`,
+          ORDER BY v.created_at DESC, v.dispatch_seq DESC, v.id DESC LIMIT 1) ELSE ${question.created_at} END`,
             question.id,
           )
           .limit(recoveryArm ? SOURCE_VERIFY_RECOVERY_BATCH_SIZE : batchSize)
