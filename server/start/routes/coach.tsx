@@ -22,7 +22,9 @@ export const Route = createFileRoute('/coach')({
       <Suspense>
         <Page
           navigate={startNavigate}
-          learningPlanProgress={<LearningPlanProgress read={startLearningPlanProgressClient} />}
+          learningPlanProgress={
+            <LearningPlanProgress read={startLearningPlanProgressClient} navigate={startNavigate} />
+          }
           readWeekly={startCoachWeeklyClient}
           readCalibration={startCoachCalibrationClient}
           CalibrationMaturityBadge={CalibrationMaturityBadge}

@@ -21,6 +21,7 @@ import {
   ListTree,
   RotateCcw,
   Sparkles,
+  Target,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
@@ -169,9 +170,11 @@ export function knowledgeReviewRequest(name: string) {
 export default function KnowledgeDetailPage({
   id,
   navigate,
+  returnToPlan = false,
 }: {
   id: string;
   navigate: (to: string) => void;
+  returnToPlan?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { getMisconceptions, getNodePage, vetoMisconception } = useKnowledgeClient();
@@ -195,6 +198,12 @@ export default function KnowledgeDetailPage({
   // 让 NoteReader 读 ?entry（NoteReaderPage:51）后触发入口 banner / strip .is-here /
   // 右栏「入口」tag。consumer 侧已就绪；本页是当前唯一 live 的 kd→note 生产侧 caller。
   const noteHref = (noteId: string) => `/notes/${noteId}?entry=${id}`;
+  const knowledgeHref = (knowledgeId: string) =>
+    returnToPlan
+      ? `/knowledge/${encodeURIComponent(knowledgeId)}?returnTo=learning-plan`
+      : `/knowledge/${encodeURIComponent(knowledgeId)}`;
+  const backHref = returnToPlan ? '/coach#learning-plan-progress' : '/knowledge';
+  const backLabel = returnToPlan ? '返回学习计划' : '返回知识';
 
   if (pageQ.isLoading)
     return (
@@ -206,9 +215,9 @@ export default function KnowledgeDetailPage({
   if (!node)
     return (
       <DetailFrame>
-        <button type="button" className="kn-back" onClick={() => navigate('/knowledge')}>
+        <button type="button" className="kn-back" onClick={() => navigate(backHref)}>
           <ArrowLeft size={16} aria-hidden="true" />
-          返回知识
+          {backLabel}
         </button>
         <KnowledgeEmpty icon={<ListTree size={22} />} title="节点不存在或已归档。" />
       </DetailFrame>
@@ -231,9 +240,9 @@ export default function KnowledgeDetailPage({
 
   return (
     <DetailFrame>
-      <button type="button" className="kn-back" onClick={() => navigate('/knowledge')}>
+      <button type="button" className="kn-back" onClick={() => navigate(backHref)}>
         <ArrowLeft size={16} aria-hidden="true" />
-        返回知识
+        {backLabel}
       </button>
       <header className="kn-hero">
         {/* ⑥治理：hero 环去裸 pct，档由下方 meta 行的 BandChip 给。 */}
@@ -260,6 +269,12 @@ export default function KnowledgeDetailPage({
             <RotateCcw size={16} aria-hidden="true" />
             复习此点
           </Button>
+          {node.role === 'kc' && (
+            <Button onClick={() => navigate(`/practice?kc=${encodeURIComponent(node.id)}`)}>
+              <Target size={16} aria-hidden="true" />
+              针对此点练习
+            </Button>
+          )}
         </div>
       </header>
 
@@ -418,7 +433,7 @@ export default function KnowledgeDetailPage({
                   <button
                     type="button"
                     className="kn-rel-row"
-                    onClick={() => node.parent_id && navigate(`/knowledge/${node.parent_id}`)}
+                    onClick={() => node.parent_id && navigate(knowledgeHref(node.parent_id))}
                   >
                     <span className="kn-rel-kind">上级</span>
                     {/* de-wenyan: parent_name carries no domain on the node-page
@@ -433,7 +448,7 @@ export default function KnowledgeDetailPage({
                     type="button"
                     key={c.id}
                     className="kn-rel-row"
-                    onClick={() => navigate(`/knowledge/${c.id}`)}
+                    onClick={() => navigate(knowledgeHref(c.id))}
                   >
                     <span className="kn-rel-kind">下级</span>
                     {/* de-wenyan: NodePageChild carries no domain (see parent note). */}
@@ -460,7 +475,7 @@ export default function KnowledgeDetailPage({
                         type="button"
                         key={o.edge_id}
                         className="kn-rel-row"
-                        onClick={() => navigate(`/knowledge/${o.knowledge_id}`)}
+                        onClick={() => navigate(knowledgeHref(o.knowledge_id))}
                       >
                         {/* de-wenyan: NodePageMeshNeighbor carries no domain. */}
                         <span className="kn-rel-name">{o.name}</span>

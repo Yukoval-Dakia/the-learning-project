@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import type { MouseEvent } from 'react';
 import type { LearningPlanProgress as Progress } from '../server/learning-item-completion-policy';
 import './learning-plan-progress.css';
 
@@ -33,17 +34,39 @@ const REASONS: Record<string, string> = {
   mastery_unavailable: '掌握程度暂不可用',
   mastery_below_threshold: '掌握程度尚未达标',
 };
+
+function internalLink(
+  event: MouseEvent<HTMLAnchorElement>,
+  href: string,
+  navigate: (to: string) => void,
+) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+    return;
+  event.preventDefault();
+  navigate(href);
+}
+
 function time(value: string) {
   return new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 }
-export default function LearningPlanProgress({ read }: { read: () => Promise<Progress> }) {
+export default function LearningPlanProgress({
+  read,
+  navigate,
+}: {
+  read: () => Promise<Progress>;
+  navigate: (to: string) => void;
+}) {
   const query = useQuery({
     queryKey: ['coach-learning-plan-progress'],
     queryFn: read,
     staleTime: 0,
   });
   return (
-    <section className="lp-progress" aria-labelledby="learning-plan-progress-title">
+    <section
+      id="learning-plan-progress"
+      className="lp-progress"
+      aria-labelledby="learning-plan-progress-title"
+    >
       <header>
         <h2 id="learning-plan-progress-title">学习计划掌握进度</h2>
         <p>逐项看看已经掌握什么，以及还缺哪些练习证据。</p>
@@ -97,7 +120,7 @@ export default function LearningPlanProgress({ read }: { read: () => Promise<Pro
                               {Math.round(kc.mastery.hi * 100)}%
                             </>
                           ) : (
-                            '掌握程度未知'
+                            '掌握程度未知；入口只打开真实知识点与练习范围，不代表已有证据达标。'
                           )}
                         </p>
                         {kc.mastery?.lastOutcomeAt && (
@@ -114,7 +137,45 @@ export default function LearningPlanProgress({ read }: { read: () => Promise<Pro
                             天{kc.evidence.pending > 0 && `；${kc.evidence.pending} 次待判分`}
                           </p>
                         ) : (
-                          <p>证据暂不可用</p>
+                          <p>证据暂不可用，不能据此判断学习计划完成。</p>
+                        )}
+                        {!kc.name ||
+                        kc.reasons.includes('missing_knowledge') ||
+                        kc.reasons.includes('unsupported_knowledge_scope') ? (
+                          <p className="lp-progress-unavailable">
+                            {kc.reasons.includes('missing_knowledge')
+                              ? '知识点缺失，无法进入详情或开始定向练习。'
+                              : '知识点范围暂不可用，无法提供可靠的目标入口。'}
+                          </p>
+                        ) : (
+                          <div className="lp-progress-actions">
+                            <a
+                              className="lp-progress-action"
+                              href={`/knowledge/${encodeURIComponent(kc.knowledgeId)}?returnTo=learning-plan`}
+                              onClick={(event) =>
+                                internalLink(
+                                  event,
+                                  `/knowledge/${encodeURIComponent(kc.knowledgeId)}?returnTo=learning-plan`,
+                                  navigate,
+                                )
+                              }
+                            >
+                              查看知识与笔记
+                            </a>
+                            <a
+                              className="lp-progress-action"
+                              href={`/practice?kc=${encodeURIComponent(kc.knowledgeId)}`}
+                              onClick={(event) =>
+                                internalLink(
+                                  event,
+                                  `/practice?kc=${encodeURIComponent(kc.knowledgeId)}`,
+                                  navigate,
+                                )
+                              }
+                            >
+                              开始定向练习
+                            </a>
+                          </div>
                         )}
                         {kc.reasons.length > 0 && (
                           <details>
