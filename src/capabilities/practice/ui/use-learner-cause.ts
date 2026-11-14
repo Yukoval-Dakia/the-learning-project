@@ -182,14 +182,6 @@ export function useLearnerCause(
     if (wouldDropUnknownNote(entry)) {
       return;
     }
-    if (
-      entry.current?.source === 'user' &&
-      entry.selected === entry.current.primary_category &&
-      entry.noteKnown &&
-      note.length === 0
-    ) {
-      return;
-    }
     writes.current.add(id);
     setEntries((previous) => ({
       ...previous,
@@ -250,13 +242,7 @@ export function useLearnerCause(
       entry.status !== 'saving' &&
       entry.status !== 'readonly' &&
       entry.status !== 'saved' &&
-      !wouldDropUnknownNote(entry) &&
-      !(
-        entry.current?.source === 'user' &&
-        entry.selected === entry.current.primary_category &&
-        entry.noteKnown &&
-        entry.note.trim().length === 0
-      );
+      !wouldDropUnknownNote(entry);
     const saveAction: Action = {
       id: 'cause-save',
       label: entry.status === 'saving' ? '正在记下…' : '记下这个原因',
@@ -268,12 +254,7 @@ export function useLearnerCause(
               kind: 'disabled',
               reason: wouldDropUnknownNote(entry)
                 ? '这条作答已有备注，但当前界面读不到；请重新写一句再保存，避免覆盖原备注。'
-                : entry.current?.source === 'user' &&
-                    entry.selected === entry.current.primary_category &&
-                    entry.noteKnown &&
-                    entry.note.trim().length === 0
-                  ? '已经记的是这个原因；要修改可以另选一个原因或补充一句。'
-                  : '先选一个原因。',
+                : '先选一个原因。',
             },
     };
     const editAction: Action = {
@@ -336,7 +317,6 @@ export function useLearnerCause(
             ...previous,
             [id]: {
               ...prior,
-              status: prior.status === 'failed' ? 'ready' : prior.status,
               note: value,
             },
           };
