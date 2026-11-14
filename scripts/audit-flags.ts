@@ -111,11 +111,6 @@ const STAY_IN_PLACE_ENV: readonly StayInPlaceEntry[] = [
     owner: 'server/dev-frontdoor.ts',
     reason: 'dev front door binds before config hydration',
   },
-  {
-    env: 'DB_POOL_MAX',
-    owner: 'src/db/pool.ts',
-    reason: 'pool size must be known before the DB-backed config layer',
-  },
   // provider credentials / third-party adapters
   {
     env: 'DASHSCOPE_API_KEY',
