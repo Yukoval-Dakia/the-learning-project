@@ -80,7 +80,12 @@ export default function QuestionPage({
   navigate: (to: string) => void;
 }) {
   const { getQuestionFull } = useLibraryClient();
-  const q = useQuery({ queryKey: questionKey(id), queryFn: () => getQuestionFull(id) });
+  const q = useQuery({
+    queryKey: questionKey(id),
+    queryFn: () => getQuestionFull(id),
+    retry: (failures, error) =>
+      !(error instanceof ApiError && error.status === 404) && failures < 3,
+  });
   const missing = q.error instanceof ApiError && q.error.status === 404;
 
   return (
