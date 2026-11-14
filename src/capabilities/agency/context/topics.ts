@@ -8,8 +8,8 @@ import { event, memory_brief_note } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { allowedEventIds, lockEventDerivationSources } from '@/kernel/events/derivation-policy';
 import { ApiError } from '@/kernel/http';
+import { readLearnerProfileNumbers } from '@/kernel/learner-profile/numbers';
 import { lockPurposeBrief } from '@/kernel/locks/memory-locks';
-import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import { briefPurposeCurrent, latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
 import { markBriefPurpose } from '../server/memory/brief-purpose';
 import { type LegacyFact, readLegacyFacts, restoreLegacy, supersedeLegacy } from './legacy-facts';
@@ -700,21 +700,10 @@ export async function topicBoard(db: Db, now = new Date()) {
     ...new Set(digest.topics.flatMap((t) => t.facts.flatMap((f) => f.knowledge_ids))),
   ];
   const judgments = knowledgeIds.length
-    ? await readLearnerJudgments(db, { knowledge_ids: knowledgeIds, context: 'any', as_of: now })
+    ? await readLearnerProfileNumbers(db, { knowledge_ids: knowledgeIds, as_of: now })
     : null;
   const retention = new Map(
-    judgments?.items.map((item) => {
-      const r = item.retention;
-      const value =
-        r.kind === 'available'
-          ? typeof r.reading === 'number'
-            ? r.reading
-            : r.reading.kind === 'score'
-              ? r.reading.value
-              : null
-          : null;
-      return [item.knowledge_id, value] as const;
-    }),
+    knowledgeIds.map((id) => [id, judgments?.items.get(id)?.retention ?? null] as const),
   );
   return {
     version,

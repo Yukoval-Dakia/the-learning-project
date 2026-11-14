@@ -2,6 +2,7 @@
 
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   check,
   date,
@@ -47,6 +48,80 @@ export const material_fsrs_state = pgTable(
   (t) => [
     uniqueIndex('material_fsrs_unique').on(t.subject_kind, t.subject_id),
     index('material_fsrs_due_idx').on(t.due_at),
+  ],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-2083 — learner_profile：单学习者私有库内每个 KC 一行的可重建派生档案。
+//
+// 真相源仍是 mastery_state / material_fsrs_state / 作答与判定事件账本；本表只是
+// 可由 kernel learner-profile 模块重建的只读投影，不是新真相源。行内保留
+// 投影算法版本、构建时刻、本快照内已处理的刷新意图凭据与逐组件 unknown 原因；
+// R(t) 读时按持久化 FSRS 状态与调用者 as_of 求值，不持久化常数。
+//
+// 写入唯一路径：kernel/learner-profile worker drain——锁 G、按 KC 升序
+// profile 锁、profile_version CAS；意图消费与行写在同一事务。getter 只读，
+// 陈旧行按同快照 canonical 重建，绝不写行。
+// ─────────────────────────────────────────────────────────────────────────────
+export const learner_profile = pgTable(
+  'learner_profile',
+  {
+    id: text('id').primaryKey(),
+    knowledge_id: text('knowledge_id').notNull(),
+    profile_version: integer('profile_version').notNull().default(1),
+    built_at: timestamp('built_at', { withTimezone: true }).notNull(),
+    consumed_intent_ids: jsonb('consumed_intent_ids').$type<string[]>().notNull().default([]),
+    ability: jsonb('ability').$type<JsonObject | null>(),
+    p_correct_now: jsonb('p_correct_now').$type<JsonObject | null>(),
+    retention: jsonb('retention').$type<JsonObject | null>(),
+    evidence_timing: jsonb('evidence_timing').$type<JsonObject | null>(),
+    review_timing: jsonb('review_timing').$type<JsonObject | null>(),
+    ability_claim: jsonb('ability_claim').$type<JsonObject | null>(),
+    uncertainty: jsonb('uncertainty').$type<JsonObject | null>(),
+    would_change_it: jsonb('would_change_it').$type<JsonObject | null>(),
+    patterns: jsonb('patterns').$type<JsonObject | null>(),
+    corrections: jsonb('corrections').$type<JsonObject | null>(),
+    retention_forecast: jsonb('retention_forecast').$type<JsonObject | null>(),
+    judgement: text('judgement'),
+    // Sealed canonical facts (mastery projection, FSRS state, durations,
+    // activity clock, role flag). The read path re-derives R(t), evidence age
+    // and judgement text from this at the caller's as_of — never from a
+    // persisted derived constant.
+    canonical_state: jsonb('canonical_state').$type<JsonObject | null>(),
+    component_versions: jsonb('component_versions').$type<JsonObject>().notNull().default({}),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('learner_profile_kc_unique').on(t.knowledge_id)],
+);
+
+// Durable idempotent refresh intent: written atomically in the canonical writer's
+// own transaction after every fact write and final receipt. `seq` records
+// allocation order only; pending intents (not MAX(event_id or seq)) decide
+// freshness, so late-committing intents are never skipped.
+export const learner_profile_refresh_intent = pgTable(
+  'learner_profile_refresh_intent',
+  {
+    id: text('id').primaryKey(),
+    // Allocation-order sequence only — NOT a commit-order watermark. Freshness
+    // is judged by the pending-intent set, never MAX(seq/event_id) — see
+    // kernel/learner-profile/intents.ts.
+    seq: bigint('seq', { mode: 'number' })
+      .notNull()
+      .default(sql`nextval('learner_profile_refresh_intent_seq')`),
+    knowledge_id: text('knowledge_id').notNull(),
+    source_kind: text('source_kind').notNull(),
+    source_ref: text('source_ref').notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    consumed_at: timestamp('consumed_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('learner_profile_intent_idem_unique').on(
+      t.knowledge_id,
+      t.source_kind,
+      t.source_ref,
+    ),
+    index('learner_profile_intent_pending_idx').on(t.consumed_at, t.seq),
   ],
 );
 

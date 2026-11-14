@@ -62,6 +62,7 @@ const liveSubscriberIdentities = [
   ['agency.steering-changed', 1],
   ['notes.mastery-progress-note-refine', 1],
   ['practice.failure-learning-attempt', 3],
+  ['practice.learner-profile-refresh', 1],
   ['practice.learner-return-wake', 1],
   ['practice.question-admission-enqueue', 1],
   ['practice.serving-recheck', 1],
@@ -261,7 +262,7 @@ describe('YUK-766 subscription progress backup', () => {
 
   // @invariant data: archive keeps all live subscribers, seven states, and one shared publish event
   // @fails-if omit admission enqueue or the return wake, or split the publish source
-  it('archives all fourteen live subscriber identities, seven delivery states and effect provenance', async () => {
+  it('archives all live subscriber identities, seven delivery states and effect provenance', async () => {
     const { registry } = await seedProgress();
     const data = decode(await archive());
     expect(data.event_subscription_checkpoint).toHaveLength(subscriberCount);
@@ -283,18 +284,20 @@ describe('YUK-766 subscription progress backup', () => {
     }
     const counts = actionCounts(registry.subscriptions);
     const shared = registry.subscriptions.filter((sub) => (counts.get(sub.actions[0]) ?? 0) > 1);
-    expect(shared.map((sub) => sub.id)).toEqual([
-      'agency.curator-activity',
-      'agency.probe-evidence-intervention-prepare',
-      'agency.probe-publication-serve',
-      'agency.probe-result-reconcile',
-      'practice.failure-learning-attempt',
-      'practice.learner-return-wake',
-      'practice.question-admission-enqueue',
-      'practice.serving-recheck',
-      'practice.upload-ready',
-      'practice.web-supply-observe',
-    ]);
+    expect(shared.map((sub) => sub.id).sort()).toEqual(
+      [
+        'agency.curator-activity',
+        'agency.probe-evidence-intervention-prepare',
+        'agency.probe-publication-serve',
+        'agency.probe-result-reconcile',
+        'practice.failure-learning-attempt',
+        'practice.learner-return-wake',
+        'practice.question-admission-enqueue',
+        'practice.serving-recheck',
+        'practice.upload-ready',
+        'practice.web-supply-observe',
+      ].sort(),
+    );
     const sourceIds = (id: string) =>
       data.event_subscription_delivery
         .filter((row) => row.subscriber_id === id)
