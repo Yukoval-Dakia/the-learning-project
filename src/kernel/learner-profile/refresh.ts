@@ -11,11 +11,12 @@
 // locks, so the two hierarchies cannot deadlock (G serializes them anyway).
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { LearnerJudgment } from '@/core/schema/learner-judgment';
 import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { learner_profile, learner_profile_refresh_intent } from '@/db/schema';
+import { lockLearnerProfileKnowledge } from '@/kernel/locks/learner-profile';
 import { reviewTimingJson } from '@/kernel/read-models/review-timing';
 import { buildProfileJudgments, loadCanonicalProfileInputs, persistedStateForKc } from './build';
 
@@ -57,13 +58,6 @@ async function pendingIntents(tx: Tx, limit: number): Promise<PendingIntent[]> {
     .limit(limit);
 }
 
-/** Acquire the per-KC profile lock; the lock is xact-scoped. */
-async function lockProfileKc(tx: Tx, knowledgeId: string): Promise<void> {
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtext(${`learner_profile:knowledge:${knowledgeId}`}))`,
-  );
-}
-
 /**
  * Refresh a bounded batch of KC profile rows from pending intents.
  * Opens one transaction that holds G for the whole drain; per-KC locks and CAS
@@ -76,7 +70,7 @@ export async function drainLearnerProfileRefresh(db: Db): Promise<{ refreshed: n
     if (pending.length === 0) return { refreshed: 0 };
 
     const knowledgeIds = [...new Set(pending.map((row) => row.knowledge_id))].sort();
-    for (const kc of knowledgeIds) await lockProfileKc(tx, kc);
+    for (const kc of knowledgeIds) await lockLearnerProfileKnowledge(tx, kc);
 
     const intentsByKc = new Map<string, PendingIntent[]>();
     for (const row of pending) {
