@@ -307,6 +307,8 @@ export type StudyAssistanceExposureInput =
     }
   | NoteAssistanceExposureInput;
 
+export type StudyAssistanceEventInput = Exclude<StudyAssistanceExposureInput, { kind: 'note' }>;
+
 /**
  * Record one assistance exposure. Locks the issuance and re-checks the
  * coordinate inside that lock, sharing the lock with submission snapshots.
@@ -317,6 +319,14 @@ export type StudyAssistanceExposureInput =
  * `phase` is decided here under the issuance lock: once a submission row
  * exists the exposure is post-submit review, not pre-submit assistance.
  */
+export function recordStudyAssistanceExposure(
+  database: Db | Tx,
+  input: StudyAssistanceEventInput,
+): Promise<string>;
+export function recordStudyAssistanceExposure(
+  database: Db | Tx,
+  input: NoteAssistanceExposureInput,
+): Promise<NoteAssistanceExposureReceipt>;
 export async function recordStudyAssistanceExposure(
   database: Db | Tx,
   input: StudyAssistanceExposureInput,
