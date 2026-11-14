@@ -14,12 +14,8 @@ import { AdmissionAttemptExhausted } from './attempt';
 // One admission operation: structural checks, blind solves, semantic adjudication,
 // then deterministic probes or the system-admitted AI grader. Publication is append-only.
 
+import { readQuestionAdmissionConfig } from '@/core/config/question-admission';
 import { canonicalHash } from '@/core/migration/canonical';
-import {
-  LEGACY_QUESTION_ADMISSION_POLICY_ID,
-  PREVIOUS_QUESTION_ADMISSION_POLICY_ID,
-  QUESTION_ADMISSION_POLICY_ID,
-} from '@/core/question-admission-policy';
 import { declaredShapeSupport } from '@/core/schema/assessment/blank-answer-compare';
 import { type ExecutionPlanT, validateExecutionPlan } from '@/core/schema/assessment/execution';
 import { type ResponseSlotT, validateResponseSpec } from '@/core/schema/assessment/response';
@@ -70,17 +66,7 @@ export { QUESTION_ADMISSION_POLICY_ID } from '@/core/question-admission-policy';
 
 /** C1 落库与迟到的 source verify 必须匹配同一个 id，含环境变量覆盖。空串是合法覆盖。 */
 export function resolveQuestionAdmissionPolicyId(): string {
-  const configured = process.env.QUESTION_ADMISSION_POLICY_ID;
-  if (
-    configured === LEGACY_QUESTION_ADMISSION_POLICY_ID ||
-    configured === PREVIOUS_QUESTION_ADMISSION_POLICY_ID ||
-    configured === 'question_admission@3'
-  ) {
-    throw new Error(
-      `QUESTION_ADMISSION_POLICY_ID=${configured} is obsolete; unset it for the current admission contract`,
-    );
-  }
-  return configured ?? QUESTION_ADMISSION_POLICY_ID;
+  return readQuestionAdmissionConfig().policyId;
 }
 
 export interface QuestionAdmissionOptions {

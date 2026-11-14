@@ -12,8 +12,11 @@ import {
   lockAdmissionGroup,
 } from '@/capabilities/practice/question-bank/server/admission/enqueue';
 import { FrozenAdmissionInput } from '@/capabilities/practice/question-bank/server/admission/receipt';
-import { resolveQuestionAdmissionPolicyId } from '@/capabilities/practice/question-bank/server/admission/run-admission';
 import { ADMISSION_STAGE_FAMILY } from '@/capabilities/practice/question-bank/server/admission/stages';
+import {
+  type QuestionAdmissionConfig,
+  readQuestionAdmissionConfig,
+} from '@/core/config/question-admission';
 import {
   type PaidEffectInput,
   type PaidEffectVoidAuthorization,
@@ -91,6 +94,7 @@ type PracticeBoss = Awaited<ReturnType<typeof getStartedBoss>>;
 async function buildSuccessorInput(
   tx: Tx,
   opts: {
+    config: QuestionAdmissionConfig;
     groupId: string;
     baseDigest: string;
     revisionId: string;
@@ -129,8 +133,6 @@ async function buildSuccessorInput(
     throw new Error('revision layers no longer seal to the stored digest');
   }
   const subject = await questionSubject(tx, opts.groupId);
-  const solver2Provider = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
-  const solver2Model = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
   const input = FrozenAdmissionInput.parse(
     JSON.parse(
       JSON.stringify({
@@ -147,11 +149,8 @@ async function buildSuccessorInput(
         },
         subject_profile: await resolveSubjectProfileStrictLive(tx, subject.key),
         ...(subject.mismatch ? { subject_mismatch: subject.mismatch } : {}),
-        policy_id: resolveQuestionAdmissionPolicyId(),
-        solver2:
-          solver2Provider || solver2Model
-            ? { provider: solver2Provider, model: solver2Model }
-            : null,
+        policy_id: opts.config.policyId,
+        solver2: opts.config.solver2,
       }),
     ),
   );
@@ -188,7 +187,8 @@ export async function evaluateAdmissionVoidGroup(
   const { paid_effect, question_admission_verification, question_revision } = await import(
     '@/db/schema'
   );
-  const resolvedPolicy = resolveQuestionAdmissionPolicyId();
+  const admissionConfig = readQuestionAdmissionConfig();
+  const resolvedPolicy = admissionConfig.policyId;
   const evalResult: AdmissionVoidEval = {
     failures,
     revisionId: null,
@@ -415,6 +415,7 @@ export async function evaluateAdmissionVoidGroup(
     evalResult.ghostGenerations = evalResult.republishGenerations.slice(0, -1);
     try {
       const successor = await buildSuccessorInput(tx, {
+        config: admissionConfig,
         groupId: spec.groupId,
         baseDigest: spec.baseDigest,
         revisionId: revision.revision_id,
