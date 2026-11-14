@@ -583,39 +583,49 @@ describe('practice stream API', () => {
     expect(new Set(refIds).size).toBe(refIds.length);
   });
 
-  // @invariant data: only genuine learner practice activity holds a learning
-  // day open — a background `generated_by='workflow_judge'` settlement write
-  // stamped with the workflow's completion time is not learner activity and
-  // must not delay the start of a genuinely new day.
-  // @fails-if the streak reader counts every `actor_kind='user'` derivation-
-  // allowed action regardless of provenance: a background completion at 00:30
-  // then keeps the prior learning day open hours after the learner stopped.
-  it('background settlement writes do not extend the learning day', async () => {
-    // Learner genuinely practiced late on D1, then stopped before midnight.
-    // A background enrollment/judge completes at 00:30 — stamped `now` at
-    // workflow completion, `generated_by='workflow_judge'`. A 04:20 read must
-    // already see a new learning day: the last *genuine* activity (23:40) is
-    // >4h ago, and the background write must not re-open the streak.
-    const t2340 = new Date('2026-11-13T23:40:00+08:00');
+  // @invariant data: only genuine learner activity holds a learning day open.
+  // A human-reviewed import/capture is stamped at the learner's action moment
+  // (`generated_by='ingestion_capture'` etc.) and counts; a settlement write
+  // stamped at workflow-completion time (`generated_by='workflow_judge'`) is
+  // not learner activity and must not delay a genuinely new day.
+  // @fails-if the streak filter counts workflow_judge (background completion
+  // keeps the day open) or excludes every provenance (a user-reviewed 23:50
+  // import then fails to hold the same day open past midnight).
+  it('activity streak counts human-timed provenance but not workflow_judge settlement', async () => {
+    // The learner's last live action was at 19:40; by 00:10 that is >4h ago
+    // and cannot hold the day open on its own. A user-reviewed import at
+    // 23:50 (`generated_by='ingestion_capture'`, stamped at request time) is
+    // the only recent human action — it must keep the same learning day open
+    // at 00:10. Then the learner stops; a workflow_judge settlement lands at
+    // 00:30 stamped at completion time — at 04:20 the streak must be closed
+    // (last genuine activity 23:50 is >4h ago) and the read must see a new
+    // day, because the judge write cannot re-open it.
+    const t1940 = new Date('2026-11-13T19:40:00+08:00');
+    const t2350 = new Date('2026-11-13T23:50:00+08:00');
+    const t0010 = new Date('2026-11-14T00:10:00+08:00');
     const t0030 = new Date('2026-11-14T00:30:00+08:00');
     const t0420 = new Date('2026-11-14T04:20:00+08:00');
     const DAY1 = '2026-11-13';
     const DAY2 = '2026-11-14';
 
-    const practiced = await insertDueQuestion(t2340);
-    const opened = await getPracticeStream(testDb(), { date: 'today' }, { now: t2340 });
+    const practiced = await insertDueQuestion(t1940);
+    const opened = await getPracticeStream(testDb(), { date: 'today' }, { now: t1940 });
     expect(opened.date).toBe(DAY1);
 
-    // Genuine learner attempt at 23:40 (real practice, no generated_by).
-    await insertLearnerAttempt(t2340, practiced, opened.items[0]?.id);
+    // Live learner attempt at 19:40 — too old to hold the day at 00:10 alone.
+    await insertLearnerAttempt(t1940, practiced, opened.items[0]?.id);
+    // Human-reviewed import/capture at 23:50: real learner action time.
+    await insertLearnerAttempt(t2350, practiced, undefined, 'ingestion_capture');
 
-    // Background workflow judge settles a captured block at 00:30 — same
-    // actor_kind='user' but payload.generated_by='workflow_judge'.
+    // 00:10 read: only the 23:50 human action can hold the day open.
+    const afterMidnight = await getPracticeStream(testDb(), { date: 'today' }, { now: t0010 });
+    expect(afterMidnight.date).toBe(DAY1);
+
+    // Background workflow judge settles at 00:30 — completion-time stamp.
     await insertLearnerAttempt(t0030, practiced, undefined, 'workflow_judge');
 
-    // 04:20 read: the streak must have closed at the last genuine activity
-    // (23:40, >4h ago), not at the 00:30 background write. If the background
-    // write counted, the streak would still be open and the read would stay D1.
+    // 04:20 read: streak closed at the 23:50 human action (>4h ago); the
+    // judge write must not have re-opened it.
     const morning = await getPracticeStream(testDb(), { date: 'today' }, { now: t0420 });
     expect(morning.date).toBe(DAY2);
   });

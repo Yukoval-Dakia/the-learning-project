@@ -5,7 +5,10 @@
 import { and, asc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { Tx } from '@/db/client';
 import { practice_stream_item } from '@/db/schema';
-import { lockPracticeStreamPartition } from '@/kernel/locks/practice-stream';
+import {
+  lockPracticeStreamCarryAdmission,
+  lockPracticeStreamPartition,
+} from '@/kernel/locks/practice-stream';
 import { streamPartitionPredicate } from './stream-store';
 
 /** Statuses whose work is still open and follows the learner into the next learning day. */
@@ -22,24 +25,15 @@ const CARRIED_STREAM_STATUSES = ['pending', 'in_progress'] as const;
 const PROGRESS_OWNED_STATUSES: ReadonlySet<string> = new Set(['done', 'skipped', 'in_progress']);
 
 /**
- * Single global carry-admission key: at most one transaction may hold source
- * partition locks inside a finalize tx. Canonical order for a carry-capable
- * finalize tx is G -> target -> sources (ascending): admission is taken before
- * the target `stream:compose:<date>` lock, so a tx already holding G never
- * waits on another tx's target partition and no two-transaction cycle exists.
- * `lockStreamCarryAdmission` is the public acquire point;
- * `carryForwardOpenStreamItems` re-takes it (xact locks are re-entrant) so
- * carry never runs unadmitted even if a future caller forgets admission.
+ * Global carry admission for a multi-partition finalize tx, re-exported from
+ * the canonical lock home. Canonical order is admission -> target -> sources
+ * (ascending): a carry-capable finalize takes admission before its target
+ * `stream:compose:<date>` lock, so a tx already holding admission never waits
+ * on another tx's target partition and no two-transaction cycle exists.
  */
-const CARRY_FORWARD_LOCK_KEY = 'stream:carry-forward';
+const lockStreamCarryAdmission = lockPracticeStreamCarryAdmission;
 
-/**
- * Acquire the global carry-admission lock inside `tx`. Call before the target
- * partition lock in any finalize transaction that will run carry-forward.
- */
-export async function lockStreamCarryAdmission(tx: Tx): Promise<void> {
-  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${CARRY_FORWARD_LOCK_KEY}))`);
-}
+export { lockStreamCarryAdmission };
 
 /**
  * Learning-day carry-forward (YUK-2125): when a compose materializes a *new* learning
