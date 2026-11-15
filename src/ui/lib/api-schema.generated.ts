@@ -11518,6 +11518,64 @@ export interface operations {
                         entity_id: string;
                         /** @enum {string} */
                         entity_kind: "knowledge";
+                        judgment?: {
+                            ability_claim: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                /** @enum {string} */
+                                kind: "low_observed";
+                                rule: {
+                                    low: number;
+                                };
+                            } | {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                /** @enum {string} */
+                                kind: "observed";
+                                rule: {
+                                    low: number;
+                                };
+                            } | {
+                                /** @enum {string} */
+                                kind: "insufficient_evidence";
+                                reason: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "not_evaluable";
+                                /** @enum {string} */
+                                reason: "knowledge_role_not_mastery_evaluable";
+                            } | {
+                                /** @enum {string} */
+                                kind: "unavailable";
+                                reason: string;
+                            };
+                            batch: {
+                                /** Format: date-time */
+                                as_of: string;
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                            };
+                            judgement: string;
+                            uncertainty: {
+                                evidence_age: {
+                                    /** @enum {string} */
+                                    kind: "not_applicable";
+                                    reason: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "undated";
+                                    /** @enum {string} */
+                                    reason: "observed_evidence_without_timestamp";
+                                } | {
+                                    /** @enum {string} */
+                                    freshness: "fresh" | "mild" | "stale";
+                                    growing: boolean;
+                                    idle_days: number;
+                                    /** @enum {string} */
+                                    kind: "dated";
+                                };
+                            };
+                        } | null;
                         last_practice: {
                             /** Format: date-time */
                             at: string;
