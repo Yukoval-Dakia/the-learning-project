@@ -20,7 +20,7 @@ import {
   normalizeQuestionMinutes,
 } from '@/core/daily-review-plan';
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { event, question_group_lifecycle } from '@/db/schema';
 import { LearningScope } from '@/kernel/read-models/assessment-learning-scope';
 import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { medianOf } from '@/kernel/read-models/question-activity';
@@ -210,6 +210,8 @@ export async function readQuestionPacesForQuestions(
   const anchors = await db
     .selectDistinctOn([event.subject_id], {
       questionId: event.subject_id,
+      revisionId: sql<string>`${event.payload}->>'revision_id'`,
+      currentRevisionId: question_group_lifecycle.current_revision_id,
       learningScope: sql<unknown>`${submissionReceipt.payload}->'learning_scope'`,
     })
     .from(event)
@@ -219,6 +221,13 @@ export async function readQuestionPacesForQuestions(
         eq(submissionReceipt.action, 'experimental:assessment_submission'),
         eq(submissionReceipt.subject_kind, 'submission'),
         eq(submissionReceipt.subject_id, sql<string>`${event.payload}->>'submission_id'`),
+      ),
+    )
+    .leftJoin(
+      question_group_lifecycle,
+      eq(
+        question_group_lifecycle.group_id,
+        sql<string>`${submissionReceipt.payload} #>> '{learning_scope,group_id}'`,
       ),
     )
     .where(
@@ -232,7 +241,13 @@ export async function readQuestionPacesForQuestions(
     )
     .orderBy(event.subject_id, desc(event.created_at), desc(event.id));
   const scopes = new Map(
-    anchors.map((row) => [row.questionId, frozenScope(row.learningScope, row.questionId)]),
+    anchors.map((row) => [
+      row.questionId,
+      // A republished shape has no current frozen attempt yet; its old shape is not a forecast.
+      row.revisionId && row.revisionId === row.currentRevisionId
+        ? frozenScope(row.learningScope, row.questionId)
+        : null,
+    ]),
   );
   const uniqueScopes = new Map(
     [...scopes.values()]
