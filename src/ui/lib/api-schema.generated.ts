@@ -31719,6 +31719,7 @@ export interface operations {
                     "application/json": {
                         current: {
                             label: string;
+                            note: string | null;
                             primary_category: string;
                             /** @enum {string} */
                             source: "user" | "agent";
