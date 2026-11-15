@@ -520,7 +520,9 @@ async function submissionBinding(db: Db, demandId: string, submission: z.infer<t
   )
     return null;
 
-  const publications = await readDemandPublications(db, demandId);
+  const publications = await readDemandPublications(db, demandId, {
+    requestId: submission.requestId,
+  });
   const matching = publications.filter(
     (publication) =>
       publication.demand_id === demandId &&
