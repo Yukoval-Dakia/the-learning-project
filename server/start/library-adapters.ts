@@ -22,6 +22,18 @@ export const readStartLibraryQuestionDetail = (
     }
   });
 
+export const readStartLibraryPublishedQuestionVersion = async (id: string) => {
+  try {
+    const { readCurrentPublishedQuestionVersion } = await import(
+      '@/kernel/read-models/question-card'
+    );
+    const { db } = await import('@/db/client');
+    return await readCurrentPublishedQuestionVersion(db, id);
+  } catch (error) {
+    throw errorResponse(error);
+  }
+};
+
 export const readStartLibraryQuestionMistakes = (id: string) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
@@ -216,6 +228,7 @@ export const readStartPracticeQuestionDetail = (
 
 export const libraryAdapters = {
   readStartQuestionCard,
+  readStartLibraryPublishedQuestionVersion,
   readStartLibraryQuestionDetail,
   readStartLibraryQuestionMistakes,
   readStartLibraryQuestions,

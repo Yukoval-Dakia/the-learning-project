@@ -24,9 +24,7 @@ import { UNKNOWN_SERVING, readQuestionServing } from '@/kernel/read-models/quest
 import { resolveQuestionRenderNotation } from '@/kernel/read-models/subject-resolution';
 import { revisionRowToContract } from '@/kernel/records/assessment-issuance';
 
-/** A learner-safe reference read; answering still requires the issuance gate. */
-export async function readQuestionCard(db: Db, id: string, sessionId?: string) {
-  const empty = { question_id: id, inline_block_ref: null, latest_attempt: null };
+async function readQuestionPreview(db: Db, id: string) {
   const [row] = await db
     .select({
       id: question.id,
@@ -45,14 +43,14 @@ export async function readQuestionCard(db: Db, id: string, sessionId?: string) {
       ),
     )
     .limit(1);
-  if (!row) return { ...empty, state: 'unavailable' as const, question: null, serving: null };
+  if (!row) return { state: 'unavailable' as const, preview: null, serving: null };
   const serving = (await readQuestionServing(db, [id])).byId.get(id) ?? UNKNOWN_SERVING;
   if (serving.hold_reason === 'withdrawn') {
-    return { ...empty, state: 'withdrawn' as const, question: null, serving };
+    return { state: 'withdrawn' as const, preview: null, serving };
   }
   // Only the admission owner may expose a not-yet-servable question as a waiting card.
   const visible = serving.servable || (row.admission_owned && serving.admission != null);
-  if (!visible) return { ...empty, state: 'unavailable' as const, question: null, serving: null };
+  if (!visible) return { state: 'unavailable' as const, preview: null, serving: null };
   const groupId = row.parent_question_id ?? row.id;
   const [revision] = await db
     .select(getTableColumns(question_revision))
@@ -66,8 +64,7 @@ export async function readQuestionCard(db: Db, id: string, sessionId?: string) {
   const parsedRevision = revision
     ? PublishedQuestionRevision.safeParse(revisionRowToContract(revision))
     : null;
-  if (!parsedRevision?.success)
-    return { ...empty, state: 'unavailable' as const, question: null, serving };
+  if (!parsedRevision?.success) return { state: 'unavailable' as const, preview: null, serving };
   const published = parsedRevision.data;
   const partIds = row.parent_question_id
     ? [row.id]
@@ -82,8 +79,63 @@ export async function readQuestionCard(db: Db, id: string, sessionId?: string) {
       claim: { policy: 'unbounded', status: 'unclaimed', claimed_by_ref: null },
     });
   } catch {
-    return { ...empty, state: 'unavailable' as const, question: null, serving };
+    return { state: 'unavailable' as const, preview: null, serving };
   }
+  const admission = serving.admission?.status;
+  return {
+    state: serving.servable
+      ? ('ready' as const)
+      : admission === 'failed'
+        ? ('failed' as const)
+        : admission === 'undecided'
+          ? ('undecided' as const)
+          : admission === 'pending' && serving.hold_reason === 'awaiting_admission'
+            ? ('checking' as const)
+            : ('unavailable' as const),
+    serving,
+    preview: { row, groupId, published, partIds, display },
+  };
+}
+
+export async function readCurrentPublishedQuestionVersion(db: Db, id: string) {
+  const current = await readQuestionPreview(db, id);
+  const identity = { question_id: id, state: current.state, serving: current.serving };
+  if (!current.preview) return { ...identity, status: 'unavailable' as const };
+  const { published, display } = current.preview;
+  const revision = {
+    revision_id: published.revision_id,
+    revision_ordinal: published.revision_ordinal,
+    published_at: published.published_at,
+  };
+  if (!display.presentation) return { ...identity, status: 'no_presentation' as const, revision };
+  // Keep the preview's synthetic issuance and the private revision inside this owner.
+  return {
+    ...identity,
+    status: 'available' as const,
+    revision,
+    notation: await resolveQuestionRenderNotation(db, id),
+    display: {
+      faces: display.faces,
+      materials: display.materials,
+      response_spec: display.response_spec,
+      presentation: display.presentation,
+    },
+  };
+}
+
+export type CurrentPublishedQuestionVersion = Awaited<
+  ReturnType<typeof readCurrentPublishedQuestionVersion>
+>;
+
+/** A learner-safe reference read; answering still requires the issuance gate. */
+export async function readQuestionCard(db: Db, id: string, sessionId?: string) {
+  const empty = { question_id: id, inline_block_ref: null, latest_attempt: null };
+  const current = await readQuestionPreview(db, id);
+  if (!current.preview) {
+    return { ...empty, state: current.state, question: null, serving: current.serving };
+  }
+  const { row, groupId, published, partIds, display } = current.preview;
+  const { serving } = current;
   const singlePart = display.faces.length === 1;
   const inlineSupported =
     singlePart &&
@@ -149,19 +201,10 @@ export async function readQuestionCard(db: Db, id: string, sessionId?: string) {
         .orderBy(desc(assessment_issuance.issued_at), desc(assessment_submission.submitted_at))
         .limit(1)
     : [];
-  const admission = serving.admission?.status;
   return {
     question_id: id,
     inline_block_ref: inlineBlockRef,
-    state: serving.servable
-      ? ('ready' as const)
-      : admission === 'failed'
-        ? ('failed' as const)
-        : admission === 'undecided'
-          ? ('undecided' as const)
-          : admission === 'pending' && serving.hold_reason === 'awaiting_admission'
-            ? ('checking' as const)
-            : ('unavailable' as const),
+    state: current.state,
     question: {
       id: row.id,
       group_id: groupId,

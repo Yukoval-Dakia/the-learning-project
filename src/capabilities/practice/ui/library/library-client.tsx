@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react';
+import type { CurrentPublishedQuestionVersion } from '@/kernel/read-models/question-card';
 import {
   deleteQuestion,
   enableDraft,
@@ -31,6 +32,7 @@ export type LibraryClient = {
   getQuestionKnowledgeOptions: typeof getQuestionKnowledgeOptions;
   getDraftDetail: typeof getDraftDetail;
   getQuestionFull: (id: string) => ReturnType<typeof getQuestionFull>;
+  getPublishedQuestionVersion?: (id: string) => Promise<CurrentPublishedQuestionVersion>;
 };
 const httpLibraryClient: LibraryClient = {
   listMistakes,

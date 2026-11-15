@@ -10,3 +10,12 @@ export const getStartLibraryQuestionDetailFunction = createServerFn({ method: 'G
       return JSON.stringify(await readStartLibraryQuestionDetail(data));
     }),
   );
+
+export const getStartLibraryPublishedQuestionVersionFunction = createServerFn({ method: 'GET' })
+  .validator((id: string) => id)
+  .handler(({ context, data }) =>
+    runAuthenticatedStartWorkbench(context, getRequest(), async () => {
+      const { readStartLibraryPublishedQuestionVersion } = await context.adapters.library();
+      return JSON.stringify(await readStartLibraryPublishedQuestionVersion(data));
+    }),
+  );

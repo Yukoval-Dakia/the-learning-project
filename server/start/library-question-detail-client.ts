@@ -1,6 +1,9 @@
 import type { LibraryClient } from '@/capabilities/practice/ui-public';
 import { authenticatedStartFetch } from './authenticated-fetch';
-import { getStartLibraryQuestionDetailFunction } from './library-question-detail-function';
+import {
+  getStartLibraryPublishedQuestionVersionFunction,
+  getStartLibraryQuestionDetailFunction,
+} from './library-question-detail-function';
 
 export const startLibraryQuestionDetailClient: LibraryClient['getQuestionFull'] = async (id) =>
   JSON.parse(
@@ -9,3 +12,15 @@ export const startLibraryQuestionDetailClient: LibraryClient['getQuestionFull'] 
       data: id,
     }),
   );
+
+export const startLibraryPublishedQuestionVersionClient: Required<
+  Pick<LibraryClient, 'getPublishedQuestionVersion'>
+> = {
+  getPublishedQuestionVersion: async (id) =>
+    JSON.parse(
+      await getStartLibraryPublishedQuestionVersionFunction({
+        fetch: authenticatedStartFetch,
+        data: id,
+      }),
+    ),
+};
