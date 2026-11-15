@@ -117,6 +117,7 @@ export async function deduplicateNewDraftInTx(
       text.reference_md,
       text.choices_md,
       groupId,
+      doc,
     );
     if (near != null) {
       return {

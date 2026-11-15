@@ -43,6 +43,7 @@ import {
   findSubmitReceipt,
   insertSourcedDraft,
   mergeExactQuestionDuplicateKnowledgeIds,
+  nearDuplicateInKnowledge,
   persistDeclaredQuestionGroup,
   questionEmbedStamp,
   submitDraftQuestion,
@@ -393,19 +394,6 @@ async function executeCandidateSubmit(
   });
 }
 
-/** Flat extraction hash unless the declaration's flat projection loses content (relation
- *  axes, break-tap text); only then does the document identity decide. Keeps existing
- *  rows deduplicating exactly as base for every other typed candidate. */
-export function declaredCandidateDedupHash(
-  document: QuestionDraftDocumentT,
-  extractionHash: string,
-): string {
-  const identity = draftCanonicalIdentity(document);
-  return identity.selectStructure != null
-    ? canonicalQuestionContentHash(identity)
-    : extractionHash.slice('sha256:'.length);
-}
-
 async function runCandidateSubmit(
   ctx: CandidateSubmitContext,
   input: ParsedInput & { candidate: NonNullable<ParsedInput['candidate']> },
@@ -485,9 +473,8 @@ async function runCandidateSubmit(
     candidate.question.parts != null && candidate.question.parts.length > 0
       ? declaredCandidateDocument(candidate.question, input.source_route, knowledgeIds)
       : null;
-  const canonicalHash = declaredDocument
-    ? declaredCandidateDedupHash(declaredDocument.document, candidate.extraction_hash)
-    : candidate.extraction_hash.slice('sha256:'.length);
+  // The fetch hash is frozen paid output; conversion must not remint its parts or pixels.
+  const canonicalHash = candidate.extraction_hash.slice('sha256:'.length);
 
   const merged = await db.transaction(async (tx) => {
     await ctx.beforeIngestionWrite?.(tx);
@@ -535,17 +522,33 @@ async function runCandidateSubmit(
 
   const hasImages = (candidate.image_refs?.length ?? 0) > 0;
   if (!hasImages) {
-    const pool = await fetchNearDupPool(db, knowledgeIds);
-    const overlap = maxNgramOverlap(
-      candidate.question.prompt_md,
-      pool.map((row) => row.prompt_md),
-    );
-    if (overlap >= DEDUP_OVERLAP_THRESHOLD) {
+    let near: Awaited<ReturnType<typeof nearDuplicateInKnowledge>>;
+    if (declaredDocument != null) {
+      near = await nearDuplicateInKnowledge(
+        db,
+        knowledgeIds,
+        candidate.question.prompt_md,
+        candidate.question.reference_md,
+        candidate.question.choices_md ?? null,
+        null,
+        declaredDocument.document,
+      );
+    } else {
+      const pool = await fetchNearDupPool(db, knowledgeIds);
+      near = {
+        overlap: maxNgramOverlap(
+          candidate.question.prompt_md,
+          pool.map((row) => row.prompt_md),
+        ),
+        poolSize: pool.length,
+      };
+    }
+    if (near != null && near.overlap >= DEDUP_OVERLAP_THRESHOLD) {
       await cleanupStagedForRejected(db, candidate.staged_asset_ids);
       return {
         status: 'conflict',
         reason: 'near_dup',
-        detail: `n-gram overlap ${overlap.toFixed(3)} ≥ ${DEDUP_OVERLAP_THRESHOLD}（KC 池 ${pool.length} 题）`,
+        detail: `n-gram overlap ${near.overlap.toFixed(3)} ≥ ${DEDUP_OVERLAP_THRESHOLD}（KC 池 ${near.poolSize} 题）`,
         request_id: input.request_id,
       };
     }
