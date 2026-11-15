@@ -13,6 +13,7 @@ import {
 } from '@/core/paid-work/server/paid-effect-store';
 import {
   DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+  DUAL_SOLVE_QUESTION_ADMISSION_POLICY_ID,
   LEGACY_QUESTION_ADMISSION_PAID_UNIT,
   PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNIT,
@@ -39,6 +40,12 @@ const Contract = z.object({
   execution_plan: ExecutionPlan,
   integrity_digest: z.string().min(1),
   presentation: Presentation.optional(),
+});
+
+const SupersededDualSolveApplication = z.strictObject({
+  status: z.literal('stale'),
+  group_id: z.string().min(1),
+  superseded_by_policy: z.literal(QUESTION_ADMISSION_POLICY_ID),
 });
 export const FrozenAdmissionInput = z.object({
   version: z.literal(1),
@@ -333,6 +340,26 @@ export async function claimAdmissionBatch(
       .for('update')
       .limit(4);
     if (sealed.length > 0) {
+      // A pre-release @4 authorization froze the old policy/solver2 shape. Map only those
+      // two policy fields; every other input fact remains covered by the exact digest.
+      const legacySuccessor =
+        prepared.policy_id === QUESTION_ADMISSION_POLICY_ID
+          ? computePaidEffectIdentity({
+              family: effect.family,
+              entityId: prepared.group_id,
+              entityRevision: prepared.contract.integrity_digest,
+              unit: DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+              input: FrozenAdmissionInput.parse(
+                JSON.parse(
+                  JSON.stringify({
+                    ...prepared,
+                    policy_id: DUAL_SOLVE_QUESTION_ADMISSION_POLICY_ID,
+                    solver2: null,
+                  }),
+                ),
+              ),
+            })
+          : null;
       const [authorizedSuccessor] = await tx
         .select({ authorization_id: paid_effect_authorization.authorization_id })
         .from(paid_effect_authorization)
@@ -341,8 +368,23 @@ export async function claimAdmissionBatch(
             eq(paid_effect_authorization.family, effect.family),
             eq(paid_effect_authorization.entity_id, effect.entityId),
             eq(paid_effect_authorization.successor_entity_revision, identity.entityRevision),
-            eq(paid_effect_authorization.successor_unit, identity.unit),
-            eq(paid_effect_authorization.successor_input_digest, identity.inputDigest),
+            or(
+              and(
+                eq(paid_effect_authorization.successor_unit, identity.unit),
+                eq(paid_effect_authorization.successor_input_digest, identity.inputDigest),
+              ),
+              ...(legacySuccessor
+                ? [
+                    and(
+                      eq(paid_effect_authorization.successor_unit, legacySuccessor.unit),
+                      eq(
+                        paid_effect_authorization.successor_input_digest,
+                        legacySuccessor.inputDigest,
+                      ),
+                    ),
+                  ]
+                : []),
+            ),
           ),
         )
         .for('update')
@@ -371,6 +413,7 @@ export async function claimAdmissionBatch(
 export async function supersedeDualSolveWait(
   tx: Tx,
   prepared: Pick<FrozenAdmissionInput, 'group_id' | 'contract'>,
+  options: { rediscoverApplied: boolean },
 ): Promise<{ sourceEventId: string | null } | null> {
   const [row] = await tx
     .select()
@@ -381,8 +424,22 @@ export async function supersedeDualSolveWait(
         eq(paid_effect.entity_id, prepared.group_id),
         eq(paid_effect.entity_revision, prepared.contract.integrity_digest),
         eq(paid_effect.unit, DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT),
-        eq(paid_effect.state, 'receipt_ready'),
-        sql`${paid_effect.result_json}->'result'->>'status' = 'waiting'`,
+        or(
+          and(
+            eq(paid_effect.state, 'receipt_ready'),
+            sql`${paid_effect.result_json}->'result'->>'status' = 'waiting'`,
+          ),
+          ...(options.rediscoverApplied
+            ? [
+                and(
+                  eq(paid_effect.state, 'applied'),
+                  sql`${paid_effect.application_json}->>'status' = 'stale'`,
+                  sql`${paid_effect.application_json}->>'group_id' = ${prepared.group_id}`,
+                  sql`${paid_effect.application_json}->>'superseded_by_policy' = ${QUESTION_ADMISSION_POLICY_ID}`,
+                ),
+              ]
+            : []),
+        ),
       ),
     )
     .for('update')
@@ -401,21 +458,24 @@ export async function supersedeDualSolveWait(
     )
     .limit(1);
   if (unresolved) return null;
-  await recordPaidEffectApplication(
-    tx,
-    {
-      family: row.family,
-      entityId: row.entity_id,
-      entityRevision: row.entity_revision,
-      unit: row.unit,
-      inputDigest: row.input_digest,
-    },
-    {
-      status: 'stale',
-      group_id: prepared.group_id,
-      superseded_by_policy: QUESTION_ADMISSION_POLICY_ID,
-    },
-  );
+  if (row.state === 'applied') SupersededDualSolveApplication.parse(row.application_json);
+  if (row.state === 'receipt_ready') {
+    await recordPaidEffectApplication(
+      tx,
+      {
+        family: row.family,
+        entityId: row.entity_id,
+        entityRevision: row.entity_revision,
+        unit: row.unit,
+        inputDigest: row.input_digest,
+      },
+      SupersededDualSolveApplication.parse({
+        status: 'stale',
+        group_id: prepared.group_id,
+        superseded_by_policy: QUESTION_ADMISSION_POLICY_ID,
+      }),
+    );
+  }
   return {
     sourceEventId: row.delivery_id ? await readPublicationSource(tx, row.delivery_id) : null,
   };

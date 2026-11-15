@@ -380,7 +380,6 @@ export async function runQuestionAdmission(
     solve = outcome.result;
   }
   evidenceTaskRuns.push(solve.receipt);
-  const blindVerdicts = new Map(solve.verdicts);
   for (const unit of solvableUnits) {
     const verdict = solve.verdicts.get(unit.scoring_unit_id);
     if (verdict == null) continue;
@@ -795,7 +794,7 @@ export async function runQuestionAdmission(
   // question, and anchors difficulty only when the published keys are the blind keys.
   const prior: SolutionPriorRecordT | null =
     allAdmitted && solve.prior != null
-      ? { ...solve.prior, solver_key_status: solverKeyStatus(definition, blindVerdicts, solve) }
+      ? { ...solve.prior, solver_key_status: solverKeyStatus(definition, solve) }
       : null;
   const result = finalize(definition, figureMarkers, policyId, now, per_unit, evidenceTaskRuns, {
     status: allAdmitted ? 'admitted' : 'withheld',
@@ -829,13 +828,11 @@ export async function runQuestionAdmission(
  */
 function solverKeyStatus(
   definition: QuestionAdmissionDefinition,
-  blind: ReadonlyMap<string, UnitSolveVerdict>,
   solve: { verdicts: ReadonlyMap<string, UnitSolveVerdict>; blind_keys: Map<string, AdmissionKey> },
 ): NonNullable<SolutionPriorRecordT['solver_key_status']> {
   if (definition.units.some((unit) => unit.unit_kind !== 'select' && unit.unit_kind !== 'blank'))
     return 'unsettled';
   for (const unit of definition.units) {
-    if (blind.get(unit.scoring_unit_id)?.status === 'agreed') continue;
     const final = solve.verdicts.get(unit.scoring_unit_id);
     const proposed = solve.blind_keys.get(unit.scoring_unit_id);
     if (final?.status !== 'agreed' || proposed == null) return 'overridden';

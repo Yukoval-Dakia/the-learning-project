@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { agentLoop } from '@earendil-works/pi-agent-core';
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { PgBoss } from 'pg-boss';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -11,15 +11,23 @@ import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
 import { computePaidEffectIdentity } from '@/core/paid-work/protocol/paid-effect-protocol';
 import {
+  admitPaidEffectIntent,
+  cancelPaidEffectUnsentIntent,
   recordPaidEffectApplication,
   recordPaidEffectResult,
   reservePaidEffect,
+  voidPaidEffectWithSuccessor,
 } from '@/core/paid-work/server/paid-effect-store';
+import {
+  DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+  QUESTION_ADMISSION_PAID_UNIT,
+} from '@/core/question-admission-policy';
 import { taskInputHash } from '@/core/task-input-hash';
 import {
   ai_task_runs,
   knowledge,
   paid_effect,
+  paid_effect_authorization,
   question,
   question_solution_prior,
 } from '@/db/schema';
@@ -33,14 +41,17 @@ import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { ADJUDICATION_TASK_KIND } from '../server/admission/adjudicate';
 import { definitionFromContract } from '../server/admission/definition-from-contract';
 import { ADMISSION_FAMILY, admissionJobId } from '../server/admission/enqueue';
+import { FrozenAdmissionInput } from '../server/admission/receipt';
 import { solverParts, solverUnits } from '../server/admission/solve';
 import { runAdmissionForQuestion as run } from './question_admission_run';
 
 const bossSends: { name: string; data: unknown; opts: Record<string, unknown> }[] = [];
+let bossSendError: Error | undefined;
 vi.mock('@/server/boss/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/server/boss/client')>()),
   getStartedBoss: async () => ({
     send: async (name: string, data: unknown, opts: Record<string, unknown>) => {
+      if (bossSendError) throw bossSendError;
       bossSends.push({ name, data, opts });
       return 'wake-job-id';
     },
@@ -298,7 +309,7 @@ function freeSolveOutput(unitId: string) {
   };
 }
 
-function passVerdict(seed: Seeded, free: boolean) {
+function passVerdict(seed: Seeded, free: boolean, wrongKey = false) {
   return {
     scoring_unit_id: seed.unitId,
     verdict: 'pass',
@@ -309,7 +320,12 @@ function passVerdict(seed: Seeded, free: boolean) {
           decided_key: { kind: 'free', rubric_md: '指出坡度改变、其余条件不变。' },
           ai_grading_sufficient: true,
         }
-      : { decided_key: { kind: 'select', item_ids: [seed.correctItemId] } }),
+      : {
+          decided_key: {
+            kind: 'select',
+            item_ids: [wrongKey ? seed.wrongItemId : seed.correctItemId],
+          },
+        }),
   };
 }
 
@@ -349,6 +365,7 @@ function fakeTaskFactory(
     successAnswers?: Map<number, string>;
     free?: boolean;
     adjudication?: 'repair' | 'pass' | 'fail';
+    adjudicationWrongKey?: boolean;
   } = {},
 ): FakeTask {
   const failures = overrides.failures ?? new Map();
@@ -416,7 +433,7 @@ function fakeTaskFactory(
         ? {
             per_unit: [
               overrides.adjudication === 'pass'
-                ? passVerdict(seed, overrides.free === true)
+                ? passVerdict(seed, overrides.free === true, overrides.adjudicationWrongKey)
                 : repairVerdict(seed.unitId),
             ],
           }
@@ -530,6 +547,139 @@ async function frozenV4Rows() {
       input: row.input_json,
     }).inputDigest,
   }));
+}
+
+async function seedCancelledLegacyAuthorization(seed: Seeded, successorDeliveryId: string) {
+  const db = testDb();
+  await insertDelivery(seed, successorDeliveryId, {
+    ...jobData(seed),
+    admission_version: 4 as const,
+  });
+  const unknownDeliveryId = admissionJobId(
+    seed.groupId,
+    seed.revisionId,
+    `${seed.digest}:legacy-unknown`,
+    0,
+  );
+  await insertDelivery(seed, unknownDeliveryId, {
+    ...jobData(seed),
+    admission_version: 4 as const,
+  });
+  const sourceId = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:legacy-auth`, 0);
+  const sourceData = jobData(seed);
+  await insertDelivery(seed, sourceId, sourceData);
+  const { task } = fakeTaskFactory(seed, {
+    failures: new Map([
+      [0, { kind: 'bound', status: 500 }],
+      [1, { kind: 'bound', status: 500 }],
+    ]),
+  });
+  const sourceRun = await run(
+    db,
+    sourceData,
+    { id: sourceId, jobData: sourceData },
+    { runTask: task },
+  );
+  expect(sourceRun.status).toBe('waiting');
+
+  const [currentRow] = await db
+    .select()
+    .from(paid_effect)
+    .where(
+      and(
+        eq(paid_effect.family, ADMISSION_FAMILY),
+        eq(paid_effect.entity_id, seed.groupId),
+        eq(paid_effect.entity_revision, seed.digest),
+        eq(paid_effect.unit, QUESTION_ADMISSION_PAID_UNIT),
+      ),
+    )
+    .limit(1);
+  if (!currentRow) throw new Error('current @5 input row missing');
+  await db.delete(paid_effect).where(eq(paid_effect.entity_id, seed.groupId));
+
+  const currentInput = FrozenAdmissionInput.parse(currentRow.input_json);
+  const legacyInput = FrozenAdmissionInput.parse({
+    ...currentInput,
+    policy_id: 'question_admission@4',
+    solver2: null,
+  });
+  const voidInput = FrozenAdmissionInput.parse({
+    ...legacyInput,
+    admission_generation: legacyInput.admission_generation + 1,
+  });
+  const voidIdentity = computePaidEffectIdentity({
+    family: ADMISSION_FAMILY,
+    entityId: seed.groupId,
+    entityRevision: seed.digest,
+    unit: DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+    input: voidInput,
+  });
+  const cancelledInput = FrozenAdmissionInput.parse({
+    ...legacyInput,
+    admission_generation: legacyInput.admission_generation + 2,
+  });
+  const cancelledIdentity = computePaidEffectIdentity({
+    family: ADMISSION_FAMILY,
+    entityId: seed.groupId,
+    entityRevision: seed.digest,
+    unit: DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+    input: cancelledInput,
+  });
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    const admitted = await admitPaidEffectIntent(tx, {
+      family: ADMISSION_FAMILY,
+      entityId: seed.groupId,
+      entityRevision: seed.digest,
+      unit: DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+      input: cancelledInput,
+    });
+    if (admitted.kind !== 'admitted')
+      throw new Error('separate cancelled legacy intent was not new');
+    await cancelPaidEffectUnsentIntent(tx, cancelledIdentity, {
+      expectedFence: 0,
+      cancellation: {
+        requestId: 'legacy-sealed-cancel',
+        reason: 'sealed legacy history',
+        operator: 'fixture',
+        basis: 'legacy policy compatibility fixture',
+      },
+    });
+  });
+  await db.insert(paid_effect).values({
+    family: ADMISSION_FAMILY,
+    entity_id: seed.groupId,
+    entity_revision: seed.digest,
+    unit: DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+    input_digest: voidIdentity.inputDigest,
+    input_json: voidInput,
+    state: 'unknown',
+    fence: 1,
+    delivery_id: unknownDeliveryId,
+    delivery_backend: 'pg-boss',
+    unresolved_reason: 'legacy unknown',
+    created_at: now,
+    updated_at: now,
+  });
+  await db.transaction(async (tx) => {
+    await voidPaidEffectWithSuccessor(tx, voidIdentity, {
+      expectedFence: 1,
+      authorization: {
+        authorizationId: 'legacy-auth',
+        reason: 'legacy policy successor',
+        operator: 'fixture',
+        basis: 'legacy policy compatibility fixture',
+        successorInput: {
+          family: ADMISSION_FAMILY,
+          entityId: seed.groupId,
+          entityRevision: seed.digest,
+          unit: DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+          input: legacyInput,
+        },
+        successorDelivery: { backend: 'pg-boss', deliveryId: successorDeliveryId },
+      },
+    });
+  });
 }
 
 /** Reserve the exact @4 adjudication fence the superseded plan would have frozen. */
@@ -661,6 +811,7 @@ describe('question admission provider recovery', () => {
     process.env.ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS = '0';
     await resetDb();
     bossSends.length = 0;
+    bossSendError = undefined;
     return () => {
       delete process.env.ADMISSION_PROVIDER_RETRY_MAX_RETRIES;
       delete process.env.ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS;
@@ -935,6 +1086,15 @@ describe('question admission provider recovery', () => {
       keyStatus: 'matched',
     },
     {
+      name: 'author accepts the blind answer, then adjudication replaces the key',
+      row: { prompt_md: '如图，哪项是受控变量？' },
+      adjudication: 'pass',
+      adjudicationWrongKey: true,
+      adjudications: 1,
+      status: 'admitted',
+      keyStatus: 'overridden',
+    },
+    {
       name: 'author key rejects the blind answer',
       row: {},
       wrongAnswer: true,
@@ -1018,6 +1178,7 @@ describe('question admission provider recovery', () => {
       const { task, calls } = fakeTaskFactory(seed, {
         free: c.free,
         adjudication: c.adjudication as 'pass' | 'fail' | undefined,
+        adjudicationWrongKey: c.adjudicationWrongKey,
         successAnswers: c.wrongAnswer ? new Map([[0, seed.wrongItemId]]) : undefined,
       });
       const result = await run(testDb(), data, { id: d1, jobData: data }, { runTask: task });
@@ -1035,8 +1196,31 @@ describe('question admission provider recovery', () => {
       expect(result.status).toBe(c.status);
       const [batch] = (await testDb().$client.unsafe(
         `select result_json from paid_effect where family = 'question_admission_run'`,
-      )) as { result_json: { result: { verification: { evidence: Record<string, unknown> } } } }[];
-      const evidence = batch.result_json.result.verification.evidence;
+      )) as {
+        result_json: {
+          result: {
+            verification: { evidence: Record<string, unknown> };
+            resolved?: {
+              scoring_basis: {
+                units: { scoring_unit_id: string; criterion: Record<string, unknown> }[];
+              };
+            };
+            solution_prior?: unknown;
+          };
+        };
+      }[];
+      const receiptResult = batch.result_json.result;
+      const evidence = receiptResult.verification.evidence;
+      if (c.adjudicationWrongKey) {
+        const finalUnit = receiptResult.resolved?.scoring_basis.units.find(
+          (unit) => unit.scoring_unit_id === seed.unitId,
+        );
+        expect(finalUnit?.criterion).toMatchObject({
+          kind: 'select_key',
+          accepted_item_ids: [seed.wrongItemId],
+        });
+        expect(receiptResult.solution_prior).toBeDefined();
+      }
       if (c.adjudications > 0 && c.adjudication !== 'fail') {
         expect(evidence.adjudicator_context).toBe('same_model_as_solver');
         expect(evidence.route_role).toBe('fallback');
@@ -1199,6 +1383,180 @@ describe('question admission provider recovery', () => {
     );
     expect(replay.status).toBe('already_verified');
     expect(freshCalls.filter((call) => call.kind === 'QuestionAdmissionSolveTask')).toHaveLength(1);
+  });
+
+  // @invariant concurrency: safe @4 history is closed exactly once — an old or wake
+  // delivery repairs a lost successor enqueue, while the canonical @5 delivery closes
+  // history in-transaction and itself reaches the paid claim
+  // @fails-if an applied-stale @4 wait permanently blocks rediscovery, canonical @5
+  // re-enqueues itself, or any @4/@5 replay issues another provider call
+  it.each([
+    { name: 'version 4 recovery delivery', version: 4, canonicalFirst: false },
+    { name: 'version 5 wake recovery delivery', version: 5, canonicalFirst: false },
+    { name: 'canonical version 5 first encounter', version: 5, canonicalFirst: true },
+  ])(
+    'closes dual-solve history before the current claim: $name',
+    async ({ version, canonicalFirst }) => {
+      const db = testDb();
+      const seed = await seedAdmission();
+      const sourceId = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:source`, 0);
+      const sourceData = jobData(seed);
+      await insertDelivery(seed, sourceId, sourceData);
+      const { task, calls } = fakeTaskFactory(seed, {
+        failures: new Map([
+          [0, { kind: 'bound', status: 500 }],
+          [1, { kind: 'bound', status: 500 }],
+        ]),
+      });
+      expect(
+        (await run(db, sourceData, { id: sourceId, jobData: sourceData }, { runTask: task }))
+          .status,
+      ).toBe('waiting');
+      await downgradeToDualSolveWait('waiting');
+      const stageBefore = await stageRows();
+
+      bossSends.length = 0;
+      const wakeId = canonicalFirst
+        ? admissionJobId(seed.groupId, seed.revisionId, seed.digest, 0)
+        : admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:lost-enqueue`, 0);
+      const wake = {
+        ...jobData(seed),
+        admission_version: version as 4 | 5,
+        recovery_confirmed: false,
+      };
+      await insertDelivery(seed, wakeId, wake, canonicalFirst ? {} : { binding: false });
+      const callsAfterWait = calls.length;
+      if (canonicalFirst) {
+        const firstRun = await run(db, wake, { id: wakeId, jobData: wake }, { runTask: task });
+        expect(firstRun.status).toBe('admitted');
+        expect(calls.length).toBe(callsAfterWait + 1);
+        expect(bossSends).toHaveLength(0);
+        const stagesAfter = await stageRows();
+        expect(stagesAfter).toHaveLength(stageBefore.length + 1);
+        const replay = await run(db, wake, { id: wakeId, jobData: wake }, { runTask: task });
+        expect(replay.status).toBe('already_verified');
+        expect(calls.length).toBe(callsAfterWait + 1);
+        return;
+      }
+      bossSendError = new Error('successor enqueue lost');
+      await expect(run(db, wake, { id: wakeId, jobData: wake }, { runTask: task })).rejects.toThrow(
+        'successor enqueue lost',
+      );
+      expect(calls.length).toBe(callsAfterWait);
+      const [supersededRow] = await db
+        .select({ state: paid_effect.state, application: paid_effect.application_json })
+        .from(paid_effect)
+        .where(eq(paid_effect.unit, 'admission@4'));
+      expect(supersededRow?.state).toBe('applied');
+      expect(supersededRow?.application).toEqual({
+        status: 'stale',
+        group_id: seed.groupId,
+        superseded_by_policy: 'question_admission@5',
+      });
+
+      bossSendError = undefined;
+      const rediscovered = await run(db, wake, { id: wakeId, jobData: wake }, { runTask: task });
+      expect(rediscovered.status).toBe('stale');
+      expect(calls.length).toBe(callsAfterWait);
+      const successors = bossSends.filter(
+        (send) => (send.data as { admission_version?: number }).admission_version === 5,
+      );
+      expect(successors).toHaveLength(1);
+      const successorId = String(successors[0]?.opts.id);
+      const successorData = successors[0]?.data as ReturnType<typeof jobData>;
+      await insertDelivery(seed, successorId, successorData, { binding: false });
+      const { task: fresh, calls: freshCalls } = fakeTaskFactory(seed);
+      const admitted = await run(
+        db,
+        successorData,
+        { id: successorId, jobData: successorData },
+        { runTask: fresh },
+      );
+      expect(admitted.status).toBe('admitted');
+      expect(freshCalls.map((call) => call.kind)).toEqual(['QuestionAdmissionSolveTask']);
+      const stageBeforeDigests = new Set(stageBefore.map((row) => row.input_digest));
+      const stagesAfter = await stageRows();
+      expect(stagesAfter.filter((row) => stageBeforeDigests.has(row.input_digest))).toHaveLength(
+        stageBefore.length,
+      );
+      expect(stagesAfter).toHaveLength(stageBefore.length + 1);
+
+      const replay = await run(
+        db,
+        successorData,
+        { id: successorId, jobData: successorData },
+        { runTask: fresh },
+      );
+      expect(replay.status).toBe('already_verified');
+      expect(freshCalls).toHaveLength(1);
+      expect(
+        (await stageRows()).filter(
+          (row) => (row.input as { policy_id?: string }).policy_id === 'question_admission@5',
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
+  // @invariant concurrency: a cancelled pre-release @4 authorization with its original
+  // bound delivery admits only the exact @5 policy successor; any input drift holds
+  // @fails-if the old @4 delivery fails to re-enqueue @5, exact @5 cannot claim after the
+  // legacy @4 successor cancellation, or drifted subject input claims or sends
+  it.each([
+    { name: 'exact mapped input claims', allowed: true },
+    { name: 'subject drift holds', allowed: false },
+  ])('legacy dual-solve authorization: $name', async ({ allowed }) => {
+    const db = testDb();
+    const seed = await seedAdmission();
+    const boundId = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:legacy-bound`, 0);
+    await seedCancelledLegacyAuthorization(seed, boundId);
+    if (!allowed) {
+      const now = new Date();
+      await db
+        .insert(knowledge)
+        .values({
+          id: 'k-drift',
+          name: 'Node',
+          domain: 'math',
+          created_at: now,
+          updated_at: now,
+        })
+        .onConflictDoNothing();
+      await db
+        .update(question)
+        .set({ knowledge_ids: ['k-drift'] })
+        .where(eq(question.id, seed.groupId));
+    }
+
+    bossSends.length = 0;
+    const boundData = { ...jobData(seed), admission_version: 4 as const };
+    const oldRun = await run(db, boundData, { id: boundId, jobData: boundData });
+    expect(oldRun.status).toBe('stale');
+    const successors = bossSends.filter(
+      (send) => (send.data as { admission_version?: number }).admission_version === 5,
+    );
+    expect(successors).toHaveLength(1);
+    const successorId = String(successors[0]?.opts.id);
+    expect(successorId).not.toBe(boundId);
+    const [authorization] = await db
+      .select({ boundDeliveryId: paid_effect_authorization.successor_delivery_id })
+      .from(paid_effect_authorization);
+    expect(authorization?.boundDeliveryId).toBe(boundId);
+    const successorData = successors[0]?.data as ReturnType<typeof jobData>;
+    await insertDelivery(seed, successorId, successorData, { binding: false });
+    const { task, calls } = fakeTaskFactory(seed);
+    const claimed = await run(
+      db,
+      successorData,
+      { id: successorId, jobData: successorData },
+      { runTask: task },
+    );
+    expect(claimed.status).toBe(allowed ? 'admitted' : 'pending');
+    expect(calls).toHaveLength(allowed ? 1 : 0);
+    const current = await db
+      .select({ unit: paid_effect.unit })
+      .from(paid_effect)
+      .where(eq(paid_effect.unit, QUESTION_ADMISSION_PAID_UNIT));
+    expect(current).toHaveLength(allowed ? 1 : 0);
   });
 });
 

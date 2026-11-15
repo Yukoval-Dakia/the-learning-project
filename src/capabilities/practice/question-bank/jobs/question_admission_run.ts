@@ -363,11 +363,22 @@ export async function runAdmissionForQuestion(
         }),
       ),
     );
+    const canonicalCurrentDeliveryId = delivery.jobData
+      ? admissionJobId(
+          rootId,
+          delivery.jobData.revision_id ?? revision?.revision_id ?? '',
+          contract.integrity_digest,
+          lifecycle?.scoring_admission_generation ?? 0,
+        )
+      : null;
     // A dual-solve wait on this exact base is handed to the single-solve contract: it is
     // closed here and its publication is re-enqueued after this transaction.
     if (pinned && eligible) {
-      const superseded = await supersedeDualSolveWait(tx, input);
-      if (superseded) return { kind: 'superseded' as const, ...superseded };
+      const superseded = await supersedeDualSolveWait(tx, input, {
+        rediscoverApplied: delivery.id !== canonicalCurrentDeliveryId,
+      });
+      if (superseded && delivery.id !== canonicalCurrentDeliveryId)
+        return { kind: 'superseded' as const, ...superseded };
     }
     // 声明 answer_shape 的题由共享比较核心判定支持后
     // 才可发起付费 claim —— 未实现 notation、未知/坏声明在 claim/付费发送

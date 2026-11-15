@@ -37,10 +37,7 @@ export async function setup() {
   // The current budget still stays well under 500. 500 leaves
   // comfortable headroom without measurable cost on a single-developer
   // testcontainer. (Previously this guarded a single accumulating fork.)
-  // The container itself stays inside the local heavy-window budget: 768MiB
-  // and 1 CPU, verified after start before any migration or fork uses it.
   container = await new PostgreSqlContainer('pgvector/pgvector:pg16')
-    .withResourcesQuota({ memory: 768 / 1024, cpu: 1 })
     .withTmpFs({ '/var/lib/postgresql/data': 'rw,size=2g' })
     .withCommand(['postgres', '-c', 'max_connections=500'])
     .start();
