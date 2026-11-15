@@ -5,20 +5,18 @@
 // state the learner cancelled.
 
 import { createHash } from 'node:crypto';
-import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import { canonicalHash } from '@/core/migration/canonical';
+import { PublishedQuestionRevision, validateIssuanceBinding } from '@/core/schema/assessment';
+import { DraftFocus } from '@/core/schema/assessment/draft-focus';
 import type { Db, Tx } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
   type DrawingSourceEpoch,
   type DrawingStatus,
-  assessment_issuance,
-  assessment_submission,
   drawing,
   event,
-  question,
-  question_revision,
   source_asset,
 } from '@/db/schema';
 import {
@@ -34,7 +32,12 @@ import {
   readSourceUsageEpochs,
   sourceAllowsDerivation,
 } from '@/kernel/read-models/usage-policy';
-import { recordStudyAssistanceExposure } from '@/kernel/records/study-reference';
+import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
+import {
+  loadIssuanceStudyCoordinate,
+  projectFrozenStudyReference,
+  recordDrawingStudyAssistanceExposure,
+} from '@/kernel/records/study-reference';
 import type { DrawingBlockIssue, DrawingRequestOutcome } from '@/kernel/tools/drawing-request';
 import type { TurnSourceLedger } from '@/kernel/tools/source-ledger';
 import { getStartedBoss } from '@/server/boss/client';
@@ -63,7 +66,7 @@ export type DrawingBoss = Pick<Awaited<ReturnType<typeof getStartedBoss>>, 'send
 const RESTRICTED_DETAIL =
   '这次请求读到的资料无法完整核验来源，或来源不允许派生绘图。已拒画——可以改成描述性的回答，或明确只用本轮消息本身的内容重新请求。';
 const UNJUDGED_DETAIL =
-  '这次绘图请求带上了未判定题目的答案内容，图上不能泄露它。改成只画题设本身的描述重新请求，或先作答并完成判定。';
+  '这次请求无法核验为只画未判定题目的题设。请在当前题目明确请求「画一下题设」，或先作答并完成判定。';
 
 /** Stable learner-facing detail per error_kind; raw diagnostics stay DB-side. */
 const ERROR_DETAILS: Record<string, string> = {
@@ -189,9 +192,9 @@ export class DrawingAuthorizationError extends Error {
 }
 
 /**
- * Answer-leak gate: a question the learner has no committed judgment on may
- * not drive a drawing — brief/alt/caption could carry its answer. The question
- * set follows the provenance closure of every bound source, not only top-level
+ * Find questions needing frozen-stem authorization because they have no
+ * committed judgment. The set follows the provenance closure of every bound
+ * source, not only top-level
  * question nodes. Judged means: a real attempt event (`outcome` column set)
  * whose judgment survives — an effective (or execution-embedded) judge event
  * anchored by subject_id/caused_by_event_id — or a native
@@ -255,76 +258,76 @@ async function unjudgedQuestionIds(
   return questionIds.filter((id) => !judged.has(id));
 }
 
-/**
- * Answer-content gate: a brief/alt/caption that quotes the reference answer of
- * an unjudged lineage question would leak it onto the figure, so it refuses.
- * Only a stored answer text anchors the comparison — a clean stem-only request
- * has no answer material to collide with and proceeds.
- */
-async function carriesReferenceAnswer(
+/** No purpose grant exists for free-form asks: admit only the complete stem command
+ * and the frozen public face verbatim. Model-written intent is not authorization. */
+async function cleanStemCoordinate(
   db: Db | Tx,
   unjudged: readonly string[],
+  sessionId: string,
+  askId: string | undefined,
   input: { brief: string; alt: string; caption?: string },
-): Promise<boolean> {
-  if (unjudged.length === 0) return false;
-  const requestText = `${input.brief}\n${input.alt}\n${input.caption ?? ''}`
-    .toLowerCase()
-    .replace(/\s+/g, '');
-  if (requestText.length === 0) return false;
-  const rows = await db
-    .select({ reference_md: question.reference_md })
-    .from(question)
-    .where(inArray(question.id, [...unjudged]));
-  for (const row of rows) {
-    const answer = (row.reference_md ?? '').toLowerCase().replace(/\s+/g, '');
-    // A substantive answer fragment — not a one-character coincidence — is a leak.
-    if (answer.length >= 8 && requestText.includes(answer)) return true;
-  }
-  return false;
-}
-
-/**
- * The uniquely-open issuance covering an unjudged lineage question — the same
- * group/part coordinate resolution reveal_answer uses. Returns the issuance id
- * only when exactly one open issuance resolves; zero, multiple, or
- * all-submitted coordinates return undefined so the drawing proceeds and only
- * the exposure record is skipped (never fabricated).
- */
-async function uniqueOpenIssuanceForQuestion(
-  db: Db | Tx,
-  questionId: string,
-): Promise<{ issuance_id: string; question_id: string } | undefined> {
-  const issuances = await db
-    .select({
-      issuance_id: assessment_issuance.issuance_id,
-      issued_at: assessment_issuance.issued_at,
-    })
-    .from(assessment_issuance)
-    .innerJoin(
-      question_revision,
-      eq(assessment_issuance.revision_id, question_revision.revision_id),
-    )
-    .where(
-      sql`(${question_revision.group_id} = ${questionId} or ${assessment_issuance.part_ids} ? ${questionId})`,
-    )
-    .orderBy(desc(assessment_issuance.issued_at));
-  if (issuances.length === 0) return undefined;
-  const submitted = new Set(
-    (
-      await db
-        .select({ issuance_id: assessment_submission.issuance_id })
-        .from(assessment_submission)
-        .where(
-          inArray(
-            assessment_submission.issuance_id,
-            issuances.map((row) => row.issuance_id),
-          ),
-        )
-    ).map((row) => row.issuance_id),
+): Promise<{ issuanceId: string; questionId: string } | undefined> {
+  if (!askId) return undefined;
+  const [ask] = await db.select().from(event).where(eq(event.id, askId));
+  const rawFocus = ask?.payload.draft_focus;
+  const grant =
+    rawFocus && typeof rawFocus === 'object' ? (rawFocus as Record<string, unknown>) : undefined;
+  const focus = DraftFocus.safeParse(
+    grant && {
+      question_id: grant.question_id,
+      issuance_id: grant.issuance_id,
+      revision_id: grant.revision_id,
+      save_epoch: grant.save_epoch,
+    },
   );
-  const open = issuances.filter((row) => !submitted.has(row.issuance_id));
-  if (open.length !== 1) return undefined;
-  return { issuance_id: open[0].issuance_id, question_id: questionId };
+  if (
+    !ask ||
+    ask.session_id !== sessionId ||
+    ask.actor_kind !== 'user' ||
+    ask.actor_ref !== 'user:self' ||
+    ask.action !== 'experimental:copilot_user_ask' ||
+    ask.payload.surface !== 'copilot' ||
+    ask.payload.derivation_policy !== 'allow' ||
+    ask.payload.user_message !== '画一下题设' ||
+    ask.payload.review_answer !== undefined ||
+    ask.payload.confirmation !== undefined ||
+    !focus.success ||
+    unjudged.some((id) => id !== focus.data.question_id)
+  )
+    return undefined;
+  const coordinate = await loadIssuanceStudyCoordinate(
+    db,
+    focus.data.issuance_id,
+    focus.data.question_id,
+  );
+  if (coordinate.status !== 'assistable') return undefined;
+  const revision = PublishedQuestionRevision.safeParse(revisionRowToContract(coordinate.revision));
+  const issuance = issuanceRowToContract(coordinate.issuance);
+  if (
+    !revision.success ||
+    revision.data.revision_id !== focus.data.revision_id ||
+    validateIssuanceBinding(issuance.binding, revision.data).length > 0
+  )
+    return undefined;
+  const frozen = projectFrozenStudyReference(revision.data, issuance);
+  if (
+    !frozen.promptMd.trim() ||
+    !frozen.referenceMd ||
+    input.brief !== frozen.promptMd ||
+    input.alt !== '题设' ||
+    (input.caption !== undefined && input.caption !== '')
+  )
+    return undefined;
+  const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, '');
+  const requested = normalize(`${input.brief}\n${input.alt}\n${input.caption ?? ''}`);
+  if (
+    frozen.referenceMd.split(/\r?\n/).some((line) => {
+      const answer = normalize(line);
+      return answer.length > 0 && requested.includes(answer);
+    })
+  )
+    return undefined;
+  return { issuanceId: focus.data.issuance_id, questionId: focus.data.question_id };
 }
 
 /**
@@ -421,37 +424,31 @@ export async function requestDrawing(
       ([document_id, usage_epoch]) => ({ document_id, usage_epoch }),
     );
 
-    // Answer-content gate: outside the restricted answer-reveal surface, an
-    // unjudged bound question may still drive a drawing — but only when the
-    // requested brief/alt/caption carries none of its reference answer. An
-    // answer-bearing request keeps the typed refusal. On a clean admission the
-    // drawing counts as one study assistance against the uniquely-open
-    // issuance; zero/multiple/all-submitted coordinates skip only the record.
-    let assistanceIssuance: { issuance_id: string; question_id: string } | undefined;
+    let stemCoordinate: { issuanceId: string; questionId: string } | undefined;
     if (!ctx.answerOnly) {
       const unjudged = await unjudgedQuestionIds(tx, snapshot.sources);
       if (unjudged.length > 0) {
-        if (await carriesReferenceAnswer(tx, unjudged, input)) {
+        stemCoordinate = await cleanStemCoordinate(
+          tx,
+          unjudged,
+          sessionId,
+          ctx.causedByEventId,
+          input,
+        );
+        if (!stemCoordinate) {
           return {
             status: 'unavailable',
             issues: [{ code: 'unjudged_source', path: '/brief', detail: UNJUDGED_DETAIL }],
           };
         }
-        // Only a single unjudged question yields a single recording coordinate;
-        // a multi-question unjudged set has no unique "question being drawn".
-        assistanceIssuance =
-          unjudged.length === 1 ? await uniqueOpenIssuanceForQuestion(tx, unjudged[0]) : undefined;
       }
     }
 
     // Record the single study-assistance exposure for this admitted request
     // before the drawing insert, atomically inside the dispatch transaction.
-    if (assistanceIssuance) {
-      await recordStudyAssistanceExposure(tx, {
-        issuanceId: assistanceIssuance.issuance_id,
-        questionId: assistanceIssuance.question_id,
-        kind: 'chat_context',
-        impact: 'unknown',
+    if (stemCoordinate) {
+      await recordDrawingStudyAssistanceExposure(tx, {
+        ...stemCoordinate,
         actorRef: ctx.actorRef,
         contentDigest: `sha256:${canonicalHash({
           brief: input.brief,

@@ -4,7 +4,7 @@
 // is recorded under the issuance lock.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   type AssessmentIssuanceT,
   type PracticeIssuanceDtoT,
@@ -308,6 +308,64 @@ export type StudyAssistanceExposureInput =
   | NoteAssistanceExposureInput;
 
 export type StudyAssistanceEventInput = Exclude<StudyAssistanceExposureInput, { kind: 'note' }>;
+
+/** Drawing alone skips submitted/ambiguous coordinates. Root precedes issuance;
+ * submission takes evaluation-group then issuance and never requests this root. */
+export async function recordDrawingStudyAssistanceExposure(
+  database: Db | Tx,
+  input: { issuanceId: string; questionId: string; actorRef: string; contentDigest: string },
+): Promise<string | undefined> {
+  return database.transaction(async (tx) => {
+    const coordinate = await loadIssuanceStudyCoordinate(tx, input.issuanceId, input.questionId);
+    if (coordinate.status !== 'assistable') return undefined;
+    // The drawing's accepted-focus authorization already holds this root before sources.
+    await tx
+      .select({ id: question.id })
+      .from(question)
+      .where(eq(question.id, coordinate.revision.group_id))
+      .for('update');
+    const issuances = await tx
+      .select({ issuance_id: assessment_issuance.issuance_id })
+      .from(assessment_issuance)
+      .where(
+        and(
+          inArray(
+            assessment_issuance.revision_id,
+            tx
+              .select({ revision_id: question_revision.revision_id })
+              .from(question_revision)
+              .where(eq(question_revision.group_id, coordinate.revision.group_id)),
+          ),
+          input.questionId === coordinate.revision.group_id
+            ? undefined
+            : sql`${assessment_issuance.part_ids} ? ${input.questionId}`,
+        ),
+      )
+      .orderBy(assessment_issuance.issuance_id)
+      .for('update');
+    if (issuances.length === 0) return undefined;
+    const submitted = await tx
+      .select({ issuance_id: assessment_submission.issuance_id })
+      .from(assessment_submission)
+      .where(
+        inArray(
+          assessment_submission.issuance_id,
+          issuances.map((row) => row.issuance_id),
+        ),
+      );
+    const closed = new Set(submitted.map((row) => row.issuance_id));
+    const open = issuances.filter((row) => !closed.has(row.issuance_id));
+    if (open.length !== 1) return undefined;
+    const selected = await loadIssuanceStudyCoordinate(tx, open[0].issuance_id, input.questionId);
+    if (selected.status !== 'assistable') return undefined;
+    return recordStudyAssistanceExposure(tx, {
+      ...input,
+      issuanceId: open[0].issuance_id,
+      kind: 'chat_context',
+      impact: 'unknown',
+    });
+  });
+}
 
 /**
  * Record one assistance exposure. Locks the issuance and re-checks the

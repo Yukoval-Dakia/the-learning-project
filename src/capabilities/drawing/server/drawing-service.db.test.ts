@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GET as genericAssetContentGET } from '@/capabilities/ingestion/api/asset-content';
+import { saveSubmission } from '@/capabilities/practice/grading/public';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import { taskInputHash } from '@/core/task-input-hash';
@@ -30,6 +31,7 @@ import {
 } from '@/kernel/records/assessment-normalization';
 import { deleteImageAsset, persistImmutableAsset } from '@/kernel/records/asset-store';
 import { captureDraftFocus } from '@/kernel/records/current-draft';
+import { recordDrawingStudyAssistanceExposure } from '@/kernel/records/study-reference';
 import { captureStudySources } from '@/kernel/records/study-sources';
 import { TurnSourceLedger, recordToolReadSources } from '@/kernel/tools/source-ledger';
 import {
@@ -187,9 +189,31 @@ function seedRow(over: Partial<typeof drawing.$inferInsert> = {}) {
 }
 
 /** A published revision plus one open (unsubmitted) issuance for a question. */
-async function seedOpenIssuance(questionId: string): Promise<string> {
+async function seedStemDrawing(
+  reference: string | null = '摩擦力方向沿斜面向上，大小等于 mgsinθ',
+  prompt = '一个物块静止在粗糙斜面上。',
+  scoringOnly = false,
+  userMessage = '画一下题设',
+) {
+  const documentId = `doc_${newId()}`;
+  await db.insert(source_document).values({
+    id: documentId,
+    source_asset_ids: [],
+    provenance: { usage_policy: { derivation_policy: 'allow' } },
+    created_at: new Date(),
+    updated_at: new Date(),
+  });
+  const questionId = await seedQuestion({
+    prompt_md: prompt,
+    reference_md: reference,
+    metadata: { source_document_id: documentId },
+  });
   const [q] = await db.select().from(question).where(eq(question.id, questionId));
   const contract = normalizeQuestionGroupToContract(q, []);
+  if (scoringOnly) {
+    contract.structure.materials = [];
+    contract.structure.parts[0].material_ids = [];
+  }
   contract.integrity_digest = contractIntegrityDigest(contract);
   const revisionId = `rev_${newId()}`;
   await db.insert(question_revision).values({
@@ -209,13 +233,80 @@ async function seedOpenIssuance(questionId: string): Promise<string> {
     issuance_id: issuanceId,
     revision_id: revisionId,
     part_ids: [contract.structure.parts[0].part_id],
-    material_bindings: [],
+    material_bindings: contract.structure.materials.map((material) => ({
+      material_id: material.material_id,
+      asset_digest: material.asset.digest,
+    })),
     option_order: [],
     claim_policy: 'unbounded',
     claim_status: 'unclaimed',
     issued_at: new Date(),
   });
-  return issuanceId;
+  const sources = await db.transaction((tx) =>
+    captureStudySources(tx, questionId, [questionId], []),
+  );
+  if (!sources) throw new Error('study fixture must be derivable');
+  await db.insert(event).values({
+    id: `evt_${newId()}`,
+    actor_kind: 'system',
+    actor_ref: 'test',
+    action: 'experimental:assessment_publish',
+    subject_kind: 'question',
+    subject_id: questionId,
+    payload: { revision_id: revisionId, study_sources: sources },
+    created_at: new Date(),
+  });
+  await db.insert(assessment_response_draft).values({
+    issuance_id: issuanceId,
+    response_set: { entries: [] },
+    save_epoch: 1,
+    updated_at: new Date(),
+  });
+  const session = sessionId();
+  const askId = `evt_${newId()}`;
+  await db.insert(event).values({
+    id: askId,
+    session_id: session,
+    actor_kind: 'user',
+    actor_ref: 'user:self',
+    action: 'experimental:copilot_user_ask',
+    subject_kind: 'query',
+    subject_id: askId,
+    payload: {
+      surface: 'copilot',
+      derivation_policy: 'allow',
+      user_message: userMessage,
+      draft_focus: await captureDraftFocus(db, {
+        question_id: questionId,
+        issuance_id: issuanceId,
+        revision_id: revisionId,
+        save_epoch: 1,
+      }),
+    },
+    created_at: new Date(),
+  });
+  const ledger = new TurnSourceLedger();
+  ledger.note({ kind: 'question', id: questionId });
+  return {
+    questionId,
+    issuanceId,
+    revisionId,
+    ctx: {
+      db,
+      sessionId: session,
+      taskRunId: `run_${newId()}`,
+      actorRef: 'test',
+      causedByEventId: askId,
+      ledger,
+    },
+    input: { brief: prompt, alt: '题设' },
+    submission: {
+      issuance_id: issuanceId,
+      evaluation_group_id: `eg_${newId()}`,
+      idempotency_key: newId(),
+      response_set: { entries: [] },
+    },
+  };
 }
 
 describe('drawing service invariants', () => {
@@ -552,67 +643,196 @@ describe('drawing service invariants', () => {
     expect(sends).toHaveLength(3);
   });
 
-  // @invariant grading: an unjudged lineage question whose brief carries none
-  // of its reference answer proceeds to draw, and records exactly one
-  // chat_context study_assistance exposure against its uniquely-open issuance.
-  // @fails-if a clean brief is still refused, or admission writes zero/two+
-  // exposure rows or targets a submitted/ambiguous coordinate.
-  it('unjudged question with an answer-free brief draws and records one exposure', async () => {
-    const session = sessionId();
-    const reference = '摩擦力方向沿斜面向上，大小等于 mgsinθ';
-    const questionId = await seedQuestion({ reference_md: reference });
-    const issuanceId = await seedOpenIssuance(questionId);
-    const ledger = new TurnSourceLedger();
-    ledger.note({ kind: 'question', id: questionId });
-    const sends: string[] = [];
-    const outcome = await requestDrawing(
-      { db, sessionId: session, taskRunId: `run_${newId()}`, actorRef: 'test', ledger },
-      { brief: '画出斜面上物块的受力示意图', alt: '受力示意图' },
-      { boss: async () => stubBoss(sends) },
-    );
-    expect(outcome.status).toBe('ready');
-    expect(sends).toHaveLength(1);
-
-    const exposures = await db
-      .select({ payload: event.payload })
-      .from(event)
-      .where(
-        sql`${event.action} = 'experimental:assessment_assistance' AND ${event.subject_id} = ${issuanceId}`,
+  // @invariant security: only an accepted stem command with the frozen public face
+  // may draw an unjudged question; answer intent or uncertain content never dispatches.
+  // @fails-if short/final-line/frozen answers leak, or mutable references authorize a drawing.
+  it('admits only proven frozen stems and refuses answer intent and uncertain content', async () => {
+    for (const mode of [
+      'clean',
+      'answer_intent',
+      'answer_brief',
+      'free_form',
+      'short',
+      'final_line',
+      'frozen_drift',
+      'current_drift',
+      'scoring_only',
+      'missing_ask',
+    ] as const) {
+      const collision = ['short', 'frozen_drift', 'scoring_only'].includes(mode);
+      const reference = collision
+        ? '42'
+        : mode === 'final_line'
+          ? '计算过程\n最终答案42'
+          : '摩擦力沿斜面向上';
+      const prompt = collision
+        ? '42'
+        : mode === 'final_line'
+          ? '最终答案42'
+          : '物块静止在粗糙斜面上。';
+      const fixture = await seedStemDrawing(
+        reference,
+        prompt,
+        mode === 'scoring_only',
+        mode === 'answer_intent' ? '把答案画出来' : '画一下题设',
       );
-    expect(exposures).toHaveLength(1);
-    const payload = exposures[0]?.payload as Record<string, unknown>;
-    expect(payload.kind).toBe('chat_context');
-    expect(payload.phase).toBe('before_submit');
-    expect(payload.dose).toBeNull();
+      if (mode === 'frozen_drift' || mode === 'current_drift')
+        await db
+          .update(question)
+          .set({ reference_md: mode === 'frozen_drift' ? '99' : prompt })
+          .where(eq(question.id, fixture.questionId));
+      const sends: string[] = [];
+      const outcome = await requestDrawing(
+        { ...fixture.ctx, ...(mode === 'missing_ask' ? { causedByEventId: undefined } : {}) },
+        mode === 'answer_brief'
+          ? { brief: '把答案画出来', alt: '答案' }
+          : mode === 'free_form'
+            ? { brief: '给出受力方向', alt: '题设' }
+            : fixture.input,
+        { boss: async () => stubBoss(sends) },
+      );
+      const admitted = mode === 'clean' || mode === 'current_drift';
+      expect(outcome.status, mode).toBe(admitted ? 'ready' : 'unavailable');
+      if (outcome.status === 'unavailable')
+        expect(outcome.issues[0]?.code, mode).toBe('unjudged_source');
+      expect(sends, mode).toHaveLength(admitted ? 1 : 0);
+      const rows = await db
+        .select()
+        .from(drawing)
+        .where(eq(drawing.session_id, fixture.ctx.sessionId));
+      expect(rows, mode).toHaveLength(admitted ? 1 : 0);
+      if (admitted) expect(JSON.stringify(rows), mode).not.toContain(reference);
+      expect(
+        await db
+          .select()
+          .from(event)
+          .where(
+            sql`${event.action} = 'experimental:assessment_assistance' AND ${event.subject_id} = ${fixture.issuanceId}`,
+          ),
+        mode,
+      ).toHaveLength(admitted ? 1 : 0);
+    }
   });
 
-  // @invariant security: a brief that quotes the unjudged question's reference
-  // answer keeps the typed refusal — no drawing row, no job, no exposure.
-  // @fails-if an answer-bearing brief is admitted, dispatched, or recorded.
-  it('unjudged question with an answer-bearing brief still refuses', async () => {
-    const session = sessionId();
-    const reference = '摩擦力方向沿斜面向上，大小等于 mgsinθ';
-    const questionId = await seedQuestion({ reference_md: reference });
-    const issuanceId = await seedOpenIssuance(questionId);
-    const ledger = new TurnSourceLedger();
-    ledger.note({ kind: 'question', id: questionId });
-    const sends: string[] = [];
-    const outcome = await requestDrawing(
-      { db, sessionId: session, taskRunId: `run_${newId()}`, actorRef: 'test', ledger },
-      { brief: `把答案画出来：${reference}`, alt: '答案' },
-      { boss: async () => stubBoss(sends) },
-    );
-    expect(outcome.status).toBe('unavailable');
-    expect((outcome as { issues: { code: string }[] }).issues[0]?.code).toBe('unjudged_source');
-    expect(sends).toHaveLength(0);
-    expect(await db.select().from(drawing).where(eq(drawing.session_id, session))).toHaveLength(0);
-    const exposures = await db
-      .select({ id: event.id })
-      .from(event)
-      .where(
-        sql`${event.action} = 'experimental:assessment_assistance' AND ${event.subject_id} = ${issuanceId}`,
-      );
-    expect(exposures).toHaveLength(0);
+  // @invariant concurrency: drawing exposure and submission share the issuance lock;
+  // only one open coordinate records, and the sealed receipt includes every prior exposure.
+  // @fails-if ambiguity fabricates exposure, or either submit ordering writes late help or seals independence after help.
+  it('serializes unique drawing exposure with submission and skips closed or ambiguous coordinates', async () => {
+    const exposureRows = (issuanceId: string) =>
+      db
+        .select()
+        .from(event)
+        .where(
+          sql`${event.action} = 'experimental:assessment_assistance' AND ${event.subject_id} = ${issuanceId}`,
+        );
+    const receipt = async (groupId: string) => {
+      const [row] = await db
+        .select()
+        .from(event)
+        .where(
+          sql`${event.action} = 'experimental:assessment_submission' AND ${event.payload}->>'evaluation_group_id' = ${groupId}`,
+        );
+      return row?.payload.assistance;
+    };
+    for (const mode of [
+      'unique',
+      'none',
+      'multiple',
+      'all_submitted',
+      'submit_first',
+      'drawing_first',
+    ] as const) {
+      const fixture = await seedStemDrawing();
+      const input = {
+        issuanceId: mode === 'none' ? `iss_${newId()}` : fixture.issuanceId,
+        questionId: fixture.questionId,
+        actorRef: 'test',
+        contentDigest: `sha256:${'a'.repeat(64)}`,
+      };
+      if (mode === 'multiple') {
+        const [issued] = await db
+          .select()
+          .from(assessment_issuance)
+          .where(eq(assessment_issuance.issuance_id, fixture.issuanceId));
+        await db.insert(assessment_issuance).values({ ...issued, issuance_id: `iss_${newId()}` });
+      }
+      if (mode === 'unique' || mode === 'multiple') {
+        const sends: string[] = [];
+        const deps = { boss: async () => stubBoss(sends) };
+        const first = await requestDrawing(fixture.ctx, fixture.input, deps);
+        expect(first.status, mode).toBe('ready');
+        const again = await requestDrawing(fixture.ctx, fixture.input, deps);
+        expect(again, mode).toEqual(first);
+        const rows = await exposureRows(fixture.issuanceId);
+        expect(rows, mode).toHaveLength(mode === 'unique' ? 2 : 0);
+        if (mode === 'unique') {
+          expect(rows.map((row) => row.payload)).toEqual([
+            expect.objectContaining({ kind: 'chat_context', phase: 'before_submit', dose: null }),
+            expect.objectContaining({ kind: 'chat_context', phase: 'before_submit', dose: null }),
+          ]);
+          expect((await saveSubmission(db, fixture.submission)).status).toBe('saved');
+          expect(await receipt(fixture.submission.evaluation_group_id)).toMatchObject({
+            status: 'unknown',
+            event_ids: expect.arrayContaining(rows.map((row) => row.id)),
+          });
+        }
+        continue;
+      }
+      if (mode === 'all_submitted')
+        expect((await saveSubmission(db, fixture.submission)).status).toBe('saved');
+      if (mode === 'none' || mode === 'all_submitted') {
+        expect(await recordDrawingStudyAssistanceExposure(db, input), mode).toBeUndefined();
+        expect(await exposureRows(fixture.issuanceId), mode).toHaveLength(0);
+        continue;
+      }
+      const locked = Promise.withResolvers<number>();
+      const release = Promise.withResolvers<void>();
+      const winner = db.transaction(async (tx) => {
+        const result =
+          mode === 'submit_first'
+            ? await saveSubmission(tx, fixture.submission)
+            : await recordDrawingStudyAssistanceExposure(tx, input);
+        const [connection] = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+        locked.resolve(connection.pid);
+        await release.promise;
+        return result;
+      });
+      let loser: Promise<unknown> | undefined;
+      try {
+        const blocker = await Promise.race([
+          locked.promise,
+          winner.then(() => {
+            throw new Error('lock barrier not reached');
+          }),
+        ]);
+        loser =
+          mode === 'submit_first'
+            ? recordDrawingStudyAssistanceExposure(db, input)
+            : saveSubmission(db, fixture.submission);
+        await expect
+          .poll(
+            async () =>
+              (
+                await db.execute(sql`
+          select pid from pg_stat_activity where datname = current_database()
+          and ${blocker} = any(pg_blocking_pids(pid))
+        `)
+              ).length,
+          )
+          .toBeGreaterThan(0);
+      } finally {
+        release.resolve();
+        await Promise.all([winner, loser]);
+      }
+      const rows = await exposureRows(fixture.issuanceId);
+      expect(rows, mode).toHaveLength(mode === 'drawing_first' ? 1 : 0);
+      expect(await receipt(fixture.submission.evaluation_group_id), mode).toMatchObject({
+        status: mode === 'drawing_first' ? 'unknown' : 'independent',
+        event_ids: rows.map((row) => row.id),
+      });
+      if (mode === 'submit_first') expect(await loser).toBeUndefined();
+      else expect(await loser).toMatchObject({ status: 'saved' });
+    }
   });
 });
 
