@@ -104,9 +104,13 @@ export function FailedTurnReference({
         error instanceof ApiError &&
         (error.status === 403 ||
           error.status === 404 ||
-          ['coordinate_mismatch', 'reveal_unavailable', 'study_restricted'].includes(
-            error.code ?? '',
-          ));
+          [
+            'coordinate_mismatch',
+            'reveal_unavailable',
+            'study_restricted',
+            'study_source_unknown',
+            'study_source_restricted',
+          ].includes(error.code ?? ''));
       setView(
         denied
           ? { status: 'unavailable', message: '原题参考已不可用，未显示参考内容。' }
