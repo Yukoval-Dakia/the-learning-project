@@ -45,3 +45,7 @@ export async function installDailyReviewPlanFacts(): Promise<void> {
 export async function loadReviewDueReader() {
   return (await import('./tools/question-context')).executeGetReviewDue;
 }
+
+export const buildSettlementRerankSubscriber: typeof import('./server/settlement-rerank').buildSettlementRerankSubscriber =
+  (db) => async (delivery) =>
+    (await import('./server/settlement-rerank')).handleSettlementRerankDelivery(db, delivery);

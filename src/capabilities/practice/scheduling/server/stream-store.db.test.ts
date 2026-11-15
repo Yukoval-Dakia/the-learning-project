@@ -5,11 +5,13 @@
 // 增量重排走纯统计 sampler（不调 LLM），rng 注入 seeded 确定化 Poisson 抽样。
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   event,
+  event_subscription_delivery,
   item_calibration,
+  knowledge,
   mastery_state,
   material_fsrs_state,
   mistake_variant,
@@ -17,11 +19,23 @@ import {
   question,
   selection_observation,
 } from '@/db/schema';
+import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { streamLocalDate } from '@/kernel/stream-date';
+import { loadEventSubscriptionRegistry } from '@/server/events/subscriptions/registry';
+import {
+  bootstrapSubscription,
+  claimNextSubscriptionDelivery,
+  claimSubscriptionLease,
+  completeSubscriptionDelivery,
+  discoverSubscriptionDeliveries,
+} from '@/server/events/subscriptions/runtime';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { composeNightly, getStream, reRankAfterAnswer } from './stream-store';
+import { commitFormalAttempt } from '../../grading/public';
+import { settlementManifestPart } from '../../settlement/manifest-part';
+import { SETTLEMENT_RERANK_SUBSCRIBER, handleSettlementRerankDelivery } from './settlement-rerank';
+import { advanceStreamItem, composeNightly, getStream } from './stream-store';
 
 const TODAY = streamLocalDate();
 
@@ -310,11 +324,16 @@ describe('Task 9 作答后有界增量重排 reRankAfterAnswer（YUK-361 Phase 4
     await resetDb();
   });
 
-  it('EDGE 3：observation 数 == 真插入行数（onConflictDoNothing 吞掉的不记幻影 π_i）', async () => {
+  // @invariant concurrency: duplicate settlement delivery and later PATCH preserve one committed partition rerank, including recovery before framework acknowledgement.
+  // @fails-if rerank completion commits separately from partition changes, retries sample again, or PATCH resamples a native answer; receipt and row equality fail.
+  it('commits one settlement rerank across concurrent delivery, acknowledgement recovery and PATCH', async () => {
     const sharedKc = createId();
+    await testDb()
+      .insert(knowledge)
+      .values({ id: sharedKc, name: 'bounded rerank', domain: 'physics' });
     await seedDueQuestion();
     const answeredId = await insertQuestion({ kind: 'choice', knowledgeIds: [sharedKc] });
-    await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0 });
+    const original = await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0 });
 
     await getStream(testDb(), TODAY, {
       composeIfEmpty: true,
@@ -336,11 +355,114 @@ describe('Task 9 作答后有界增量重排 reRankAfterAnswer（YUK-361 Phase 4
     const rowsBefore = await rowsForDate(TODAY);
     const refIdsBefore = new Set(rowsBefore.map((r) => r.ref_id));
 
-    const added = await reRankAfterAnswer(testDb(), {
+    const streamId = createId();
+    await testDb().insert(practice_stream_item).values({
+      id: streamId,
       date: TODAY,
-      answeredQuestionId: answeredId,
-      rng: RNG_ALWAYS_SELECT,
+      position: 100,
+      item_kind: 'question',
+      ref_id: answeredId,
+      source: 'on_demand',
+      status: 'in_progress',
+      reasoning: 'issued answer',
+      added_by: 'user',
     });
+    const registry = await loadEventSubscriptionRegistry(
+      [
+        {
+          name: 'practice',
+          description: 'settlement rerank invariant',
+          events: settlementManifestPart.events,
+          subscriptions: {
+            handlers: (settlementManifestPart.subscriptions?.handlers ?? []).filter(
+              (row) => row.id === SETTLEMENT_RERANK_SUBSCRIBER,
+            ),
+          },
+        },
+      ],
+      testDb(),
+    );
+    const subscriber = registry.subscriptions[0];
+    await bootstrapSubscription(testDb(), registry, subscriber);
+    const issued = await issueAssessment(testDb(), {
+      group_id: answeredId,
+      issuance_id: `iss_stream_${streamId}`,
+    });
+    expect(issued.status).toBe('issued');
+    const committed = await commitFormalAttempt(
+      testDb(),
+      'solo_submit',
+      answeredId,
+      {
+        issuance_id: `iss_stream_${streamId}`,
+        evaluation_group_id: createId(),
+        idempotency_key: createId(),
+        response_set: {
+          entries: [{ slot_id: 'p1::r', kind: 'choice', option_ids: [`opt_${answeredId}_a`] }],
+        },
+      },
+      { capture: { stream_item_id: streamId, response_md: 'A' } },
+    );
+    expect(committed.status).toBe('effective');
+    await testDb()
+      .update(question)
+      .set({ draft_status: 'draft' })
+      .where(eq(question.id, original.variantId));
+    // Today's mutable tags cannot change which frozen KC this settlement reranks.
+    await testDb().update(question).set({ knowledge_ids: [] }).where(eq(question.id, answeredId));
+    const lease = await claimSubscriptionLease(testDb(), registry, subscriber, 'rerank-test');
+    if (!lease) throw new Error('expected subscription lease');
+    await discoverSubscriptionDeliveries(testDb(), registry, subscriber, lease);
+    const claim = await claimNextSubscriptionDelivery(testDb(), registry, subscriber, lease);
+    if (!claim) throw new Error('expected settlement delivery');
+    const delivery = {
+      subscriberId: subscriber.id,
+      subscriberVersion: 1,
+      sourceEventId: claim.sourceEventId,
+      deliverySeq: claim.deliverySeq.toString(),
+    };
+    const beforeRerank = await rowsForDate(TODAY);
+    await testDb().execute(
+      sql`ALTER TABLE event_subscription_delivery ADD CONSTRAINT rerank_atomicity CHECK (outcome->>'stream_rerank_completed' IS DISTINCT FROM 'true')`,
+    );
+    try {
+      await expect(handleSettlementRerankDelivery(testDb(), delivery)).rejects.toThrow();
+      expect(await rowsForDate(TODAY)).toEqual(beforeRerank);
+    } finally {
+      await testDb().execute(
+        sql`ALTER TABLE event_subscription_delivery DROP CONSTRAINT rerank_atomicity`,
+      );
+    }
+    const [first, duplicate] = await Promise.all([
+      handleSettlementRerankDelivery(testDb(), delivery),
+      handleSettlementRerankDelivery(testDb(), delivery),
+    ]);
+    expect(first).toEqual(duplicate);
+    expect(first.status).toBe('succeeded');
+    const added = Number(first.detail?.added);
+    expect(added).toBe(1);
+    expect((await rowsForDate(TODAY)).find((row) => row.id === streamId)?.status).toBe(
+      'in_progress',
+    );
+    const beforeRecovery = await rowsForDate(TODAY);
+    const thetaBeforeRecovery = await testDb().select().from(mastery_state);
+    await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0 });
+    await testDb().update(question).set({ draft_status: 'draft' }).where(eq(question.id, candB));
+    await Promise.all([
+      handleSettlementRerankDelivery(testDb(), delivery),
+      advanceStreamItem(testDb(), streamId, 'done'),
+    ]);
+    expect((await rowsForDate(TODAY)).filter((row) => row.id !== streamId)).toEqual(
+      beforeRecovery.filter((row) => row.id !== streamId),
+    );
+    expect(await testDb().select().from(mastery_state)).toEqual(thetaBeforeRecovery);
+    const [durable] = await testDb()
+      .select()
+      .from(event_subscription_delivery)
+      .where(eq(event_subscription_delivery.source_event_id, delivery.sourceEventId));
+    expect(durable.outcome?.stream_rerank_completed).toBe(true);
+    expect(await completeSubscriptionDelivery(testDb(), claim, first)).toBe(true);
+    expect(await handleSettlementRerankDelivery(testDb(), delivery)).toEqual(first);
 
     const obsAfter = await testDb()
       .select()
@@ -351,12 +473,12 @@ describe('Task 9 作答后有界增量重排 reRankAfterAnswer（YUK-361 Phase 4
     // 本轮新增观测数 == added（真插入行数）——无幻影 π_i（EDGE 3 核心断言）。
     expect(newObs).toBe(added);
 
-    // 本轮真新插入的 ref（流里此前不存在的）含 candB（broad pool 换进）。
+    // Only actual insertions receive observations.
     const rowsAfter = await rowsForDate(TODAY);
     const freshlyInserted = rowsAfter.filter(
       (r) => !refIdsBefore.has(r.ref_id) && r.status === 'pending',
     );
-    expect(freshlyInserted.some((r) => r.ref_id === candB)).toBe(true);
+    expect(freshlyInserted.map((row) => row.ref_id)).toEqual([candB]);
 
     // 本轮新增观测（diff 出的那 added 条）都指向真存在的行（streamItemId 必有行，无幻影）。
     //   用 id 集合 diff 出本轮新观测——首次 compose 的旧观测可能指向已替换删除的行（陈旧，

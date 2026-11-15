@@ -16,6 +16,12 @@ export const settlementManifestPart: Omit<CapabilityManifest, 'name' | 'descript
   },
   subscriptions: {
     handlers: [
+      {
+        id: 'practice.settlement-stream-rerank',
+        version: 1,
+        actions: ['experimental:assessment_settlement'],
+        load: () => import('../scheduling/public').then((m) => m.buildSettlementRerankSubscriber),
+      },
       // YUK-2083 — 每个 sealed settlement receipt 唤醒 learner-profile 排干；
       // intent 行在结算自己事务内提交，错过唤醒由队列分钟兜底恢复。
       {

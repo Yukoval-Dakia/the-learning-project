@@ -8,7 +8,14 @@ import { newId } from '@/core/ids';
 import { StreamComposeControlPayload } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
-import { event, knowledge, learning_session, practice_stream_item, question } from '@/db/schema';
+import {
+  assessment_issuance,
+  event,
+  knowledge,
+  learning_session,
+  practice_stream_item,
+  question,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
@@ -347,7 +354,7 @@ async function materializePreparedCollect(
  * and must never roll back or fail the stream.
  */
 async function writeObservationsBestEffort(
-  db: Db,
+  db: DbLike,
   observations: SelectionObservationInput[],
 ): Promise<void> {
   for (const obs of observations) {
@@ -1041,11 +1048,9 @@ async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<
  * Advance an item's schedule row. Answer facts are written by the submit route; this
  * only moves the daily-stream row.
  *
- * After a question item reaches `done`, rerank pending non-due items touching its KCs with
- * the updated θ̂. Rerank is best-effort and synchronous: it uses only the statistical
- * sampler (no LLM) and is wrapped in try/catch so a failure cannot roll back the committed
- * transition or turn the PATCH into a 500. It is skipped under the legacy policy, whose
- * deterministic compose must not be perturbed.
+ * Native question rerank is owned by settlement delivery. Legacy answers retain
+ * synchronous statistical rerank after `done`; errors cannot undo the transition.
+ * The legacy selection policy always retains deterministic compose.
  */
 export async function advanceStreamItem(
   db: Db,
@@ -1054,77 +1059,93 @@ export async function advanceStreamItem(
   // Injected rng for deterministic Poisson sampling in tests.
   rerankDeps: { rng?: () => number } = {},
 ): Promise<StreamItemRow | null> {
-  const [row] = await db
-    .select()
-    .from(practice_stream_item)
-    .where(eq(practice_stream_item.id, id))
-    .limit(1);
-  if (!row) return null;
-  // Already there: a second tab, a page behind the server, or a lost receipt asks again. The answer
-  // is the row as it stands, with no second transition and none of its side effects.
-  if (row.status === next) return row;
-  if (!LEGAL_TRANSITIONS[row.status].includes(next)) {
-    throw new ApiError('conflict', `illegal stream transition ${row.status} -> ${next}`, 409);
-  }
-  if (row.source === 'intervention') {
-    if (next === 'skipped') {
-      throw new ApiError(
-        'conflict',
-        'intervention diagnostics cannot be skipped before completion',
-        409,
-      );
+  const transition = await db.transaction(async (tx) => {
+    // Carry admission keeps the row's date stable until its partition is locked.
+    // The same partition lock keeps rerank from replacing a concurrently started row.
+    await lockPracticeStreamCarryAdmission(tx);
+    const [row] = await tx
+      .select()
+      .from(practice_stream_item)
+      .where(eq(practice_stream_item.id, id))
+      .limit(1);
+    if (!row) return null;
+    await lockPracticeStreamPartition(tx, row.date, row.session_id);
+    // Already there: a second tab, a page behind the server, or a lost receipt asks again. The answer
+    // is the row as it stands, with no second transition and none of its side effects.
+    if (row.status === next) return { row, changed: false };
+    if (!LEGAL_TRANSITIONS[row.status].includes(next)) {
+      throw new ApiError('conflict', `illegal stream transition ${row.status} -> ${next}`, 409);
     }
-    if (next === 'done') {
-      const [attempt] = await db
-        .select({ id: event.id })
-        .from(event)
-        .where(
-          and(
-            eq(event.action, 'experimental:assessment_attempt'),
-            eq(event.subject_kind, 'question'),
-            eq(event.subject_id, row.ref_id),
-            sql`${event.payload}->>'issuance_id' = ${`iss_stream_${row.id}`}`,
-          ),
-        )
-        .orderBy(desc(event.created_at), desc(event.id))
-        .limit(1);
-      const recorded = attempt ? await loadNativeInterventionDiagnosticState(db, attempt.id) : null;
-      if (!recorded) {
+    if (row.source === 'intervention') {
+      if (next === 'skipped') {
         throw new ApiError(
           'conflict',
-          'intervention diagnostics can be completed only after a recorded attempt',
+          'intervention diagnostics cannot be skipped before completion',
           409,
         );
       }
+      if (next === 'done') {
+        const [attempt] = await tx
+          .select({ id: event.id })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:assessment_attempt'),
+              eq(event.subject_kind, 'question'),
+              eq(event.subject_id, row.ref_id),
+              sql`${event.payload}->>'issuance_id' = ${`iss_stream_${row.id}`}`,
+            ),
+          )
+          .orderBy(desc(event.created_at), desc(event.id))
+          .limit(1);
+        const recorded = attempt
+          ? await loadNativeInterventionDiagnosticState(tx, attempt.id)
+          : null;
+        if (!recorded) {
+          throw new ApiError(
+            'conflict',
+            'intervention diagnostics can be completed only after a recorded attempt',
+            409,
+          );
+        }
+      }
     }
-  }
-  const [updated] = await db
-    .update(practice_stream_item)
-    .set({ status: next, updated_at: new Date() })
-    .where(eq(practice_stream_item.id, id))
-    .returning();
-  if (!updated) return null;
+    const [updated] = await tx
+      .update(practice_stream_item)
+      .set({ status: next, updated_at: new Date() })
+      .where(eq(practice_stream_item.id, id))
+      .returning();
+    return updated ? { row: updated, changed: true } : null;
+  });
+  if (!transition) return null;
+  if (!transition.changed) return transition.row;
+  const updated = transition.row;
 
   await completeScopedSessionIfDone(db, updated);
   await completeDailyStreamIfDone(db, updated);
 
-  // Rerank only completed question items, and only under the softmax policy: the legacy
-  // path must stay deterministic, so its stream must not be randomly reshuffled.
-  const policyForRerank = resolveSelectionPolicy().policy;
+  // Native answers rerank from their committed settlement, including when PATCH
+  // arrives first. Legacy answers retain the existing completion path.
   if (
-    policyForRerank === 'softmax_mfi' &&
+    resolveSelectionPolicy().policy === 'softmax_mfi' &&
     updated.status === 'done' &&
     updated.item_kind === 'question'
   ) {
     try {
-      await reRankAfterAnswer(db, {
-        date: updated.date,
-        sessionId: updated.session_id,
-        answeredQuestionId: updated.ref_id,
-        rng: rerankDeps.rng,
-      });
+      const [nativeIssuance] = await db
+        .select({ id: assessment_issuance.issuance_id })
+        .from(assessment_issuance)
+        .where(eq(assessment_issuance.issuance_id, `iss_stream_${updated.id}`))
+        .limit(1);
+      if (!nativeIssuance) {
+        await reRankAfterAnswer(db, {
+          date: updated.date,
+          sessionId: updated.session_id,
+          answeredQuestionId: updated.ref_id,
+          rng: rerankDeps.rng,
+        });
+      }
     } catch (err) {
-      // Rerank is a convenience layer; failure must not undo the committed transition.
       console.error('[stream-store] reRankAfterAnswer failed (post-commit, best-effort)', {
         streamItemId: updated.id,
         refId: updated.ref_id,
@@ -1132,6 +1153,7 @@ export async function advanceStreamItem(
       });
     }
   }
+
   return updated;
 }
 
@@ -1248,20 +1270,19 @@ export async function recomposeStream(
 // ═══════════════════════════════════════════════════════════════════════════
 // Post-answer incremental rerank (softmax_mfi only).
 // ═══════════════════════════════════════════════════════════════════════════
-// Answering moves θ̂ for the question's knowledge_ids, which changes the MFI weight
+// Answering moves θ̂ for the sealed KCs (legacy: question knowledge_ids), changing the MFI weight
 // p(1−p), p=σ(θ̂−b), of pending non-due diagnostic items. Rerank those items with the
 // fresh θ̂ using the statistical sampler only: no whole-stream rebuild and no LLM call
 // (LLM item weights are not persisted, so recomputing mfiScore is the cheapest correct
 // weight).
 // Scope and shape:
-// - The candidate pool is the full eligible non-due pool (same variant/new_check sources
-// as compose), excluding frozen refs. targetCount is the number of replaceable pending
+// - The candidate pool uses compose's eligible variant/new_check sources, restricted
+// to affected KCs and excluding frozen refs. targetCount is the number of replaceable pending
 // slots, not the pool size, so sampling is real IPPS (π_i < 1).
 // - Only items touching the answered question's KCs are reranked. Unrelated pending
 // items, paper rows, recall-locked rows, and done/in_progress/skipped rows stay
-// frozen: not deleted, not moved, not re-sampled. Pending decay rows whose card is
-// no longer due today, or whose knowledge was settled after the row was written,
-// are removed first; the decay rows that remain stay frozen.
+// frozen: not deleted, not moved, not re-sampled. Only legacy completion also
+// retires stale pending decay rows before rerank.
 // - A row whose snapshot is not recall-locked but whose fresh classification is recall
 // stays in place (fail-closed); never drop it into a freed slot.
 // - Sample sizes fluctuate. Delete only slots that will actually be refilled
@@ -1280,40 +1301,45 @@ function rowIsRecallLocked(signals: unknown): boolean {
 }
 
 /**
- * 作答后有界增量重排（hybrid 运行时）。**永不 throw 出 compose 逻辑级别**——纯统计 sampler，
- * 无 LLM。若无受影响待做项（θ̂ 移动不触及任何待做非到期诊断项）→ no-op（不动流、不写观测）。
+ * Bounded statistical rerank with fresh theta, without LLM work. Database failures
+ * propagate to the caller's transaction/recovery boundary; no affected slots is a no-op.
  *
- * @param opts.answeredQuestionId 刚推进到 done 的题——其 knowledge_ids = affectedKnowledgeIds。
+ * @param opts.affectedKnowledgeIds Settlement callers supply sealed, actually updated KCs.
+ * Omission preserves the legacy question-label lookup.
  * @param opts.rng 注入 rng（测试确定化）；省略 → sampleByWeight 默认 Math.random。
  * @returns 本轮新物化（重抽样落库）的非到期项数；no-op 时 0。
  */
 export async function reRankAfterAnswer(
-  db: Db,
+  db: DbLike,
   opts: {
     date: string;
     sessionId?: string | null;
     answeredQuestionId: string;
+    affectedKnowledgeIds?: readonly string[];
+    observations?: SelectionObservationInput[];
     rng?: () => number;
   },
 ): Promise<number> {
   const { date, sessionId, answeredQuestionId } = opts;
 
-  // 受影响 KC = 刚答完那题的 knowledge_ids。空则没有 θ̂ 锚点，不重排非到期行；
-  // 过期的待做到期行仍先撤下。
-  const [answered] = await db
-    .select({ knowledge_ids: question.knowledge_ids })
-    .from(question)
-    .where(eq(question.id, answeredQuestionId))
-    .limit(1);
-  const affectedKnowledgeIds = new Set((answered?.knowledge_ids ?? []).filter(Boolean));
+  let affected = opts.affectedKnowledgeIds;
+  if (affected === undefined) {
+    const [answered] = await db
+      .select({ knowledge_ids: question.knowledge_ids })
+      .from(question)
+      .where(eq(question.id, answeredQuestionId))
+      .limit(1);
+    affected = answered?.knowledge_ids ?? [];
+  }
+  const affectedKnowledgeIds = new Set(affected.filter(Boolean));
 
   const { added, observations } = await db.transaction(async (tx) => {
     // Same key as every compose path, so rerank cannot race lazy/recompose/nightly.
     await lockPracticeStreamPartition(tx, date, sessionId);
-    // Pending decay rows that are no longer due today, or whose knowledge was settled
-    // after the row was written, leave before rerank. The decay rows that remain,
-    // plus paper, recall-locked, and completed/in-progress/skipped rows, stay frozen.
-    await withdrawStalePendingDueLines(tx, date, sessionId);
+    // Legacy completion also retires stale due rows. Settlement delivery changes
+    // only diagnostic slots and preserves the rest of the partition.
+    if (opts.affectedKnowledgeIds === undefined)
+      await withdrawStalePendingDueLines(tx, date, sessionId);
 
     const rows = await tx
       .select()
@@ -1331,6 +1357,7 @@ export async function reRankAfterAnswer(
     const allPendingNonDue = rows.filter(
       (r) =>
         r.status === 'pending' &&
+        r.ref_id !== answeredQuestionId &&
         r.item_kind === 'question' &&
         (r.source === 'variant' || r.source === 'new_check') &&
         !rowIsRecallLocked(r.signals) &&
@@ -1388,9 +1415,12 @@ export async function reRankAfterAnswer(
     );
     if (eligibleRaws.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    const candidateInputs = await readStreamSelectionCandidates(
+    const candidates = await readStreamSelectionCandidates(
       tx,
       eligibleRaws.map((r) => ({ questionId: r.questionId, role: r.source })),
+    );
+    const candidateInputs = candidates.filter((candidate) =>
+      (candidate.knowledgeIds ?? []).some((k) => affectedKnowledgeIds.has(k)),
     );
 
     // Rerank only when the eligible pool touches an affected KC.
@@ -1489,8 +1519,9 @@ export async function reRankAfterAnswer(
     return { added, observations };
   });
 
-  // Best-effort observations after commit.
-  await writeObservationsBestEffort(db, observations);
+  // An enclosing settlement-delivery transaction publishes telemetry after its commit.
+  if (opts.observations) opts.observations.push(...observations);
+  else await writeObservationsBestEffort(db, observations);
   return added;
 }
 
