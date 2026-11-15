@@ -4,9 +4,6 @@ import {
   type PracticeClient,
   PracticeClientProvider,
   loadPracticeFacePage,
-  pausePaperTask,
-  recordPaperCurrentStep,
-  resumePaperTask,
 } from '@/capabilities/practice/ui-public';
 import { startIssuanceCreateClient } from '../issuance-create-client';
 import { startIssuanceStateClient } from '../issuance-state-client';
@@ -29,7 +26,7 @@ import { startStudyReferenceClient } from '../study-reference-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const Page = lazy(() => loadPracticeFacePage().then((defaultPage) => ({ default: defaultPage })));
-const practiceClient: PracticeClient = {
+const practiceClient: Partial<PracticeClient> = {
   revealStudyReference: startStudyReferenceClient,
   solveStart: startSolveClient,
   solveHint: startHintClient,
@@ -41,9 +38,6 @@ const practiceClient: PracticeClient = {
   recomposeStream: startPracticeRecomposeClient,
   getPapers: startPaperListClient,
   getPaperDetail: startPaperDetailClient,
-  resumePaperTask,
-  pausePaperTask,
-  recordPaperCurrentStep,
   startPaperSession: startPaperSessionClient,
   submitPaperSlot: startPaperSubmissionClient,
   endPaperSession: endPaperSessionClient,

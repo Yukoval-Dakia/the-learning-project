@@ -350,7 +350,7 @@ async function listActiveSessions(
         };
       });
     },
-    { isolationLevel: 'repeatable read', readOnly: true },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
   );
 }
 

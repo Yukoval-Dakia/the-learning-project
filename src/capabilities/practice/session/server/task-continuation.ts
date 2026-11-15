@@ -176,10 +176,13 @@ async function readLocked(
 }
 
 /** A single snapshot binds identity, position, disclosure and native draft epochs. */
-export async function readPaperTaskContinuation(db: Db, ref: PaperTaskRef) {
+export async function readPaperTaskContinuation(
+  db: Db,
+  ref: PaperTaskRef,
+): Promise<PaperDetailResult & { continuation: PaperContinuation }> {
   return db.transaction(async (tx) => readLocked(tx, ref, await loadSession(tx, ref, false)), {
     isolationLevel: 'repeatable read',
-    readOnly: true,
+    accessMode: 'read only',
   });
 }
 
