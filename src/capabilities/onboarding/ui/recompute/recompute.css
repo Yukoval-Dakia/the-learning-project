@@ -15,8 +15,7 @@
   border-radius: var(--un-md-sys-shape-medium) var(--un-md-sys-shape-medium) 0 0;
   transition: background-color var(--un-t-small) var(--un-ease-glide);
 }
-[data-ui-next] .rc-verify-icon,
-[data-ui-next] .rc-cal-icon {
+[data-ui-next] .rc-verify-icon {
   display: grid;
   place-items: center;
   width: 36px;
@@ -29,13 +28,11 @@
     background-color var(--un-t-small) var(--un-ease-glide),
     color var(--un-t-small) var(--un-ease-glide);
 }
-[data-ui-next] .rc-verify-text,
-[data-ui-next] .rc-cal-text {
+[data-ui-next] .rc-verify-text {
   flex: 1 1 auto;
   min-width: 0;
 }
-[data-ui-next] .rc-verify-title,
-[data-ui-next] .rc-cal-title {
+[data-ui-next] .rc-verify-title {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -45,8 +42,7 @@
   font-weight: 500;
   line-height: var(--un-md-sys-typescale-title-medium-line-height);
 }
-[data-ui-next] .rc-verify-sub,
-[data-ui-next] .rc-cal-sub {
+[data-ui-next] .rc-verify-sub {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -58,13 +54,11 @@
   overflow-wrap: anywhere;
 }
 [data-ui-next] .rc-verify-sub b,
-[data-ui-next] .rc-cal-sub b,
-[data-ui-next] .rc-verify-title b,
-[data-ui-next] .rc-cal-title b {
+[data-ui-next] .rc-verify-title b {
   color: var(--un-md-sys-color-on-surface);
   font-weight: 600;
 }
-[data-ui-next] :is(.rc-verify, .rc-cal, .rc-detail) .mono {
+[data-ui-next] :is(.rc-verify, .rc-detail) .mono {
   font-family: var(--un-font-mono);
   font-variant-numeric: tabular-nums;
 }
@@ -74,10 +68,6 @@
   align-items: center;
   gap: 8px;
   flex: none;
-}
-[data-ui-next] .rc-tick {
-  color: var(--un-positive);
-  font-weight: 700;
 }
 
 /* idle (A) — a quiet invitation */
@@ -89,7 +79,7 @@
 [data-ui-next] .rc-verify.rc-state-match {
   background: color-mix(in srgb, var(--un-positive-soft) 60%, transparent);
 }
-[data-ui-next] :is(.rc-verify.rc-state-match .rc-verify-icon, .rc-cal.rc-state-match .rc-cal-icon) {
+[data-ui-next] .rc-verify.rc-state-match .rc-verify-icon {
   background: var(--un-positive-soft);
   color: var(--un-positive);
 }
@@ -98,26 +88,9 @@
 [data-ui-next] .rc-verify.rc-state-drift {
   background: color-mix(in srgb, var(--un-caution-soft) 60%, transparent);
 }
-[data-ui-next] :is(.rc-verify.rc-state-drift .rc-verify-icon, .rc-cal.rc-state-drift .rc-cal-icon) {
+[data-ui-next] .rc-verify.rc-state-drift .rc-verify-icon {
   background: var(--un-caution-soft);
   color: var(--un-caution);
-}
-
-/* Offline chip — the check runs on this device only */
-[data-ui-next] .rc-offline {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: var(--un-md-sys-shape-small);
-  background: var(--un-md-sys-color-surface-container-high);
-  color: var(--un-md-sys-color-on-surface-variant);
-  font-size: 13px;
-  line-height: 18px;
-  white-space: nowrap;
-}
-[data-ui-next] .rc-offline svg {
-  color: var(--un-md-sys-color-primary);
 }
 
 /* Detail toggle (text button) + re-run (icon button) */
@@ -143,28 +116,13 @@
     transparent
   );
 }
-[data-ui-next] .rc-rerun {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
+/* Re-run = shared IconButton primitive (YUK-1714); its base styles come from
+   components.css, scoped colour/hover/disabled here to match the bar. */
+[data-ui-next] .rc-verify .un-icon-btn {
   flex: none;
-  padding: 0;
-  border: 0;
-  border-radius: var(--un-md-sys-shape-full);
-  background: transparent;
   color: var(--un-md-sys-color-on-surface-variant);
-  cursor: pointer;
-  transition: background-color var(--un-t-feedback) linear;
 }
-[data-ui-next] .rc-rerun:hover:not(:disabled) {
-  background: color-mix(
-    in srgb,
-    var(--un-md-sys-color-on-surface-variant) var(--un-md-sys-state-hover),
-    transparent
-  );
-}
-[data-ui-next] .rc-rerun:disabled {
+[data-ui-next] .rc-verify .un-icon-btn:disabled {
   color: color-mix(
     in srgb,
     var(--un-md-sys-color-on-surface) var(--un-md-sys-state-disabled-content),
@@ -172,7 +130,7 @@
   );
   cursor: default;
 }
-[data-ui-next] :is(.rc-detail-toggle, .rc-rerun):focus-visible {
+[data-ui-next] :is(.rc-detail-toggle, .rc-verify .un-icon-btn):focus-visible {
   outline: var(--un-md-comp-focus-width) solid var(--un-md-sys-color-primary);
   outline-offset: var(--un-md-comp-focus-offset);
 }
@@ -382,54 +340,11 @@
   color: var(--un-md-sys-color-on-surface);
   font-weight: 600;
 }
-
-/* ── Calibration-maturity badge (/profile, /coach) ────────────── */
-[data-ui-next] .rc-cal {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 12px 0 24px;
-  padding: 12px 16px;
-  border-radius: var(--un-md-sys-shape-large);
-  background: var(--un-md-sys-color-surface-container-low);
-  transition: background-color var(--un-t-small) var(--un-ease-glide);
-}
-[data-ui-next] .rc-cal.rc-state-match {
-  background: color-mix(
-    in srgb,
-    var(--un-positive-soft) 55%,
-    var(--un-md-sys-color-surface-container-low)
-  );
-}
-[data-ui-next] .rc-cal.rc-state-drift {
-  background: color-mix(
-    in srgb,
-    var(--un-caution-soft) 60%,
-    var(--un-md-sys-color-surface-container-low)
-  );
-}
-[data-ui-next] .rc-cal-figs {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-[data-ui-next] .rc-cal-fig {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: var(--un-md-sys-shape-small);
-  background: var(--un-positive-soft);
-  color: var(--un-positive);
-}
-[data-ui-next] .rc-cal-sub .rc-cal-fig b {
-  color: inherit;
-}
-
+/* ── Calibration-maturity badge styles moved to recompute-badge.css (YUK-1714),
+   which the component itself imports so Coach renders the same M3E surface. ── */
 /* ── Motion: only when a check starts or the detail opens (M1) ── */
 @media (prefers-reduced-motion: no-preference) {
-  [data-ui-next] .rc-verify.rc-state-running .rc-verify-icon svg,
-  [data-ui-next] .rc-cal.rc-state-running .rc-cal-icon svg {
+  [data-ui-next] .rc-verify.rc-state-running .rc-verify-icon svg {
     animation: rc-spin 0.54s linear;
   }
   [data-ui-next] .rc-detail {
@@ -470,16 +385,14 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  [data-ui-next]
-    :is(.rc-verify, .rc-verify-icon, .rc-cal, .rc-cal-icon, .rc-detail-toggle, .rc-rerun) {
+  [data-ui-next] :is(.rc-verify, .rc-verify-icon, .rc-detail-toggle, .rc-verify .un-icon-btn) {
     transition: none;
   }
 }
 
 /* ── Narrow (≤ 720px) ─────────────────────────────────────────── */
 @media (max-width: 720px) {
-  [data-ui-next] .rc-verify,
-  [data-ui-next] .rc-cal {
+  [data-ui-next] .rc-verify {
     flex-wrap: wrap;
   }
   [data-ui-next] .rc-verify-act {

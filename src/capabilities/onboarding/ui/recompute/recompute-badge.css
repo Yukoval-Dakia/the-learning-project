@@ -1,0 +1,164 @@
+/* Loom · calibration-maturity badge (YUK-1714) — the shared Coach/Profile badge's own
+   M3E scope, so the Coach surface (which never mounts ScreenProfile's recompute.css)
+   carries the same panel. Selectors here belong to RcMaturityBadge plus its shared
+   words (.rc-offline, .rc-tick, .mono); the verify layer keeps recompute.css.
+   Roles are Google M3; positive/caution stay the project's non-alarm pair (no M3
+   role); IconButton primitive supplies the rerun control. */
+
+[data-ui-next] .rc-cal {
+  display: flex;
+  align-items: center;
+  gap: var(--un-sp-3);
+  margin: var(--un-sp-3) 0 var(--un-sp-5);
+  padding: var(--un-sp-3) var(--un-sp-4);
+  border-radius: var(--un-md-sys-shape-large);
+  background: var(--un-md-sys-color-surface-container-low);
+  transition: background-color var(--un-t-small) var(--un-ease-glide);
+}
+[data-ui-next] .rc-cal.rc-state-match {
+  background: color-mix(
+    in srgb,
+    var(--un-positive-soft) 55%,
+    var(--un-md-sys-color-surface-container-low)
+  );
+}
+[data-ui-next] .rc-cal.rc-state-drift {
+  background: color-mix(
+    in srgb,
+    var(--un-caution-soft) 60%,
+    var(--un-md-sys-color-surface-container-low)
+  );
+}
+[data-ui-next] .rc-cal-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: var(--un-md-sys-shape-full);
+  background: var(--un-md-sys-color-surface-container-high);
+  color: var(--un-md-sys-color-on-surface-variant);
+  transition:
+    background-color var(--un-t-small) var(--un-ease-glide),
+    color var(--un-t-small) var(--un-ease-glide);
+}
+[data-ui-next] .rc-cal.rc-state-match .rc-cal-icon {
+  background: var(--un-positive-soft);
+  color: var(--un-positive);
+}
+[data-ui-next] .rc-cal.rc-state-drift .rc-cal-icon {
+  background: var(--un-caution-soft);
+  color: var(--un-caution);
+}
+[data-ui-next] .rc-cal-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+[data-ui-next] .rc-cal-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--un-md-sys-color-on-surface);
+  font-size: var(--un-md-sys-typescale-title-medium-size);
+  font-weight: 500;
+  line-height: var(--un-md-sys-typescale-title-medium-line-height);
+}
+[data-ui-next] .rc-cal-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-top: 2px;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+  overflow-wrap: anywhere;
+}
+[data-ui-next] .rc-cal-sub b,
+[data-ui-next] .rc-cal-title b {
+  color: var(--un-md-sys-color-on-surface);
+  font-weight: 600;
+}
+[data-ui-next] .rc-cal .mono {
+  font-family: var(--un-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+[data-ui-next] .rc-tick {
+  color: var(--un-positive);
+  font-weight: 700;
+}
+
+/* Offline chip — the check runs on this device only; also used inside the badge sub line. */
+[data-ui-next] .rc-offline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--un-sp-1);
+  padding: 2px var(--un-sp-2);
+  border-radius: var(--un-md-sys-shape-small);
+  background: var(--un-md-sys-color-surface-container-high);
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-label-large-size);
+  line-height: var(--un-md-sys-typescale-label-large-line-height);
+  white-space: nowrap;
+}
+[data-ui-next] .rc-offline svg {
+  color: var(--un-md-sys-color-primary);
+}
+
+/* Figure row inside the badge (Chip primitive supplies the positive tone). */
+[data-ui-next] .rc-cal-figs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+[data-ui-next] .rc-cal-figs .un-chip {
+  gap: var(--un-sp-1);
+}
+[data-ui-next] .rc-cal-figs .un-chip b {
+  color: inherit;
+}
+
+/* Rerun = shared IconButton primitive: native button, accessible label, 40px hit. */
+[data-ui-next] .rc-cal .un-icon-btn {
+  flex: none;
+  color: var(--un-md-sys-color-on-surface-variant);
+}
+[data-ui-next] .rc-cal .un-icon-btn:disabled {
+  color: color-mix(
+    in srgb,
+    var(--un-md-sys-color-on-surface) var(--un-md-sys-state-disabled-content),
+    transparent
+  );
+  cursor: default;
+}
+[data-ui-next] .rc-cal .un-icon-btn:focus-visible {
+  outline: var(--un-md-comp-focus-width) solid var(--un-md-sys-color-primary);
+  outline-offset: var(--un-md-comp-focus-offset);
+}
+
+/* Motion: only when a check starts (M1). */
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next] .rc-cal.rc-state-running .rc-cal-icon svg {
+    animation: rc-spin 0.54s linear;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-ui-next] :is(.rc-cal, .rc-cal-icon, .rc-cal .un-icon-btn) {
+    transition: none;
+  }
+}
+
+/* ── Narrow (≤ 720px) ── */
+@media (max-width: 720px) {
+  [data-ui-next] .rc-cal {
+    flex-wrap: wrap;
+  }
+}
+
+/* Spin keyframes live here too: Coach loads only this sheet, Profile loads both. */
+@keyframes rc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
