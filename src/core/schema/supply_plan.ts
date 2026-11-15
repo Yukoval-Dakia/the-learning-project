@@ -32,6 +32,8 @@ export const SupplyPlanItemV1 = z.object({
   // 自由文本题面标签（惯用标签见 KNOWN_QUESTION_KIND_IDS），或 'any'
   // （该格子任意题型可填——'any' 本身也是合法字符串，union 只作语义标注）。
   kind: z.union([QuestionKind, z.literal('any')]),
+  /** Canonical weak-point cells served by this item; validated against the planning snapshot. */
+  cause_refs: z.array(z.string().min(1)).min(1).max(12).optional(),
   difficulty_band: z.enum(['below', 'near', 'above', 'stretch']),
   count: z.number().int().min(1).max(10),
   route_preference: z.array(z.enum(SUPPLY_PLAN_ROUTES)).min(1),

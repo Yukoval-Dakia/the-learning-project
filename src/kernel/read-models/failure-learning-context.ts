@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, misconception, misconception_edge } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { readCompletionSources } from '@/kernel/read-models/usage-policy';
 
 export interface FailureLearningKnowledgeNode {
   id: string;
@@ -62,6 +63,11 @@ export async function listActiveMisconceptionsForKcs(
   db: Db | Tx,
   knowledgeIds: readonly string[],
 ): Promise<FailureLearningMisconceptionNode[]> {
+  const rows = await readActiveMisconceptionsForKcs(db, knowledgeIds);
+  return rows.map(({ id, title, reasoning, seen }) => ({ id, title, reasoning, seen }));
+}
+
+async function readActiveMisconceptionsForKcs(db: Db | Tx, knowledgeIds: readonly string[]) {
   const kcIds = [...new Set(knowledgeIds.map((id) => id.trim()).filter(Boolean))];
   if (kcIds.length === 0) return [];
 
@@ -71,6 +77,8 @@ export async function listActiveMisconceptionsForKcs(
       title: misconception.title,
       reasoning: misconception.reasoning,
       seen: misconception.seen,
+      source: misconception.source,
+      evidence: misconception.evidence,
     })
     .from(misconception_edge)
     .innerJoin(misconception, eq(misconception.id, misconception_edge.from_id))
@@ -87,6 +95,43 @@ export async function listActiveMisconceptionsForKcs(
     )
     .orderBy(desc(misconception.seen), desc(misconception.id))
     .limit(MISCONCEPTION_FEED_CAP);
+}
+
+/** Model-input projection; shares the evidence/consent boundary with weak-point derivation. */
+export async function listDerivableActiveMisconceptionsForKcs(
+  db: Db | Tx,
+  knowledgeIds: readonly string[],
+): Promise<FailureLearningMisconceptionNode[]> {
+  const rows = await listDerivableMisconceptionEvidenceForKcs(db, knowledgeIds);
+  return rows.map(({ id, title, reasoning, seen }) => ({ id, title, reasoning, seen }));
+}
+
+/** Active status is not reuse authority; all evidence must pass, never just a safe subset. */
+export async function listDerivableMisconceptionEvidenceForKcs(
+  db: Db | Tx,
+  knowledgeIds: readonly string[],
+) {
+  const candidates = await readActiveMisconceptionsForKcs(db, knowledgeIds);
+  const safe = [];
+  for (const row of candidates) {
+    if (
+      !['soft', 'hard'].includes(row.source) ||
+      !Array.isArray(row.evidence) ||
+      row.evidence.length === 0 ||
+      row.evidence.length > 200 ||
+      row.evidence.some((id) => typeof id !== 'string' || id.trim().length === 0)
+    )
+      continue;
+    const sources = await readCompletionSources(
+      db,
+      [...new Set(row.evidence)].map((id) => ({ kind: 'event' as const, id })),
+    );
+    // Promotion stores event pointers, not frozen document epochs. Do not reconstruct
+    // a title's past consent from today's document policy; those rows stay withheld.
+    if (sources === null || sources.nodes.some((node) => node.kind === 'document')) continue;
+    safe.push(row);
+  }
+  return safe;
 }
 
 /**

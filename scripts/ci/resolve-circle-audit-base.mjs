@@ -199,10 +199,22 @@ async function main() {
     git(['fetch', '--no-tags', 'origin', base]);
   }
   git(['cat-file', '-e', `${base}^{commit}`]);
-  if (event === 'push' && branch === 'main') git(['merge-base', '--is-ancestor', base, head]);
+  const sourceBase = base;
+  if (event === 'push' && branch === 'main') {
+    git(['merge-base', '--is-ancestor', base, head]);
+  } else {
+    // A PR's base tip may have advanced after this branch split. Auditing that
+    // reverse diff would misclassify unrelated main changes as this PR's edits.
+    const common = git(['merge-base', '--all', base, head]).split('\n').filter(Boolean);
+    if (common.length !== 1) fail('Comparison has no unique merge base; no boundary guessed');
+    base = sha(common[0], 'Verified merge base');
+    git(['merge-base', '--is-ancestor', base, head]);
+    if (base === head) fail('Comparison base equals HEAD; refusing an empty audit boundary');
+    if (base !== sourceBase) basis = `${basis}-merge-base`;
+  }
   if (!process.env.GITHUB_OUTPUT) fail('GITHUB_OUTPUT is unavailable');
   appendFileSync(process.env.GITHUB_OUTPUT, `base=${base}\n`);
-  console.log(JSON.stringify({ head, ref, event, base, basis, pullNumber }));
+  console.log(JSON.stringify({ head, ref, event, base, sourceBase, basis, pullNumber }));
 }
 
 main().catch((error) => {
