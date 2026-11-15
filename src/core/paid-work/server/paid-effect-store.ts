@@ -40,10 +40,7 @@ import {
   admitPaidEffectDeliveryControl,
   lockPaidEffectControlFamily,
 } from '@/core/paid-work/server/paid-effect-control';
-import {
-  readQuestionAdmissionPolicySuccessorV1,
-  recordQuestionAdmissionPolicySuccessorV1,
-} from '@/core/paid-work/server/question-admission-policy-successor-v1';
+import { readQuestionAdmissionPolicySuccessorV1 } from '@/core/paid-work/server/question-admission-policy-successor-v1';
 import type { Db, Tx } from '@/db/client';
 import {
   event,
@@ -306,109 +303,6 @@ function sameIdentity(a: PaidEffectIdentity, b: PaidEffectIdentity): boolean {
     a.unit === b.unit &&
     a.inputDigest === b.inputDigest
   );
-}
-
-/**
- * Versioned exception to the original exact-successor protocol, only for admission
- * @4 -> @5. Mapping and intent admission share the send claim's transaction and locks.
- * The old pending row and authorization remain immutable, truthful never-sent evidence.
- */
-export async function transitionQuestionAdmissionV4V5SuccessorV1(
-  tx: Tx,
-  next: PaidEffectInput,
-  delivery: PaidEffectSendClaimDelivery,
-  preparedInput: unknown,
-): Promise<'mapped' | 'held' | 'not_applicable'> {
-  if (next.family !== 'question_admission_run' || next.unit !== 'admission@5')
-    return 'not_applicable';
-  const identity = computePaidEffectIdentity(next);
-  await lockPaidEffectControlFamily(tx, identity.family);
-  const auths = await tx
-    .select()
-    .from(paid_effect_authorization)
-    .where(
-      and(
-        eq(paid_effect_authorization.family, identity.family),
-        eq(paid_effect_authorization.entity_id, identity.entityId),
-        eq(paid_effect_authorization.successor_entity_revision, identity.entityRevision),
-        eq(paid_effect_authorization.successor_unit, 'admission@4'),
-      ),
-    );
-  if (auths.length > 0) {
-    await lockPaidEffectControlFamily(tx, 'question_admission_stage');
-    const [unresolvedStage] = await tx
-      .select({ unit: paid_effect.unit })
-      .from(paid_effect)
-      .where(
-        and(
-          eq(paid_effect.family, 'question_admission_stage'),
-          eq(paid_effect.entity_id, identity.entityId),
-          inArray(paid_effect.state, ['sending', 'unknown']),
-        ),
-      )
-      .limit(1);
-    if (unresolvedStage) return 'held';
-  }
-  for (const auth of auths) {
-    if (!paidEffectJsonEquals(next.input, preparedInput)) return 'held';
-    const original = successorIdentityOf(auth);
-    const target = await lockRow(tx, identity);
-    const row = await lockRow(tx, original);
-    const predecessor = await lockRow(tx, voidedIdentityOf(auth));
-    await lockEntityGate(tx, identity);
-    const mapping = await readQuestionAdmissionPolicySuccessorV1(tx, auth);
-    if (mapping) {
-      if (
-        delivery.backend !== 'pg-boss' ||
-        !sameIdentity(mapping.successor, identity) ||
-        mapping.successor_delivery_id !== delivery.deliveryId ||
-        !target ||
-        target.state !== 'pending' ||
-        target.fence !== 0 ||
-        !paidEffectJsonEquals(target.input_json, next.input)
-      )
-        return 'held';
-      return 'mapped';
-    }
-    if (!row || !OPEN_SUCCESSOR_STATES.includes(row.state)) continue;
-    const receipt = predecessor?.void_json as PaidEffectVoidReceipt | null;
-    if (
-      delivery.backend !== 'pg-boss' ||
-      row.state !== 'pending' ||
-      row.fence !== 0 ||
-      row.delivery_backend !== null ||
-      row.delivery_id !== null ||
-      row.delivery_tick !== null ||
-      row.send_lease_expires_at !== null ||
-      row.result_json !== null ||
-      row.result_recorded_at !== null ||
-      row.application_json !== null ||
-      row.applied_at !== null ||
-      predecessor?.state !== 'voided' ||
-      receipt?.authorizationId !== auth.authorization_id ||
-      receipt?.reason !== auth.reason ||
-      receipt?.operator !== auth.operator ||
-      receipt?.basis !== auth.basis ||
-      receipt?.previousFence !== predecessor.fence - 1 ||
-      !paidEffectJsonEquals(receipt?.successor, original) ||
-      receipt?.successorDelivery.backend !== auth.successor_delivery_backend ||
-      receipt?.successorDelivery.deliveryId !== auth.successor_delivery_id
-    )
-      return 'held';
-    // Existing in-flight/unknown obligations remain fenced before any mapping is created.
-    if (await findGateBlocker(tx, identity)) return 'held';
-    const proven = await recordQuestionAdmissionPolicySuccessorV1(
-      tx,
-      auth,
-      row.input_json,
-      next,
-      delivery.deliveryId,
-    );
-    if (!proven) return 'held';
-    await admitPaidEffectIntent(tx, next);
-    return 'mapped';
-  }
-  return 'not_applicable';
 }
 
 /**

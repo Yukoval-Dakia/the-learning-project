@@ -10,8 +10,8 @@ import {
   claimPaidEffectSend,
   readPaidEffect,
   recordPaidEffectApplication,
-  transitionQuestionAdmissionV4V5SuccessorV1,
 } from '@/core/paid-work/server/paid-effect-store';
+import { transitionQuestionAdmissionV4V5SuccessorV1 } from '@/core/paid-work/server/question-admission-policy-transition-v1';
 import {
   DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
   LEGACY_QUESTION_ADMISSION_PAID_UNIT,
