@@ -182,7 +182,7 @@ describe('Practice stream reserved connection integration', () => {
     const observer = postgres(url, { max: 1 });
     const holder = postgres(url, { max: 1 });
     clients.push(observer, holder);
-    const { reRankAfterAnswer } = await import('./stream-store');
+    const { reRankAfterAnswer } = await import('./stream-rerank');
     const questionId = await seedSamplableQuestion(db);
     await db.insert(practice_stream_item).values({
       id: createId(),

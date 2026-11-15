@@ -79,13 +79,12 @@ export {
   resolveDailyPracticeBudget,
 } from './stream-inputs';
 
-// reRankAfterAnswer moved to stream-rerank.ts; this re-export keeps the existing
-// import path for callers and tests unchanged, and binds the legacy call below.
+// reRankAfterAnswer moved to stream-rerank.ts; the legacy call below imports it
+// directly (a re-export here would be a pass-through shell).
 import { reRankAfterAnswer } from './stream-rerank';
 
 export type { StreamScope, StreamView } from './stream-view';
 export { getStreamViewItem } from './stream-view';
-export { reRankAfterAnswer };
 
 export type StreamItemRow = typeof practice_stream_item.$inferSelect;
 export type StreamItemStatus = StreamItemRow['status'];

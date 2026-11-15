@@ -28,7 +28,8 @@ import {
   recordSelectionObservation,
 } from './selection-observations';
 import { buildSeededSelectionRng } from './selection-seed';
-import { reRankAfterAnswer, resolveSelectionPolicy } from './stream-store';
+import { reRankAfterAnswer } from './stream-rerank';
+import { resolveSelectionPolicy } from './stream-store';
 
 export const SETTLEMENT_RERANK_SUBSCRIBER = 'practice.settlement-stream-rerank';
 

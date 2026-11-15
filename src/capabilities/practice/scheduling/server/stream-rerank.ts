@@ -53,8 +53,7 @@ interface ComposeOutcome {
 
 // Same physical-partition predicate as stale-due-lines.ts and stream-store.ts:
 // session_id selects the scoped partition, NULL the daily one. Duplicated
-// rather than imported so this module stays a leaf (stream-store re-exports
-// reRankAfterAnswer for the existing import path).
+// rather than imported so this module stays a leaf.
 function streamPartitionPredicate(date: string, sessionId?: string | null) {
   return sessionId
     ? and(eq(practice_stream_item.date, date), eq(practice_stream_item.session_id, sessionId))
