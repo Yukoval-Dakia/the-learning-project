@@ -20,8 +20,8 @@ import { useState } from 'react';
 import { A5_BANDS, UNKNOWN_BAND_LABEL } from '@/core/mastery-band';
 import { BandChipView } from './BandChip';
 import type { KnowledgeNodePage } from './knowledge-api';
-import { type NodeThreeDimInput, buildNodeThreeDim } from './node-dims';
 import { NodeJudgment } from './NodeJudgment';
+import { type NodeThreeDimInput, buildNodeThreeDim } from './node-dims';
 
 export interface NodeCompositeProps {
   /** 焦点节点的三维 RAW 读模型（node-page wire 平铺字段的结构子集）。 */
