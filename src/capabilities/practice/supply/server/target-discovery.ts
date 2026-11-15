@@ -789,7 +789,8 @@ export async function assembleScanInput(db: Db | Tx): Promise<ScanInput> {
             point.knowledge_id === f.knowledgeId &&
             point.failure_count >= SUPPLY_CAUSE_RECURRENCE_THRESHOLD &&
             !questions.some(
-              (q) => q.knowledgeIds.includes(f.knowledgeId) && q.kind === supplyKindForWeakPoint(point),
+              (q) =>
+                q.knowledgeIds.includes(f.knowledgeId) && q.kind === supplyKindForWeakPoint(point),
             ),
         ),
     )

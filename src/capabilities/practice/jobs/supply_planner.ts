@@ -218,7 +218,11 @@ async function loadPoolCounts(db: Db) {
   for (const row of rows) {
     const kcIds = Array.isArray(row.knowledgeIds) ? (row.knowledgeIds as string[]) : [];
     for (const kcId of kcIds) {
-      const entry = counts.get(kcId) ?? { available: 0, draft: 0, byKind: new Map<string, number>() };
+      const entry = counts.get(kcId) ?? {
+        available: 0,
+        draft: 0,
+        byKind: new Map<string, number>(),
+      };
       if (row.draftStatus === 'draft') {
         entry.draft += 1;
       } else if (admittedIds.has(row.id)) {
