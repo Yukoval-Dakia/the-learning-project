@@ -11,6 +11,43 @@ export const MAX_PAPER_ANSWER_CHARS = 12_000;
 
 export const PaperParamsSchema = z.object({ id: z.string().min(1) });
 
+export const PaperTaskRefSchema = z
+  .object({
+    kind: z.literal('paper_review'),
+    session_id: z.string().min(1),
+    occurrence_ref: z.string().min(1),
+  })
+  .strict();
+export type PaperTaskRef = z.infer<typeof PaperTaskRefSchema>;
+
+export const PaperContinuationSchema = z.object({
+  task_ref: PaperTaskRefSchema,
+  revision: z.number().int().nonnegative().nullable(),
+  current_step: z
+    .object({
+      issuance_id: z.string(),
+      question_id: z.string(),
+      part_ref: z.string().nullable(),
+      question_revision_id: z.string(),
+    })
+    .nullable(),
+  saved_draft: z
+    .object({ issuance_id: z.string(), save_epoch: z.number().int().nonnegative() })
+    .nullable(),
+  target: z.enum(['answer', 'readonly', 'retro']),
+  artifact_state: z.enum(['ready', 'archived', 'unavailable']),
+  recovery: z.enum([
+    'recorded',
+    'position_not_recorded',
+    'unsupported_format',
+    'current_step_unavailable',
+    'terminal',
+    'artifact_unavailable',
+  ]),
+  last_command: z.object({ id: z.string(), digest: z.string() }).nullable(),
+});
+export type PaperContinuation = z.infer<typeof PaperContinuationSchema>;
+
 export const CreateLegacyPaperReviewSessionBodySchema = z.object({
   artifact_id: z.string().min(1),
 });
@@ -28,6 +65,7 @@ export const PaperListItemSchema = z.object({
     .object({
       id: z.string(),
       status: z.string(),
+      task_ref: PaperTaskRefSchema.nullable(),
       pos: z.number().int().nonnegative(),
       right: z.number().int().nonnegative(),
       partial: z.number().int().nonnegative(),
@@ -215,6 +253,7 @@ const PaperDetailSectionSchema = z.object({
 });
 
 export const PaperDetailResponseSchema = z.object({
+  continuation: PaperContinuationSchema.optional(),
   artifact_id: z.string(),
   title: z.string(),
   generation_status: z.string(),

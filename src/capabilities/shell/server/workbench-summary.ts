@@ -1,10 +1,11 @@
 // Workbench aggregation read model: KPIs, active goals, and the seven-day activity heat.
 
 import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
+import type { PaperTaskRef } from '@/capabilities/practice/public';
 import { learnerLocalDay } from '@/core/learner-day';
 import type { SteeringGoalDataT } from '@/core/schema/steering';
 import { steeringDaysLeft, steeringStartsInDays } from '@/core/steering';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   artifact,
   event,
@@ -30,6 +31,8 @@ const PAST_STEERINGS_LIMIT = 10;
 
 export interface WorkbenchSessionRow {
   id: string;
+  paper_id: string | null;
+  task_ref: PaperTaskRef | null;
   status: string;
   summary_md: string | null;
   /** Epoch seconds, matching the learning-sessions wire. */
@@ -99,6 +102,10 @@ export interface WorkbenchSummary {
 
 /** Practice owns the actionable review queue; the composition layer supplies its read. */
 export interface WorkbenchSummaryParts {
+  readReviewSessionRefs?: (
+    db: Db | Tx,
+    sessionIds: string[],
+  ) => Promise<ReadonlyMap<string, { paper_id: string; task_ref: PaperTaskRef }>>;
   queryReviewDue: (db: Db, input: { limit: number }) => Promise<{ rows: readonly unknown[] }>;
 }
 
@@ -271,67 +278,80 @@ async function loadPastSteerings(db: Db): Promise<WorkbenchPastSteering[]> {
   );
 }
 
-async function listActiveSessions(db: Db): Promise<WorkbenchSessionRow[]> {
-  // 轻量交班条：最近 review 会话 + reviewed_count，不照搬旧
-  // /api/learning-sessions 的完整 stats（rating_counts / knowledge_touched
-  // 等 T6 工作台不渲染，第二实例需求出现再扩）。
-  const sessions = await db
-    .select()
-    .from(learning_session)
-    .where(eq(learning_session.type, 'review'))
-    .orderBy(desc(learning_session.started_at))
-    .limit(ACTIVE_SESSIONS_LIMIT);
-  if (sessions.length === 0) return [];
+async function listActiveSessions(
+  db: Db,
+  parts: WorkbenchSummaryParts,
+): Promise<WorkbenchSessionRow[]> {
+  return db.transaction(
+    async (tx) => {
+      // 轻量交班条：最近 review 会话 + reviewed_count，不照搬旧
+      // /api/learning-sessions 的完整 stats（rating_counts / knowledge_touched
+      // 等 T6 工作台不渲染，第二实例需求出现再扩）。
+      const sessions = await tx
+        .select()
+        .from(learning_session)
+        .where(eq(learning_session.type, 'review'))
+        .orderBy(desc(learning_session.started_at))
+        .limit(ACTIVE_SESSIONS_LIMIT);
+      if (sessions.length === 0) return [];
 
-  const sessionIds = new Set(sessions.map((s) => s.id));
-  const reviewedGroups = new Set((await loadNativeReviewOccurrences(db)).map((row) => row.groupId));
-  const anchors =
-    reviewedGroups.size === 0
-      ? []
-      : await db
-          .select({
-            session_id: event.session_id,
-            subject_id: event.subject_id,
-            payload: event.payload,
-          })
-          .from(event)
-          .where(
-            and(
-              inArray(event.session_id, [...sessionIds]),
-              eq(event.action, 'experimental:assessment_attempt'),
-              eq(event.subject_kind, 'question'),
-            ),
-          );
-  const questionsBySession = new Map<string, Set<string>>();
-  for (const anchor of anchors) {
-    const groupId = anchor.payload.evaluation_group_id;
-    if (
-      !anchor.session_id ||
-      !sessionIds.has(anchor.session_id) ||
-      typeof groupId !== 'string' ||
-      !reviewedGroups.has(groupId)
-    )
-      continue;
-    const questions = questionsBySession.get(anchor.session_id) ?? new Set<string>();
-    questions.add(anchor.subject_id);
-    questionsBySession.set(anchor.session_id, questions);
-  }
-  const countBySession = new Map(
-    [...questionsBySession].map(([sessionId, questions]) => [sessionId, questions.size]),
+      const sessionIds = new Set(sessions.map((s) => s.id));
+      const refs = await parts.readReviewSessionRefs?.(tx, [...sessionIds]);
+      const reviewedGroups = new Set(
+        (await loadNativeReviewOccurrences(tx)).map((row) => row.groupId),
+      );
+      const anchors =
+        reviewedGroups.size === 0
+          ? []
+          : await tx
+              .select({
+                session_id: event.session_id,
+                subject_id: event.subject_id,
+                payload: event.payload,
+              })
+              .from(event)
+              .where(
+                and(
+                  inArray(event.session_id, [...sessionIds]),
+                  eq(event.action, 'experimental:assessment_attempt'),
+                  eq(event.subject_kind, 'question'),
+                ),
+              );
+      const questionsBySession = new Map<string, Set<string>>();
+      for (const anchor of anchors) {
+        const groupId = anchor.payload.evaluation_group_id;
+        if (
+          !anchor.session_id ||
+          !sessionIds.has(anchor.session_id) ||
+          typeof groupId !== 'string' ||
+          !reviewedGroups.has(groupId)
+        )
+          continue;
+        const questions = questionsBySession.get(anchor.session_id) ?? new Set<string>();
+        questions.add(anchor.subject_id);
+        questionsBySession.set(anchor.session_id, questions);
+      }
+      const countBySession = new Map(
+        [...questionsBySession].map(([sessionId, questions]) => [sessionId, questions.size]),
+      );
+
+      return sessions.map((s) => {
+        const endedAt = s.ended_at ?? (s.status === 'started' ? new Date() : null);
+        return {
+          id: s.id,
+          paper_id: refs?.get(s.id)?.paper_id ?? null,
+          task_ref: refs?.get(s.id)?.task_ref ?? null,
+          status: s.status,
+          summary_md: s.summary_md,
+          started_at: Math.floor(s.started_at.getTime() / 1000),
+          ended_at: s.ended_at ? Math.floor(s.ended_at.getTime() / 1000) : null,
+          duration_ms: endedAt ? endedAt.getTime() - s.started_at.getTime() : null,
+          reviewed_count: countBySession.get(s.id) ?? 0,
+        };
+      });
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
   );
-
-  return sessions.map((s) => {
-    const endedAt = s.ended_at ?? (s.status === 'started' ? new Date() : null);
-    return {
-      id: s.id,
-      status: s.status,
-      summary_md: s.summary_md,
-      started_at: Math.floor(s.started_at.getTime() / 1000),
-      ended_at: s.ended_at ? Math.floor(s.ended_at.getTime() / 1000) : null,
-      duration_ms: endedAt ? endedAt.getTime() - s.started_at.getTime() : null,
-      reviewed_count: countBySession.get(s.id) ?? 0,
-    };
-  });
 }
 
 async function loadWeekHeat(db: Db): Promise<WorkbenchHeatDay[]> {
@@ -384,7 +404,7 @@ export async function loadWorkbenchSummary(
     countKnowledge(db),
     loadActiveGoals(db, learnerLocalDay(new Date())),
     loadPastSteerings(db),
-    listActiveSessions(db),
+    listActiveSessions(db, parts),
     loadWeekHeat(db),
     loadPersistedColdStartPresence(db),
   ]);
