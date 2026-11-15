@@ -13,10 +13,9 @@
 // Accept / dismiss / retract seal the create receipt for the attempt that
 // produced the proposal.
 
-import { and, eq } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
+import { and, eq } from 'drizzle-orm';
 import { AgentRunError } from '@/ai/agent-run-error';
-import { TaskConfigError } from '@/server/ai/providers';
 import { newId } from '@/core/ids';
 import type { PaidEffectIdentity } from '@/core/paid-work/protocol/paid-effect-protocol';
 import { computePaidEffectIdentity } from '@/core/paid-work/protocol/paid-effect-protocol';
@@ -36,6 +35,7 @@ import { event, paid_effect } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { type ProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { checkRateLimit, refundRateLimit } from '@/kernel/request-rate-limit';
+import { TaskConfigError } from '@/server/ai/providers';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { produceGoalScope } from './goals/scope';
 import type { RunTaskFn } from './learning-intent';
@@ -178,9 +178,7 @@ export function goalIntentTopic(payload: {
   }
   const change = payload.proposed_change as { learner_words?: unknown; title?: unknown };
   const words = typeof change.learner_words === 'string' ? change.learner_words : change.title;
-  return typeof words === 'string' && words.length > 0
-    ? normalizeLearningIntentTopic(words)
-    : null;
+  return typeof words === 'string' && words.length > 0 ? normalizeLearningIntentTopic(words) : null;
 }
 
 async function loadTopicAttempts(db: Db | Tx, topic: string): Promise<TopicAttempt[]> {
@@ -240,7 +238,11 @@ async function replayPendingGoalIntent(
     if (notBefore && candidate.proposed_at.getTime() < notBefore.getTime()) continue;
     const goalId = candidate.target.subject_id;
     if (!goalId) continue;
-    const scope = candidate.payload.proposed_change.scope_knowledge_ids;
+    const change = candidate.payload.proposed_change;
+    const scope =
+      candidate.payload.kind === 'goal_scope' && 'scope_knowledge_ids' in change
+        ? change.scope_knowledge_ids
+        : [];
     return {
       kind: 'goal_scope',
       proposal_id: candidate.id,
@@ -597,8 +599,7 @@ async function joinAttempt(
   }
   if (current.state === 'unknown') return { kind: 'unresolved' };
   if (current.state === 'voided' || current.state === 'cancelled') return { kind: 'retry' };
-  const deadline =
-    (current.sendLeaseExpiresAt?.getTime() ?? Date.now() + LEASE_MS) + JOIN_GRACE_MS;
+  const deadline = (current.sendLeaseExpiresAt?.getTime() ?? Date.now() + LEASE_MS) + JOIN_GRACE_MS;
   const finished = await waitForTerminal(db, identity, deadline);
   return answerSnapshot(db, topic, finished);
 }
@@ -690,7 +691,13 @@ async function settleWinnerFailure(
   switch (failure.kind) {
     case 'not_sent':
       if (rateToken !== undefined) refundRateLimit(rateToken);
-      await recordReceipt(db, won.identity, won.deliveryId, won.fence, NOT_SENT_RECEIPT(won.deliveryId));
+      await recordReceipt(
+        db,
+        won.identity,
+        won.deliveryId,
+        won.fence,
+        NOT_SENT_RECEIPT(won.deliveryId),
+      );
       throw failure.error;
     case 'post_send_unknown':
       // Provider was paid but the post-send write failed before we could learn
@@ -760,7 +767,13 @@ async function dispatchWinner(
     });
   } catch (err) {
     if (err instanceof ApiError && err.code === 'rate_limited') {
-      await recordReceipt(db, won.identity, won.deliveryId, won.fence, NOT_SENT_RECEIPT(won.deliveryId));
+      await recordReceipt(
+        db,
+        won.identity,
+        won.deliveryId,
+        won.fence,
+        NOT_SENT_RECEIPT(won.deliveryId),
+      );
       throw err;
     }
     return settleWinnerFailure(db, won, err, rateToken, attempt.returned);

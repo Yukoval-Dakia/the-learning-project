@@ -33,6 +33,10 @@ describe('runGoalScopeAndWrite', () => {
     });
   }
 
+  // @invariant grading: one accepted goal_scope proposal materializes exactly one
+  // ordered goal scope; a second accept is idempotent and cannot duplicate the goal.
+  // @fails-if the accept transaction replays the goal insert or loses the ordered
+  // scope array, yielding duplicate goals or an unreadable ordered learning path.
   it('accept is idempotent (second accept does not duplicate the goal row)', async () => {
     const db = testDb();
     await insertKnowledge('k1');
