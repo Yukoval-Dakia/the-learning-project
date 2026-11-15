@@ -19,6 +19,17 @@ export { isDirectProviderAttemptInvariantError } from './direct-provider-attempt
 
 export type EmbedProviderAttemptOptions = DirectProviderOperationOptions;
 
+/** Positive evidence that this HTTP request never reached fetch; earlier chunks may have sent. */
+export class EmbeddingRequestNotSentError extends Error {
+  constructor(
+    readonly reason: 'credentials_missing' | 'send_not_authorized',
+    cause?: unknown,
+  ) {
+    super(`embedding request not sent: ${reason}`, { cause });
+    this.name = 'EmbeddingRequestNotSentError';
+  }
+}
+
 // Currency checks ignore the model: changing it on a database with vectors needs a re-embed.
 export const EMBED_MODEL = process.env.MEM0_EMBEDDING_MODEL?.trim() || DASHSCOPE_EMBED_MODEL_ID;
 export const EMBED_DIMS = 1024;
@@ -82,7 +93,7 @@ async function embedChunk(
           signal.throwIfAborted();
         } catch (error) {
           attempt.markTerminal('aborted', 'provider_send_not_authorized', 0);
-          throw error;
+          throw new EmbeddingRequestNotSentError('send_not_authorized', error);
         }
         let res: Response;
         try {
@@ -167,7 +178,7 @@ export async function embedMany(
   if (!providerAttempt) throw new TypeError('embedMany requires provider attempt context');
   const providerOperation = createDirectProviderOperationContext(providerAttempt);
   const apiKey = process.env.DASHSCOPE_API_KEY?.trim();
-  if (!apiKey) throw new Error('embedMany: DASHSCOPE_API_KEY is unset');
+  if (!apiKey) throw new EmbeddingRequestNotSentError('credentials_missing');
   // YUK-1654 — the DashScope credential only travels to a catalog-declared
   // embedding endpoint; a rogue MEM0_EMBEDDING_BASE_URL fails before the send.
   assertModelEndpointHostAllowed(BASE_URL, 'MEM0_EMBEDDING_BASE_URL (domain embedder)');

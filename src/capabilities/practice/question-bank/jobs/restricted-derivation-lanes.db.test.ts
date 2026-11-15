@@ -164,7 +164,8 @@ async function seedBank(policy: 'answer_only' | 'crisis' | 'allow') {
 
 function countingEmbed() {
   const sent: string[] = [];
-  const embedFn: typeof embedMany = async (texts) => {
+  const embedFn: typeof embedMany = async (texts, attempt) => {
+    await attempt?.beforeSend?.();
     sent.push(...texts);
     return texts.map(() => new Array(EMBED_DIMS).fill(0));
   };

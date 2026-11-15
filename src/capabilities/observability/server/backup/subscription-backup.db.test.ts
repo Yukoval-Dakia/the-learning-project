@@ -65,6 +65,7 @@ const liveSubscriberIdentities = [
   ['practice.learner-profile-refresh', 1],
   ['practice.learner-return-wake', 1],
   ['practice.question-admission-enqueue', 1],
+  ['practice.question-publication-embed', 1],
   ['practice.serving-recheck', 1],
   ['practice.upload-ready', 1],
   ['practice.web-supply-observe', 1],
@@ -293,6 +294,7 @@ describe('YUK-766 subscription progress backup', () => {
         'practice.failure-learning-attempt',
         'practice.learner-return-wake',
         'practice.question-admission-enqueue',
+        'practice.question-publication-embed',
         'practice.serving-recheck',
         'practice.upload-ready',
         'practice.web-supply-observe',
@@ -305,6 +307,7 @@ describe('YUK-766 subscription progress backup', () => {
     const publish = [
       'agency.probe-publication-serve',
       'practice.question-admission-enqueue',
+      'practice.question-publication-embed',
       'practice.serving-recheck',
       'practice.upload-ready',
     ];
