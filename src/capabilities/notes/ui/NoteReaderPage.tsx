@@ -23,7 +23,7 @@ import {
   Undo2,
 } from 'lucide-react';
 import { type ReactNode, useCallback, useRef, useState } from 'react';
-import { ApiError } from '@/ui/lib/api';
+import { ApiAuthError, ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
 import { undoAiChange } from '@/ui/lib/undo-ai-change';
 import { invalidateAfterAiChangeUndo, queryKeys } from '@/ui/lib/write-invalidation';
@@ -37,7 +37,7 @@ import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button, Chip, IconButton, UiNextRoot } from '@/ui-next/public';
 import './notes-m3e.css';
 
-import { parseNoteBodyBlocks } from '../api/contracts';
+import { EditArtifactBodyBlocksResponseSchema, parseNoteBodyBlocks } from '../api/contracts';
 import { blockHeadings, blockOutlineLabel, questionDetailHref } from './NoteBlocks';
 import { NoteDocBody } from './NoteDocBody';
 import { NoteEditor } from './NoteEditor';
@@ -69,6 +69,16 @@ const GENERATION_FAILURE_COPY: Record<NonNullable<NotePage['generation_failure']
     provider_outage: '自动整理服务暂时未能完成请求。',
     learner_edited: '你已有编辑，自动整理没有覆盖已有正文。',
   };
+
+interface NoteEdit {
+  noteId: string;
+  sessionId: string;
+  revision: number;
+  baseVersion: number;
+  blocks: BodyBlock[];
+}
+
+type NoteSaveCommand = Readonly<NoteEdit>;
 
 // The page frame shared by every state: M3E scope, the M3 role bridge and the toast host.
 function ReaderFrame({ children }: { children: ReactNode }) {
@@ -223,7 +233,18 @@ export default function NoteReaderPage({
 
   const [mode, setMode] = useState<'read' | 'edit'>('read');
   const [outlineOpen, setOutlineOpen] = useState(true);
-  const [draft, setDraft] = useState<BodyBlock[] | null>(null);
+  const [draft, storeDraft] = useState<NoteEdit | null>(null);
+  const draftRef = useRef<NoteEdit | null>(null);
+  const savePending = useRef(false);
+  const [saveProblem, setSaveProblem] = useState<{
+    noteId: string;
+    sessionId: string;
+    message: string;
+  } | null>(null);
+  const setDraft = (next: NoteEdit | null) => {
+    draftRef.current = next;
+    storeDraft(next);
+  };
 
   // S12 (YUK-335)：入口上下文——同一篇笔记从多个 knowledge 节点可达（设计「一篇
   // 笔记多扇门」）。read 态从 ?entry=<knowledge_id> 读当前入口。惰性初始化读一次，
@@ -289,32 +310,89 @@ export default function NoteReaderPage({
     showToast({ message: text });
   };
 
-  // One conflict-detection rule for both mutations (see isVersionConflict) — the version
-  // conflict copy, else an action-prefixed failure with the safely-coerced message.
   const conflictToast = (e: unknown, conflictMsg: string, failPrefix: string) => {
     say(isVersionConflict(e) ? conflictMsg : `${failPrefix}：${errMessage(e)}`);
   };
 
   const saveM = useMutation({
-    mutationFn: () =>
-      save(id, {
-        artifact_version: note?.version ?? 0,
-        body_blocks: { type: 'doc', content: draft ?? [] },
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: queryKeys.notePage(id) });
-      void qc.invalidateQueries({ queryKey: queryKeys.noteAiChanges(id) });
-      setMode('read');
-      setDraft(null);
-      say('已保存——版本推进，refine 痕迹照常累积。');
+    retry: false,
+    mutationFn: async (command: NoteSaveCommand) => {
+      const receipt = EditArtifactBodyBlocksResponseSchema.parse(
+        await save(command.noteId, {
+          artifact_version: command.baseVersion,
+          body_blocks: { type: 'doc', content: command.blocks },
+        }),
+      );
+      if (
+        receipt.artifact_id !== command.noteId ||
+        receipt.artifact_version <= command.baseVersion ||
+        !receipt.event_id
+      ) {
+        throw new Error('Note save acknowledgement mismatch');
+      }
+      return receipt;
     },
-    onError: (e) =>
-      conflictToast(
-        e,
-        '版本冲突：这篇笔记在别处被改过（可能是 AI refine）——刷新后再编辑。',
-        '保存失败',
-      ),
+    onSuccess: (receipt, command) => {
+      qc.setQueryData<NotePage>(queryKeys.notePage(command.noteId), (cached) =>
+        cached?.id === command.noteId && cached.version <= receipt.artifact_version
+          ? { ...cached, version: receipt.artifact_version, body_blocks: receipt.body_blocks }
+          : cached,
+      );
+      void qc.invalidateQueries({ queryKey: queryKeys.notePage(command.noteId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.noteAiChanges(command.noteId) });
+      const current = draftRef.current;
+      if (
+        !current ||
+        current.noteId !== command.noteId ||
+        current.sessionId !== command.sessionId ||
+        current.baseVersion !== command.baseVersion
+      ) {
+        return;
+      }
+      setSaveProblem(null);
+      if (current.revision === command.revision) {
+        setMode('read');
+        setDraft(null);
+        say(`已保存——第 ${receipt.artifact_version} 版。`);
+      } else {
+        setDraft({ ...current, baseVersion: receipt.artifact_version });
+        say(`已保存第 ${receipt.artifact_version} 版，后续修改仍待保存。`);
+      }
+    },
+    onError: (error, command) => {
+      const current = draftRef.current;
+      if (
+        !current ||
+        current.noteId !== command.noteId ||
+        current.sessionId !== command.sessionId
+      ) {
+        return;
+      }
+      const rejected =
+        error instanceof ApiAuthError ||
+        (error instanceof ApiError && error.status >= 400 && error.status < 500);
+      setSaveProblem({
+        noteId: command.noteId,
+        sessionId: command.sessionId,
+        message: isVersionConflict(error)
+          ? '版本冲突：这篇笔记已在别处改过，当前草稿仍保留。'
+          : rejected
+            ? '这次没有收到保存成功，当前草稿仍保留。'
+            : '保存结果未确认，当前草稿仍保留，没有自动重发。',
+      });
+    },
+    onSettled: () => {
+      savePending.current = false;
+    },
   });
+  const saveDraft = () => {
+    const current = draftRef.current;
+    if (!current || current.noteId !== id || savePending.current) return;
+    const command = Object.freeze({ ...current, blocks: structuredClone(current.blocks) });
+    savePending.current = true;
+    setSaveProblem(null);
+    saveM.mutate(command);
+  };
 
   const undoM = useMutation({
     mutationFn: (eventId: string) => undo(id, eventId),
@@ -379,13 +457,24 @@ export default function NoteReaderPage({
   const entryMatch = entryKid ? (note.labels.find((l) => l.id === entryKid) ?? null) : null;
   const entryLabel =
     entryMatch ?? (generationFailed && note.labels.length !== 1 ? null : note.labels[0]) ?? null;
-  const shown = mode === 'edit' ? (draft ?? []) : blocks;
+  const shown = mode === 'edit' ? (draft?.blocks ?? []) : blocks;
+  const displayedVersion = mode === 'edit' && draft ? draft.baseVersion : note.version;
   const hasSavedBody = blocks.length > 0;
   const generationReason = note.generation_failure
     ? GENERATION_FAILURE_COPY[note.generation_failure.kind]
     : null;
   const startEditing = () => {
-    setDraft((previous) => previous ?? blocks);
+    if (note.id !== id) return;
+    if (draftRef.current?.noteId !== id) {
+      setDraft({
+        noteId: id,
+        sessionId: randomId(),
+        revision: 0,
+        baseVersion: note.version,
+        blocks: structuredClone(blocks),
+      });
+      setSaveProblem(null);
+    }
     setMode('edit');
   };
 
@@ -436,12 +525,7 @@ export default function NoteReaderPage({
           </button>
         </fieldset>
         {mode === 'edit' && (
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={saveM.isPending}
-            onClick={() => saveM.mutate()}
-          >
+          <Button size="sm" variant="primary" disabled={saveM.isPending} onClick={saveDraft}>
             <Check size={16} aria-hidden="true" />
             {saveM.isPending ? '保存中…' : '保存'}
           </Button>
@@ -519,7 +603,7 @@ export default function NoteReaderPage({
           <h1 className="nt-doc-title">{note.title}</h1>
           <div className="nt-doc-meta">
             <Chip>{NOTE_TYPE_LABEL[note.type] ?? '笔记'}</Chip>
-            <span className="nt-doc-version">第 {note.version} 版</span>
+            <span className="nt-doc-version">第 {displayedVersion} 版</span>
           </div>
 
           {/* S12 (YUK-335)：入口 strip——「同一篇笔记多扇门」的主表达。遍历 note.labels
@@ -579,12 +663,27 @@ export default function NoteReaderPage({
             </section>
           )}
 
+          {mode === 'edit' &&
+            draft &&
+            saveProblem?.noteId === id &&
+            saveProblem.sessionId === draft.sessionId && (
+              <p className="nt-quiet" role="status">
+                {saveProblem.message}
+              </p>
+            )}
           {mode === 'edit' && draft ? (
             <NoteEditor
-              blocks={draft}
+              key={draft.sessionId}
+              blocks={draft.blocks}
               labels={note.labels}
               noteId={note.id}
-              onChange={setDraft}
+              onChange={(next) => {
+                const current = draftRef.current;
+                if (!current || current.noteId !== id || current.sessionId !== draft.sessionId) {
+                  return;
+                }
+                setDraft({ ...current, blocks: next, revision: current.revision + 1 });
+              }}
               rootRef={editSessionRef}
               searchReferences={searchReferences}
               readQuestions={readQuestions}
@@ -607,7 +706,7 @@ export default function NoteReaderPage({
             <dl className="nt-props">
               <div className="nt-prop">
                 <dt>版本</dt>
-                <dd className="un-num">第 {note.version} 版</dd>
+                <dd className="un-num">第 {displayedVersion} 版</dd>
               </div>
               <div className="nt-prop">
                 <dt>内容段</dt>
