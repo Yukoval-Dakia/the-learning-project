@@ -21750,7 +21750,9 @@ export interface operations {
     };
     getKnowledgeNode: {
         parameters: {
-            query?: never;
+            query?: {
+                timeline_cursor?: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -22072,6 +22074,8 @@ export interface operations {
                             outcome: string | null;
                             subject_kind: string;
                         }[];
+                        timeline_has_more: boolean;
+                        timeline_next_cursor: string | null;
                     };
                 };
             };
