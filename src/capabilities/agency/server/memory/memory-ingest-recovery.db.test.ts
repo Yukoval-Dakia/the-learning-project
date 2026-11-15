@@ -22,6 +22,7 @@ import {
   claimMemoryIngest,
   memoryReconcileHandoffEventId,
   persistIngestCompleted,
+  readIngestCompleted,
 } from './memory-reconcile-handoff-store';
 import { buildMemoryEventIngestHandler } from './triggers';
 
@@ -142,8 +143,8 @@ describe('explicit single-event memory ingest recovery', () => {
     ).rejects.toThrow(/conflicts/);
   });
 
-  // @invariant concurrency: only one current replay grant can authorize a user source
-  // @fails-if stale concurrent authorization wins or completed/non-user sources receive a replay grant
+  // @invariant concurrency: only one current replay grant can authorize an admitted learner source
+  // @fails-if stale authorization wins or excluded historical, completed or non-user sources receive or execute a replay grant
   it('rejects stale concurrent authorizations and non-user or completed sources', async () => {
     const request = await stalledSource();
     const results = await Promise.allSettled([
@@ -155,6 +156,34 @@ describe('explicit single-event memory ingest recovery', () => {
     await expect(authorizeMemoryIngestReplay(testDb(), agent)).rejects.toThrow(
       /existing user event/,
     );
+    const historical = await stalledSource('historical-non-ask');
+    const historicalGrant = await authorizeMemoryIngestReplay(testDb(), historical);
+    await testDb()
+      .update(event)
+      .set({ action: 'experimental:legacy_memory_source' })
+      .where(eq(event.id, historical.sourceEventId));
+    expect(
+      (await listStalledMemoryIngests(testDb())).candidates.find(
+        (row) => row.sourceEventId === historical.sourceEventId,
+      ),
+    ).toMatchObject({ admission: 'excluded', replayAllowed: false });
+    await expect(
+      authorizeMemoryIngestReplay(testDb(), {
+        ...historical,
+        requestId: randomUUID(),
+        expectedFenceId: memoryIngestReplayGrantId(historicalGrant),
+      }),
+    ).rejects.toThrow(/source excluded/);
+    const boundary = providerBoundary();
+    await expect(
+      buildMemoryEventIngestHandler(testDb(), boundary.boss, {
+        memoryClient: boundary.client,
+        replayGrant: historicalGrant,
+      })([{ data: { event_id: historical.sourceEventId } }]),
+    ).rejects.toThrow(/source excluded/);
+    expect(boundary.getAll).not.toHaveBeenCalled();
+    expect(boundary.add).not.toHaveBeenCalled();
+    expect(await readIngestCompleted(testDb(), historical.sourceEventId)).toBeNull();
     const completed = await stalledSource('already-completed');
     await persistIngestCompleted(testDb(), {
       sourceEventId: completed.sourceEventId,

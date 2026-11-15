@@ -10,7 +10,7 @@ import {
 import { loadSubjectBriefEvents, subjectScopeHasNewEvidence } from './active-subjects';
 import { type GenerateBrief, regenerateMemoryBrief, scopeHasNewEvidence } from './brief';
 import { executePurposeBrief } from './brief-purpose';
-import { isMemoryExtractionEvent } from './learner-evidence';
+import { memoryIngestAdmission } from './learner-evidence';
 import {
   type MemoryClient,
   type MemoryEventInput,
@@ -32,6 +32,8 @@ import {
   readIngestCompleted,
 } from './memory-reconcile-handoff-store';
 import { recoverPurposeChanges } from './purpose-repair';
+
+export { shouldExtractToMemory } from './learner-evidence';
 
 const SUBJECT_SCOPE_PREFIX = 'subject:';
 
@@ -135,34 +137,6 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
   };
 }
 
-/**
- * Only user-originated events may feed mem0 extraction (ADR-0039). Agent output
- * entering extraction would let the model confirm its own prior output as a fact
- * on the next prompt. Fail closed: anything that is not exactly `user` is rejected.
- */
-export function shouldExtractToMemory(event: Pick<MemoryEventInput, 'actor_kind'>): boolean {
-  return event.actor_kind === 'user';
-}
-
-type EditedConjectureMemory = { claim: string; conjectureId: string };
-
-function editedConjectureMemory(event: MemoryEventInput): EditedConjectureMemory | null {
-  if (event.action !== 'rate' || event.subject_kind !== 'event') return null;
-  if (typeof event.payload !== 'object' || event.payload === null) return null;
-  const payload = event.payload as Record<string, unknown>;
-  if (
-    payload.rating !== 'accept' ||
-    payload.corrected_by_owner !== true ||
-    typeof payload.corrected_claim_md !== 'string' ||
-    typeof payload.conjecture_id !== 'string'
-  ) {
-    return null;
-  }
-  const claim = payload.corrected_claim_md.trim();
-  const conjectureId = payload.conjecture_id.trim();
-  return claim && conjectureId ? { claim, conjectureId } : null;
-}
-
 // One source of truth for the kind projected from an owner-edited conjecture:
 // verbatim projection metadata must not drift.
 const CONJECTURE_EDIT_MEMORY_KIND = 'weakness';
@@ -222,17 +196,16 @@ export function buildMemoryEventIngestHandler(
       }
       if (!row) continue;
 
-      // Only explicit learner words enter inference. Owner-edited canonical
-      // conjectures retain their separate verbatim projection.
-      const editedConjecture = editedConjectureMemory(row);
-      const admitToExtraction =
-        isMemoryExtractionEvent(row) || (shouldExtractToMemory(row) && editedConjecture !== null);
+      const admission = memoryIngestAdmission(row);
+      if (admission.kind === 'excluded') {
+        if (deps.replayGrant) throw new MemoryReconcileHandoffError('excluded operator source');
+        continue;
+      }
 
       // Owner-edited conjectures are already canonical text. Persist the claim verbatim
       // (infer:false) so this job makes exactly one deterministic add+embedding call and
       // does not also ask the generic extraction LLM to infer a duplicate preference.
       const ingest = await (async () => {
-        if (!admitToExtraction) return null;
         // Construct the client only for admitted events, so gated events never reach
         // the provider and a missing key cannot reject the job on their behalf.
         memoryClient ??= createMemoryClient();
@@ -254,7 +227,7 @@ export function buildMemoryEventIngestHandler(
               `Mem0 add ${claim} for ${row.id}; exact lookup was incomplete or ambiguous`,
             );
         };
-        if (editedConjecture) {
+        if (admission.kind === 'verbatim') {
           const projectionKey = `conjecture-edit:${row.id}`;
           const existing = await client.findByEventId(row.id);
           if (existing.results.length > 0) {
@@ -264,11 +237,11 @@ export function buildMemoryEventIngestHandler(
             };
           }
           const result = await client.addVerbatimOnce(
-            editedConjecture.claim,
+            admission.claim,
             {
               source: 'conjecture_edit',
               event_id: row.id,
-              conjecture_id: editedConjecture.conjectureId,
+              conjecture_id: admission.conjectureId,
               // Mirror inferred scope metadata; scoped search maps scope_key to this field.
               affected_scopes: row.affected_scopes,
               corrected_by_owner: true,
@@ -300,20 +273,18 @@ export function buildMemoryEventIngestHandler(
         return completed ? { ...once, resolution: completed.resolution } : once;
       })();
       const createdMs = row.created_at.getTime();
-      const newMemories: ReconcileMemInput[] = (ingest?.result.results ?? []).map((memory) => ({
+      const newMemories: ReconcileMemInput[] = ingest.result.results.map((memory) => ({
         id: memory.id,
         text: memory.memory,
         created_ms: createdMs,
-        kind: editedConjecture ? CONJECTURE_EDIT_MEMORY_KIND : row.kind,
+        kind: admission.kind === 'verbatim' ? CONJECTURE_EDIT_MEMORY_KIND : row.kind,
       }));
-      if (ingest) {
-        await persistIngestCompleted(db, {
-          sourceEventId: row.id,
-          resolution: ingest.resolution,
-          memories: newMemories,
-        });
-        if ((await readEventDerivationPolicy(db, row.id)) !== 'allow') continue;
-      }
+      await persistIngestCompleted(db, {
+        sourceEventId: row.id,
+        resolution: ingest.resolution,
+        memories: newMemories,
+      });
+      if ((await readEventDerivationPolicy(db, row.id)) !== 'allow') continue;
     }
   };
 }

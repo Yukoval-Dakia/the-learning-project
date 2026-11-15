@@ -1,5 +1,4 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
-import { allowsDerivation } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { event, provider_attempt, provider_attempt_admission } from '@/db/schema';
 import {
@@ -7,7 +6,7 @@ import {
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
 import { lockMemoryIngestSource, lockMemoryOperatorRequest } from '@/kernel/locks/memory-locks';
-import { isLearnerAnswerAction } from './learner-evidence';
+import { type MemoryIngestAdmission, memoryIngestAdmission } from './learner-evidence';
 import { providerOperationIdForInvocation } from './mem0-runtime';
 import {
   type MemoryIngestReplayGrant,
@@ -67,25 +66,25 @@ async function grantsForSource(db: Db | Tx, sourceId: string): Promise<MemoryIng
   });
 }
 
-async function assertUserSource(db: Db | Tx, sourceId: string): Promise<void> {
-  if ((await readEventDerivationPolicy(db, sourceId)) !== 'allow')
-    throw new MemoryReconcileHandoffError(
-      `operator replay requires an existing user event ${sourceId}`,
-    );
+async function readSourceAdmission(db: Db | Tx, sourceId: string): Promise<MemoryIngestAdmission> {
+  if ((await readEventDerivationPolicy(db, sourceId)) !== 'allow') return { kind: 'excluded' };
   const rows = await db
-    .select({ actor: event.actor_kind, action: event.action, payload: event.payload })
+    .select({
+      actor_kind: event.actor_kind,
+      action: event.action,
+      subject_kind: event.subject_kind,
+      payload: event.payload,
+    })
     .from(event)
     .where(eq(event.id, sourceId))
     .limit(1);
-  // The same extraction judgment as the ingest handler gates replay: an answer
-  // event may never receive a grant that could push its text to the provider.
-  if (
-    rows[0]?.actor !== 'user' ||
-    !allowsDerivation(rows[0]?.payload) ||
-    isLearnerAnswerAction(rows[0]?.action ?? '')
-  )
+  return rows[0] ? memoryIngestAdmission(rows[0]) : { kind: 'excluded' };
+}
+
+async function assertAdmittedSource(db: Db | Tx, sourceId: string): Promise<void> {
+  if ((await readSourceAdmission(db, sourceId)).kind === 'excluded')
     throw new MemoryReconcileHandoffError(
-      `operator replay requires an existing user event ${sourceId}`,
+      `operator replay requires an existing user event admitted to memory (source excluded: ${sourceId})`,
     );
 }
 
@@ -151,7 +150,7 @@ export async function authorizeMemoryIngestReplay(
     await lockMemoryIngestSource(tx, input.sourceEventId);
     // Global request identity also fences accidental reuse for another source.
     await lockMemoryOperatorRequest(tx, input.requestId);
-    await assertUserSource(tx, input.sourceEventId);
+    await assertAdmittedSource(tx, input.sourceEventId);
     const existing = await tx
       .select({ payload: event.payload })
       .from(event)
@@ -196,7 +195,7 @@ export async function assertMemoryIngestReplayGrant(
   const parsed = MemoryIngestReplayGrantSchema.parse(grant);
   if (parsed.source_event_id !== sourceId)
     throw new MemoryReconcileHandoffError('operator source mismatch');
-  await assertUserSource(db, sourceId);
+  await assertAdmittedSource(db, sourceId);
   const latest = (await grantsForSource(db, sourceId))[0];
   if (!latest || canonicalHandoffJson(latest) !== canonicalHandoffJson(parsed))
     throw new MemoryReconcileHandoffError('operator grant missing or superseded');
@@ -212,7 +211,7 @@ export async function claimMemoryIngestReplay(
     await lockMemoryIngestSource(tx, sourceId);
     await assertMemoryIngestReplayGrant(tx, grant, sourceId);
     await lockEventDerivationSources(tx, sourceId);
-    await assertUserSource(tx, sourceId);
+    await assertAdmittedSource(tx, sourceId);
     if (await readIngestCompleted(tx, sourceId))
       throw new MemoryReconcileHandoffError('ingest already completed');
     if (!(await readMemoryIngestStarted(tx, sourceId)))
@@ -261,12 +260,16 @@ export async function listStalledMemoryIngests(db: Db, afterId = '', limit = 50)
   for (const row of rows) {
     if (!row.sourceId || (await readIngestCompleted(db, row.sourceId))) continue;
     if (!(await readMemoryIngestStarted(db, row.sourceId))) continue;
+    const admission = await readSourceAdmission(db, row.sourceId);
     const grants = await grantsForSource(db, row.sourceId);
+    const liveAttempt = await hasLiveAttempt(db, row.sourceId, grants);
     candidates.push({
       sourceEventId: row.sourceId,
       startedAt: row.createdAt.toISOString(),
       expectedFenceId: latestFence(row.sourceId, grants),
-      liveAttempt: await hasLiveAttempt(db, row.sourceId, grants),
+      liveAttempt,
+      admission: admission.kind,
+      replayAllowed: admission.kind !== 'excluded' && !liveAttempt,
     });
   }
   return { candidates, nextAfterId: rows.length === limit ? (rows.at(-1)?.id ?? null) : null };
