@@ -68,7 +68,17 @@ export const practiceCapability = defineCapability({
       ...fromOwnerParts((part) => part.events?.actions),
     ],
   },
-  subscriptions: { handlers: fromOwnerParts((part) => part.subscriptions?.handlers) },
+  subscriptions: {
+    handlers: [
+      ...fromOwnerParts((part) => part.subscriptions?.handlers),
+      {
+        id: 'practice.settlement-stream-rerank',
+        version: 1,
+        actions: ['experimental:assessment_settlement'],
+        load: () => import('./scheduling/public').then((m) => m.buildSettlementRerankSubscriber),
+      },
+    ],
+  },
   api: {
     // M2-T1 (YUK-316)：18 条路由全部带 load 懒加载 thunk（M1 配方）。[id]/[sid]
     // 段由 server/app.ts 的 toHonoPath 转 :id/:sid 并把捕获参数透传 handler。

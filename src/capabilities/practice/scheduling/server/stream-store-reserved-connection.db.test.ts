@@ -174,6 +174,8 @@ afterEach(async () => {
 });
 
 describe('Practice stream reserved connection integration', () => {
+  // @invariant concurrency: ten reranks queued behind one external compose-partition advisory lock each run to completion on their own reserved transaction once it releases — no pool starvation, no self-deadlock, no lost delivery.
+  // @fails-if collector or lock reads escape the lock-holder transaction (e.g. borrow a pool connection): the ten waiters deadlock against the held lock and the test times out instead of completing.
   it('keeps ten same-date reranks on their lock-holder transaction', async () => {
     // Given an external holder blocking all ten same-key reranks in a production-sized pool.
     const { db, client } = await createMaxTenSingletonDb(10_000);
@@ -182,7 +184,7 @@ describe('Practice stream reserved connection integration', () => {
     const observer = postgres(url, { max: 1 });
     const holder = postgres(url, { max: 1 });
     clients.push(observer, holder);
-    const { reRankAfterAnswer } = await import('./stream-store');
+    const { reRankAfterAnswer } = await import('./stream-rerank');
     const questionId = await seedSamplableQuestion(db);
     await db.insert(practice_stream_item).values({
       id: createId(),
