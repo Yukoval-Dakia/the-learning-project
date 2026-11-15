@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, or } from 'drizzle-orm';
 import {
   PAID_EFFECT_AUTHORIZATION_OPEN_STATES,
   PAID_EFFECT_ENTITY_GATE_STATES,
@@ -6,7 +6,6 @@ import {
   type PaidEffectInput,
   type PaidEffectVoidReceipt,
   computePaidEffectIdentity,
-  paidEffectGateLockKey,
   paidEffectJsonEquals,
 } from '@/core/paid-work/protocol/paid-effect-protocol';
 import { lockPaidEffectControlFamily } from '@/core/paid-work/server/paid-effect-control';
@@ -20,6 +19,7 @@ import {
 } from '@/core/paid-work/server/question-admission-policy-successor-v1';
 import type { Tx } from '@/db/client';
 import { paid_effect, paid_effect_authorization } from '@/db/schema';
+import { lockPaidEffectEntityGate } from '@/kernel/locks/paid-effect-gate';
 
 const FAMILY = 'question_admission_run';
 const OPEN_SUCCESSOR_STATES: readonly string[] = PAID_EFFECT_AUTHORIZATION_OPEN_STATES;
@@ -130,9 +130,7 @@ export async function transitionQuestionAdmissionV4V5SuccessorV1(
       unit: auth.unit,
       inputDigest: auth.input_digest,
     });
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${paidEffectGateLockKey(identity)}, 0))`,
-    );
+    await lockPaidEffectEntityGate(tx, identity);
     const mapping = await readQuestionAdmissionPolicySuccessorV1(tx, auth);
     if (mapping) {
       if (

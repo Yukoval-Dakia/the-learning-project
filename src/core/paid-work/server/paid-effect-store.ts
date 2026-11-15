@@ -32,7 +32,6 @@ import {
   type PaidEffectVoidReceipt,
   canonicalizePaidEffectJson,
   computePaidEffectIdentity,
-  paidEffectGateLockKey,
   paidEffectIdentitySchema,
   paidEffectJsonEquals,
 } from '@/core/paid-work/protocol/paid-effect-protocol';
@@ -49,6 +48,7 @@ import {
   paid_effect_authorization,
   paid_effect_cancellation,
 } from '@/db/schema';
+import { lockPaidEffectEntityGate } from '@/kernel/locks/paid-effect-gate';
 
 type PaidEffectRow = typeof paid_effect.$inferSelect;
 
@@ -161,23 +161,12 @@ async function lockRow(tx: Tx, identity: PaidEffectIdentity): Promise<PaidEffect
 }
 
 /**
- * Serialize send admissions per gate scope: the advisory xact lock closes the
- * check-then-act window where two concurrent reserves for DIFFERENT identities
- * covered by one scope could both pass the gate scan and both send.
- */
-async function lockEntityGate(tx: Tx, identity: PaidEffectIdentity): Promise<void> {
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtextextended(${paidEffectGateLockKey(identity)}, 0))`,
-  );
-}
-
-/**
  * Gate scan under the FIXED predicate (paidEffectGateBlocks): an open
  * sending/unknown effect of the same (family, entityId) blocks this claim unless it
  * is an item_prior_backfill feature rep of the SAME revision. Same revision + same
  * unit + different digest BLOCKS (reconciliation); a different revision BLOCKS
  * (entity-level cross-revision/cross-night). Runs inside the caller's transaction
- * AFTER lockEntityGate; returns the blocker's identity, or null.
+ * AFTER lockPaidEffectEntityGate; returns the blocker's identity, or null.
  */
 async function findGateBlocker(
   tx: Tx,
@@ -307,7 +296,7 @@ function sameIdentity(a: PaidEffectIdentity, b: PaidEffectIdentity): boolean {
 
 /**
  * THE successor-authorization gate: runs inside the caller's transaction after
- * lockEntityGate, serialized by the same family advisory + entity-gate locks as the
+ * lockPaidEffectEntityGate, serialized by the same family advisory + entity-gate locks as the
  * void that wrote the authorization. While ANY authorization for this
  * (family, entityId) is still open — its successor row missing or not yet
  * terminal — only the authorized successor identity may be claimed, and only by
@@ -394,7 +383,7 @@ async function claimLockedRow(
   identity: PaidEffectIdentity,
   delivery: PaidEffectSendClaimDelivery,
 ): Promise<{ fence: number } | { blockedBy: PaidEffectIdentity }> {
-  await lockEntityGate(tx, identity);
+  await lockPaidEffectEntityGate(tx, identity);
   // Control owner/generation is verified in the SAME transaction and the SAME lock
   // order as the claim (family → row → entity → control FOR SHARE), so a concurrent
   // switch (control FOR UPDATE) serializes against every admission and a fenced
@@ -736,7 +725,7 @@ export async function voidPaidEffectWithSuccessor(
   // Entity-scope mutation: same lock order as a claim (family advisory →
   // identity row → entity advisory), so the authorization write serializes
   // against every claim's authorization scan.
-  await lockEntityGate(tx, identity);
+  await lockPaidEffectEntityGate(tx, identity);
   const [succRow] = await tx
     .select({ state: paid_effect.state })
     .from(paid_effect)
@@ -980,7 +969,7 @@ export async function cancelPaidEffectUnsentIntent(
   }
   // Entity-scope check: same lock order as a claim, so the authorization scan
   // serializes against every concurrent claim and void on the entity.
-  await lockEntityGate(tx, identity);
+  await lockPaidEffectEntityGate(tx, identity);
   const [binding] = await tx
     .select({ authorization_id: paid_effect_authorization.authorization_id })
     .from(paid_effect_authorization)

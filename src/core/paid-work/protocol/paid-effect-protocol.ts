@@ -23,6 +23,7 @@
 //   in flight or unknown.
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { advisoryLockRegistry, deriveHashtextExtendedLockKey } from '@/kernel/locks/registry';
 
 export const PAID_EFFECT_BACKEND_SCHEMA = z.enum(['pg-boss', 'dbos']);
 export type PaidEffectBackend = z.infer<typeof PAID_EFFECT_BACKEND_SCHEMA>;
@@ -134,7 +135,10 @@ export function paidEffectGateBlocks(
  * cross-revision block cannot be raced past.
  */
 export function paidEffectGateLockKey(identity: PaidEffectIdentity): string {
-  return `paid-effect:gate:v1:${identity.family}:${identity.entityId}`;
+  return deriveHashtextExtendedLockKey(advisoryLockRegistry.paidEffectEntityGate, {
+    family: identity.family,
+    entityId: identity.entityId,
+  });
 }
 
 /**
