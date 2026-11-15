@@ -492,6 +492,48 @@
     font-size: var(--un-md-sys-typescale-body-medium-size);
   }
 
+  /* YUK-1881 — 行内申诉区：理由输入、动作行与状态行沿用既有间距与中性色。 */
+  & .pf-rq-appeal {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  & .pf-rq-appeal-field {
+    display: grid;
+    grid-template-columns: 4.5em minmax(0, 1fr);
+    align-items: start;
+    gap: 4px var(--un-sp-3);
+  }
+
+  & .pf-rq-appeal-text {
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--un-md-sys-color-outline-variant);
+    border-radius: 12px;
+    background: var(--un-md-sys-color-surface-container-lowest);
+    color: var(--un-md-sys-color-on-surface);
+    font: inherit;
+    line-height: 1.6;
+    resize: vertical;
+  }
+
+  & .pf-rq-appeal-text:focus-visible {
+    outline: 2px solid var(--un-md-sys-color-primary);
+    outline-offset: 1px;
+  }
+
+  & .pf-rq-appeal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--un-sp-2);
+  }
+
+  & .pf-rq-appeal-status {
+    margin: 0;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+  }
+
   & .pf-retro-foot {
     display: flex;
     flex-wrap: wrap;

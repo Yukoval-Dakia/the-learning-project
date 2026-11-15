@@ -26,6 +26,7 @@ import { Button, Chip } from '@/ui-next/public';
 
 import type { PaperTaskRef } from '../session/public';
 import type { PaperSlot } from './practice-api';
+import { PaperRetroAppeal } from './PaperRetroAppeal';
 import { usePracticeClient } from './practice-client';
 
 type Verdict = 'good' | 'hard' | 'again';
@@ -157,7 +158,8 @@ export function PfrQRow({
             </div>
           )}
           {appealable && verdict !== null && verdict !== 'good' && (
-            <p className="pf-rq-note">此处暂不能直接重判；需要申诉时，请从散题反馈卡提交理由。</p>
+            // YUK-1881 — 申诉锚点按 issuance_id key：slot/目标换了，旧回调与状态整棵重挂。
+            <PaperRetroAppeal key={slot.assessment?.issuance_id ?? 'none'} slot={slot} />
           )}
         </div>
       )}
