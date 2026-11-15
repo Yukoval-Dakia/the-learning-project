@@ -446,10 +446,42 @@ export function PracticePresentation(props: PracticePresentationProps) {
           actions: [],
         };
       if (submit.causeEdit) {
-        revelation.cause = causeEditor.editorFor({
-          attemptEventId: submit.causeEdit.attemptEventId,
-          current: submit.causeEdit.current,
-        });
+        const target = submit.causeEdit;
+        if (target.state.status === 'ready') {
+          revelation.cause = causeEditor.editorFor({
+            attemptEventId: target.attemptEventId,
+            current: target.current,
+            options: target.state.options,
+          });
+        } else {
+          const loading = target.state.status === 'loading';
+          const failed = target.state.status === 'transient-failed';
+          revelation.cause = {
+            current: target.current,
+            options: [],
+            selected: null,
+            note: target.current?.note ?? '',
+            mode: loading ? 'busy' : failed ? 'disabled' : 'readonly',
+            notice: {
+              title: loading
+                ? '正在读取错因…'
+                : failed
+                  ? '错因尚未读取成功，可以重新读取。'
+                  : target.state.status === 'owner-confirmed-unavailable'
+                    ? target.state.reason
+                    : undefined,
+            },
+            noticeTone: failed ? 'error' : 'status',
+            actions: failed
+              ? [{ id: 'cause-reload', label: '重新读取', availability: { kind: 'enabled' } }]
+              : [],
+            onSelect: () => {},
+            onNoteChange: () => {},
+            onAction: (id) => {
+              if (id === 'cause-reload' && failed) target.retry();
+            },
+          };
+        }
       }
       if (unsupported && !submit.autoCommitted && !submit.committedPreview)
         submission.secondary = [
