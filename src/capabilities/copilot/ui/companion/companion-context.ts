@@ -11,6 +11,7 @@ import type { ReplaySkillContext } from '../replay';
 import { restoreSkillContext } from '../skill-lifecycle';
 import type { CopilotRunView } from '../subtask-events';
 import type { CompanionState } from './companion-state';
+import type { ConversationDrafts } from './conversation-drafts';
 import type { RunTracker } from './run-tracker';
 import type { ThinkingSegment } from './thinking-lane';
 import type { TurnSender } from './turn-sender';
@@ -45,8 +46,6 @@ export interface CompanionInternals {
   snapshotAppliedSeq: Map<string, number>;
   checkingPolicy: boolean;
   storageInitialized: boolean;
-  /** The last sentence a page put in the draft, so an untouched one can be swapped for the next. */
-  handedDraft: string | null;
 }
 
 export interface CompanionCtx {
@@ -58,6 +57,7 @@ export interface CompanionCtx {
   /** Distinguishes this mount's query keys from any other instance. */
   instance: string;
   internals: CompanionInternals;
+  drafts: ConversationDrafts;
   /** Every message write goes here so the skill context folds the complete order. */
   updateMessages: (next: ChatMessage[] | ((previous: ChatMessage[]) => ChatMessage[])) => void;
   sessions: VisitSessions;
@@ -70,7 +70,6 @@ export function createInternals(): CompanionInternals {
     runs: new Map(),
     activeSkill: null,
     nudgeSession: null,
-    handedDraft: null,
     bootstrapEpoch: null,
     selectionRevision: 0,
     snapshotRequestSeq: new Map(),

@@ -62,7 +62,7 @@ export function createVisitSessions(ctx: CompanionCtx): VisitSessions {
       correctionTarget: null,
       optimisticSession: null,
       error: null,
-      currentSessionId: sessionId,
+      ...ctx.drafts.select(sessionId),
     });
     ctx.updateMessages(ctx.sender.pendingMessagesForSession(sessionId));
   }
@@ -72,6 +72,7 @@ export function createVisitSessions(ctx: CompanionCtx): VisitSessions {
     // A learner's explicit pick made while an automatic create is in flight wins; the new
     // session then only joins the list (YUK-1340).
     const selectionAtRequest = ++internals.selectionRevision;
+    const originAtRequest = ctx.get().selectionOrigin;
     const epochAtRequest = ctx.get().visit.epoch;
     ctx.set({
       creatingSession: true,
@@ -91,7 +92,7 @@ export function createVisitSessions(ctx: CompanionCtx): VisitSessions {
         ctx.set({
           skillKnowledgeId: null,
           correctionTarget: null,
-          currentSessionId: response.session.id,
+          ...ctx.drafts.select(response.session.id),
           selectionOrigin: origin,
           automaticCreatedEpoch: origin === 'automatic' ? epochAtRequest : null,
           optimisticSession: response.session,
@@ -113,7 +114,12 @@ export function createVisitSessions(ctx: CompanionCtx): VisitSessions {
         }
       }, swallow);
     } catch (cause) {
-      ctx.set({ error: plainError(cause, '新对话没有建好，稍后再试。') });
+      ctx.set({
+        error: plainError(cause, '新对话没有建好，稍后再试。'),
+        ...(internals.selectionRevision === selectionAtRequest
+          ? { selectionOrigin: originAtRequest }
+          : {}),
+      });
     } finally {
       ctx.set({ creatingSession: false });
     }
