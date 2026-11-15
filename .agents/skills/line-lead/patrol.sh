@@ -16,7 +16,7 @@ out=$(jq -rn --argjson open "$open" --argjson merged "$merged" --argjson slots "
 
   ($open | map(select(.headRefName | test("^dependabot/") | not) | . + {
     line: (.headRefName | line),
-    pushed: ([.statusCheckRollup[]? | .startedAt // empty | select(. != "0001-01-01T00:00:00Z") | ts] | max // (.updatedAt | ts)),
+    pushed: (([.statusCheckRollup[]? | .startedAt // empty | select(. != "0001-01-01T00:00:00Z") | ts] | max) // (.updatedAt | ts)),
     checks: [.statusCheckRollup[]? | (.conclusion // .state // "PENDING")],
     checked: ([.statusCheckRollup[]? | .completedAt // empty | select(. != "0001-01-01T00:00:00Z") | ts] | max // null)
   } | . + {
