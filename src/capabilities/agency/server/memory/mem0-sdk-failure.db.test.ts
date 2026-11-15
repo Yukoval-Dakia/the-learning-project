@@ -77,11 +77,11 @@ describe('actual SDK failure through Memory ingestion owner', () => {
       id,
       actor_kind: 'user',
       actor_ref: 'user:memory-test',
-      action: 'experimental:memory_failure_test',
+      action: 'experimental:copilot_user_ask',
       subject_kind: 'event',
       subject_id: id,
       payload: {
-        text: '先画树状图，再写条件概率；保留反例和未验证边界。',
+        user_message: '先画树状图，再写条件概率；保留反例和未验证边界。',
         examples: [
           { correct: true, confidence: null },
           { correct: false, condition: 'reversed' },

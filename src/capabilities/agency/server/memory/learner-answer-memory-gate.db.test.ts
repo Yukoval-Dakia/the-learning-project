@@ -172,10 +172,13 @@ describe('learner answer memory gate', () => {
       buildMemoryEventIngestHandler(db, boundary.boss, { memoryClient: boundary.client });
     const answerIds = answers.map((row) => row.id);
     const rejectedIds = [...answerIds, ...excludedIds];
+    const purposeRestrictedIds = new Set(['crisis', 'restricted']);
+    const pendingRejectedIds = rejectedIds.filter((id) => !purposeRestrictedIds.has(id));
 
-    // Outbox poll: every pending row is enqueued, but the handler admits only the ask.
+    // writeEvent stamps purpose-restricted sources before the outbox. Forced
+    // delivery and recovery below must still reject those same sources.
     await buildMemoryIngestOutboxPollHandler(db, boundary.boss)([]);
-    expect(boundary.sent.slice().sort()).toEqual([...rejectedIds, askId].sort());
+    expect(boundary.sent.slice().sort()).toEqual([...pendingRejectedIds, askId].sort());
     for (const id of rejectedIds) await ingest()([{ data: { event_id: id } }]);
     expect(boundary.add).not.toHaveBeenCalled();
     await ingest()([{ data: { event_id: askId } }]);

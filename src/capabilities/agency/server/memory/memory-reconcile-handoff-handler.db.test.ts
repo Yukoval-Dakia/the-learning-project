@@ -24,10 +24,10 @@ function sourceEvent(id: string): MemoryEventInput {
   return {
     id,
     actor_kind: 'user',
-    action: 'experimental:recovery_test_source',
+    action: 'experimental:copilot_user_ask',
     subject_kind: 'question',
     subject_id: 'question-1',
-    payload: { answer_md: 'A', answer_image_refs: [] },
+    payload: { user_message: '我更容易理解逐步解释。' },
     affected_scopes: [],
     created_at: new Date(1),
     kind: 'event',

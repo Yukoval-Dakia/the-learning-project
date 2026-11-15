@@ -31,13 +31,14 @@ async function stalledSource(sourceId = 'stalled-owner-event', actor: 'user' | '
     id: sourceId,
     actor_kind: actor,
     actor_ref: 'owner',
-    action: 'experimental:recovery_test_source',
+    action: 'experimental:copilot_user_ask',
     subject_kind: 'query',
     subject_id: 'query-recovery',
     outcome: 'success',
     ingest_at: new Date(),
     affected_scopes: ['topic:algebra', 'preference:learning'],
     payload: {
+      user_message: 'Review the distinction between a necessary and a sufficient condition.',
       tool_name: 'search',
       input: {
         query: 'Review the distinction between a necessary and a sufficient condition.',
