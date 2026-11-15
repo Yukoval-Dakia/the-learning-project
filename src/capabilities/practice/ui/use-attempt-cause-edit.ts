@@ -34,7 +34,7 @@ export function useAttemptCauseEdit(
           setTarget({
             questionId,
             attemptEventId,
-            current: response.current,
+            current: response.current ? { ...response.current, note: response.current.note } : null,
           });
         },
         () => {

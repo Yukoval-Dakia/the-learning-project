@@ -8,7 +8,7 @@ import {
   setAttemptCause,
 } from './practice-api';
 
-type CurrentCause = NonNullable<AttemptCauseOptions['current']>;
+type CurrentCause = NonNullable<LearnerCauseSeed['current']>;
 type CauseOption = AttemptCauseOptions['options'][number];
 type SavedCause = AttemptCauseWrite['cause'];
 
@@ -39,8 +39,10 @@ interface Entry {
   options: readonly CauseOption[];
   current: CurrentCause | null;
   selected: string | null;
+  selectionEdited: boolean;
   note: string;
   noteKnown: boolean;
+  noteEdited: boolean;
   reason?: string;
   notice?: Notice;
   noticeTone?: CauseEditor['noticeTone'];
@@ -52,8 +54,10 @@ function initialState(target: LearnerCauseSeed): Entry {
     options: [],
     current: target.current ?? null,
     selected: target.current?.primary_category ?? null,
+    selectionEdited: false,
     note: target.current?.note ?? '',
     noteKnown: target.current?.note !== undefined,
+    noteEdited: false,
   };
 }
 
@@ -131,10 +135,7 @@ export function useLearnerCause(
       (response) => {
         setEntries((previous) => {
           const prior = previous[id] ?? initialState(target);
-          const selected =
-            prior.selected && response.options.some((option) => option.id === prior.selected)
-              ? prior.selected
-              : (response.current?.primary_category ?? null);
+          const noteKnown = response.current === null || response.current?.note !== undefined;
           return {
             ...previous,
             [id]: {
@@ -142,8 +143,11 @@ export function useLearnerCause(
               status: 'ready',
               options: response.options,
               current: response.current,
-              selected,
-              noteKnown: response.current !== null && prior.noteKnown,
+              selected: prior.selectionEdited
+                ? prior.selected
+                : (response.current?.primary_category ?? null),
+              note: prior.noteEdited || !noteKnown ? prior.note : (response.current?.note ?? ''),
+              noteKnown: prior.noteKnown || noteKnown,
               reason: response.options.length > 0 ? undefined : '这个科目现在还没有可选的错因。',
             },
           };
@@ -203,10 +207,13 @@ export function useLearnerCause(
                 source: response.cause.source,
                 primary_category: response.cause.primary_category,
                 label: response.cause.label,
+                note: response.cause.user_notes,
               },
               selected: response.cause.primary_category,
+              selectionEdited: false,
               note: response.cause.user_notes ?? '',
               noteKnown: true,
+              noteEdited: false,
               notice: {
                 title: '已经记下这个原因。',
                 detail: '之后会按你选的这个原因帮你安排相关练习。',
@@ -306,6 +313,7 @@ export function useLearnerCause(
               ...prior,
               status: prior.status === 'failed' ? 'ready' : prior.status,
               selected: optionId,
+              selectionEdited: true,
             },
           };
         });
@@ -318,6 +326,7 @@ export function useLearnerCause(
             [id]: {
               ...prior,
               note: value,
+              noteEdited: true,
             },
           };
         });
