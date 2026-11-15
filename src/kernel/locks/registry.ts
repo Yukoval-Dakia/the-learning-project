@@ -71,6 +71,11 @@ export const advisoryLockRegistry = {
     encoding: 'hashtext',
     key: 'copilot:session-selection',
   },
+  copilotSessionQueue: {
+    family: 'copilot:session-queue',
+    encoding: 'hashtext-pair',
+    namespace: 'copilot-session-queue',
+  },
   contractEpochTransition: {
     family: 'contract-epoch-transition',
     encoding: 'hashtext',

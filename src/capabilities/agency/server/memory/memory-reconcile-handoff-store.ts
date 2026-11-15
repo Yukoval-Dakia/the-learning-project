@@ -3,11 +3,9 @@ import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import {
-  lockEventDerivationSources,
-  readEventDerivationPolicy,
-} from '@/kernel/events/derivation-policy';
-import { lockMemoryIngestSource } from '@/kernel/locks/memory-locks';
+import { lockEventDerivationSources } from '@/kernel/events/derivation-policy';
+import { lockMemoryIngestSource, lockMemorySessionDeletion } from '@/kernel/locks/memory-locks';
+import { type MemoryIngestAdmission, readMemorySourceAdmission } from './learner-evidence';
 import {
   MEMORY_RECONCILE_HANDOFF_ACTION,
   MemoryReconcileHandoffError,
@@ -85,11 +83,18 @@ export async function claimMemoryIngest(
   sourceId: string,
 ): Promise<'winner' | 'started' | 'completed'> {
   return db.transaction(async (tx) => {
-    await lockMemoryIngestSource(tx, sourceId);
     const completedId = memoryReconcileHandoffEventId('ingest_completed', sourceId);
+    const sourceRows = await tx
+      .select({ sessionId: event.session_id })
+      .from(event)
+      .where(eq(event.id, sourceId))
+      .limit(1);
+    await lockMemorySessionDeletion(tx, sourceRows[0]?.sessionId ?? null);
+    await lockMemoryIngestSource(tx, sourceId);
     await lockEventDerivationSources(tx, sourceId);
-    if ((await readEventDerivationPolicy(tx, sourceId)) !== 'allow')
-      throw new MemoryReconcileHandoffError('source purpose withdrawn before add');
+    const admission = await readMemorySourceAdmission(tx, sourceId);
+    if (admission.kind === 'excluded')
+      throw new MemoryReconcileHandoffError(`source excluded before add ${sourceId}`);
     const startedId = memoryReconcileHandoffEventId('add_started', sourceId);
     const rows = await tx
       .select({ id: event.id, payload: event.payload })
@@ -117,6 +122,8 @@ export async function claimMemoryIngest(
     return 'winner';
   });
 }
+
+export type { MemoryIngestAdmission };
 export async function readIngestCompleted(
   db: Db | Tx,
   sourceId: string,

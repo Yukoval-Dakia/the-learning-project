@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { event, question } from '@/db/schema';
+import { event, learning_session, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { MemoryClient, MemoryEventInput } from '@/server/ai/mem0/client';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -24,10 +24,10 @@ function sourceEvent(id: string): MemoryEventInput {
   return {
     id,
     actor_kind: 'user',
-    action: 'experimental:recovery_test_source',
+    action: 'experimental:copilot_user_ask',
     subject_kind: 'question',
     subject_id: 'question-1',
-    payload: { answer_md: 'A', answer_image_refs: [] },
+    payload: { user_message: '我更容易理解逐步解释。' },
     affected_scopes: [],
     created_at: new Date(1),
     kind: 'event',
@@ -46,6 +46,15 @@ describe('memory ingest concurrency', () => {
   it('allows only one generic handler through the provider boundary after concurrent lookup misses', async () => {
     const db = testDb();
     const sourceId = 'generic-concurrent';
+    await db.insert(learning_session).values({
+      id: 'session-generic-concurrent',
+      type: 'conversation',
+      status: 'active',
+      started_at: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
     await db.insert(question).values({
       id: 'question-1',
       kind: 'choice',
@@ -56,6 +65,7 @@ describe('memory ingest concurrency', () => {
     });
     await writeEvent(db, {
       ...sourceEvent(sourceId),
+      session_id: 'session-generic-concurrent',
       actor_ref: 'self',
       outcome: 'success',
       ingest_at: new Date(),
@@ -90,15 +100,19 @@ describe('memory ingest concurrency', () => {
       options ? deterministicSendId(options) : null,
     );
     const dependencies = {
-      loadEvent: async () => sourceEvent(sourceId),
+      loadEvent: async () => ({
+        ...sourceEvent(sourceId),
+        session_id: 'session-generic-concurrent',
+      }),
       memoryClient: memoryClientMock({ addEventMemoryOnce, findByEventId }),
     };
     const firstHandler = buildMemoryEventIngestHandler(db, { send }, dependencies);
     const secondHandler = buildMemoryEventIngestHandler(db, { send }, dependencies);
+    const originalClaim = secondHandler;
 
     const settled = await Promise.allSettled([
       firstHandler([ingestJob(sourceId)]),
-      secondHandler([ingestJob(sourceId)]),
+      originalClaim([ingestJob(sourceId)]),
     ]);
 
     expect(settled.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);

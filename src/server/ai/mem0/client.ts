@@ -12,6 +12,7 @@ import {
   executeMem0OpaqueOperation,
 } from '@/server/ai/provider-attempt-runtime';
 import { DASHSCOPE_EMBED_MODEL_ID } from '@/server/ai/providers';
+import { LEARNING_MEMORY_INSTRUCTIONS, projectEventMemory } from './event-memory-projection';
 import { type Env, memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
 
 // The global product pin selects the extraction LLM; embeddings keep their own
@@ -22,8 +23,8 @@ const DEFAULT_EMBEDDING_DIMS = 1024; // embedder and vectorStore must agree
 const DEFAULT_HISTORY_DB_PATH = '/var/lib/mem0/history.db'; // absolute; prod compose mounts it, dev overrides
 
 /**
- * One mem0 SQLite memory_history tombstone. A DELETE carries the deleted text in
- * previous_value and is_deleted = 1: the backup undo face for pre-snapshot rows.
+ * A legacy Mem0 SQLite tombstone: previous_value carries deleted text and
+ * is_deleted is 1. Disabling SDK history does not erase these persisted rows.
  */
 export type MemoryHistoryEntry = {
   memory_id: string;
@@ -49,9 +50,9 @@ export type Mem0Like = {
   getAll(config: { topK?: number; filters: Record<string, unknown> }): Promise<{
     results: (MemoryItem & { user_id?: string })[];
   }>;
-  // Official delete writes a history tombstone before the vector DELETE.
+  // Official SDK delete; tombstones depend on the runtime's history setting.
   delete(memoryId: string): Promise<{ message: string }>;
-  // Memory history rows back the undo face.
+  // SDK history entries depend on the runtime's history setting.
   history(memoryId: string): Promise<MemoryHistoryEntry[]>;
   // Returns null for an absent row instead of throwing; hardDelete uses it to
   // verify absence after a failed delete.
@@ -104,9 +105,9 @@ export type MemoryClient = {
     providerOperation: Mem0OpaqueOperationContext,
     beforeProviderAdd: BeforeMemoryProviderAdd,
   ): Promise<SearchResult>;
-  // Idempotent hard delete through official delete(), which tombstones first.
+  // Idempotent hard delete through the official SDK delete operation.
   hardDelete(memoryId: string): Promise<void>;
-  // Undo face reads the DELETE tombstone.
+  // The history-disabled runtime returns no entries; legacy files are retained.
   history(memoryId: string): Promise<MemoryHistoryEntry[]>;
   // Verbatim restore: infer:false stores the text as-is without re-running the
   // extraction LLM (which would paraphrase). Produces a new UUID.
@@ -181,6 +182,7 @@ export function createMem0Config(env: Env = process.env): MemoryConfig {
   assertModelEndpointHostAllowed(embeddingBaseUrl, 'MEM0_EMBEDDING_BASE_URL (memory embedder)');
 
   return {
+    customInstructions: LEARNING_MEMORY_INSTRUCTIONS,
     embedder: {
       provider: 'openai', // OpenAI-compatible adapter: baseURL points at DashScope
       config: {
@@ -220,11 +222,10 @@ export function createMem0Config(env: Env = process.env): MemoryConfig {
           : {}),
       },
     },
-    // History stays enabled because it makes the extraction prompt's "Last k
-    // Messages" non-empty (only SQLiteManager implements it). Cost: the native
-    // better-sqlite3 dependency. Only add/update/delete write SQLite. App and worker
-    // use separate historyDbPath values to avoid cross-container write contention.
-    disableHistory: false,
+    // SDK message history has no source/purpose lineage and bypasses withdrawal.
+    // This does not erase existing SQLite volumes: their purge still requires
+    // an explicit owner/operations decision.
+    disableHistory: true,
     historyDbPath: optionalEnv(env, 'MEM0_HISTORY_DB_PATH', DEFAULT_HISTORY_DB_PATH),
   };
 }
@@ -291,16 +292,10 @@ function redactQuestionEvidenceForMemory(action: string, payload: unknown): unkn
 }
 
 function eventToText(input: MemoryEventInput): string {
-  return JSON.stringify({
-    id: input.id,
-    action: input.action,
-    subject_kind: input.subject_kind,
-    subject_id: input.subject_id,
-    // Attempt snapshots contain gold references for later evidence replay. They
-    // are system truth, not learner-authored facts, and must never enter Mem0's
-    // infer:true extraction prompt.
-    payload: redactQuestionEvidenceForMemory(input.action, input.payload),
-  });
+  return projectEventMemory(
+    input.action,
+    redactQuestionEvidenceForMemory(input.action, input.payload),
+  );
 }
 
 // One process shares one SDK instance per database and model. Each `new Memory()`

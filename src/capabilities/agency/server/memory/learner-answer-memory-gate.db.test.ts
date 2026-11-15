@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { event, provider_attempt, question } from '@/db/schema';
+import { event, learning_session, provider_attempt, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { type Mem0Like, createMemoryClient } from '@/server/ai/mem0/client';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -90,11 +90,20 @@ describe('learner answer memory gate', () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  // @invariant security: learner answer events never reach Mem0 — the outbox poll, the hourly recovery floor and operator replay all refuse to push answer text to the provider, while a copilot ask still adds once with only its whitelisted fields
-  // @fails-if let any path skip the learner-answer gate, widen the gate to non-answer events, or let the ask whitelist leak attachment fields; the zero-add counts, rejected grants and attachment-free payload assertions fail
-  it('keeps learner answers out of Mem0 on poll, recovery and operator replay while the copilot ask adds once stripped of attachments', async () => {
+  // @invariant security: only purpose-allowed learner words reach Mem0 inference; answers, restricted asks, other actors, empty messages and unapproved event types cannot contribute, including through recovery
+  // @fails-if an excluded input reaches the provider or an admitted ask includes envelope, answer, reference or attachment content
+  it('admits only learner ask text and keeps excluded evidence out on poll, recovery and operator replay', async () => {
     const db = testDb();
     const boundary = providerBoundary();
+    await db.insert(learning_session).values({
+      id: 'session-mem-1',
+      type: 'conversation',
+      status: 'active',
+      started_at: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
     // answer events' subject feeds the derivation lineage — the row must exist and be clean
     await db.insert(question).values({
       id: 'q-mem-gate',
@@ -105,10 +114,17 @@ describe('learner answer memory gate', () => {
       created_at: new Date(),
       updated_at: new Date(),
     });
-    const write = (id: string, action: string, payload: Record<string, unknown>, stamped = false) =>
+    const write = (
+      id: string,
+      action: string,
+      payload: Record<string, unknown>,
+      stamped = false,
+      actor: 'user' | 'agent' | 'system' = 'user',
+    ) =>
       writeEvent(db, {
         id,
-        actor_kind: 'user',
+        session_id: 'session-mem-1',
+        actor_kind: actor,
         actor_ref: 'self',
         action,
         subject_kind: 'question',
@@ -123,9 +139,32 @@ describe('learner answer memory gate', () => {
       action,
     }));
     for (const row of answers) await write(row.id, row.action, answerPayload(row.action));
+    const excludedIds: string[] = [];
+    for (const [id, action, payload, actor] of [
+      ['blank', 'experimental:copilot_user_ask', { user_message: ' \n\t ' }, 'user'],
+      [
+        'crisis',
+        'experimental:copilot_user_ask',
+        { user_message: 'PRIVATE_CRISIS', derivation_policy: 'crisis' },
+        'user',
+      ],
+      [
+        'restricted',
+        'experimental:copilot_user_ask',
+        { user_message: 'PRIVATE_RESTRICTED', derivation_policy: 'answer_only' },
+        'user',
+      ],
+      ['agent', 'experimental:copilot_user_ask', { user_message: 'PRIVATE_AGENT' }, 'agent'],
+      ['system', 'experimental:copilot_user_ask', { user_message: 'PRIVATE_SYSTEM' }, 'system'],
+      ['unknown', 'experimental:historical_text', { user_message: 'PRIVATE_UNKNOWN' }, 'user'],
+    ] as const) {
+      await write(id, action, payload, false, actor);
+      excludedIds.push(id);
+    }
     const askId = 'evt-copilot-ask';
+    const learnerMessage = '  我每次考试前都特别紧张，做题会漏条件。\n';
     await write(askId, 'experimental:copilot_user_ask', {
-      user_message: '讲讲逆元怎么消元',
+      user_message: learnerMessage,
       surface: 'review_answer',
       session_id: 'session-mem-1',
       derivation_policy: 'allow',
@@ -134,32 +173,39 @@ describe('learner answer memory gate', () => {
       confirmation: {
         response_set: { entries: [{ kind: 'text', text_md: 'VERBATIM_ASK_CONFIRM' }] },
       },
+      question_snapshot: { question: { reference_md: 'PRIVATE_REFERENCE' } },
+      reasoning_trace: 'PRIVATE_REASONING',
+      discussion: { question_id: 'PRIVATE_DISCUSSION_ID', summary: 'PRIVATE_DISCUSSION' },
+      answer_image_refs: ['PRIVATE_PHOTO'],
     });
     const ingest = () =>
       buildMemoryEventIngestHandler(db, boundary.boss, { memoryClient: boundary.client });
     const answerIds = answers.map((row) => row.id);
+    const rejectedIds = [...answerIds, ...excludedIds];
+    const purposeRestrictedIds = new Set(['crisis', 'restricted']);
+    const pendingRejectedIds = rejectedIds.filter((id) => !purposeRestrictedIds.has(id));
 
-    // Outbox poll: every pending row is enqueued, but the handler admits only the ask.
+    // writeEvent stamps purpose-restricted sources before the outbox. Forced
+    // delivery and recovery below must still reject those same sources.
     await buildMemoryIngestOutboxPollHandler(db, boundary.boss)([]);
-    expect(boundary.sent.slice().sort()).toEqual([...answerIds, askId].sort());
-    for (const id of answerIds) await ingest()([{ data: { event_id: id } }]);
+    expect(boundary.sent.slice().sort()).toEqual([...pendingRejectedIds, askId].sort());
+    for (const id of rejectedIds) await ingest()([{ data: { event_id: id } }]);
     expect(boundary.add).not.toHaveBeenCalled();
     await ingest()([{ data: { event_id: askId } }]);
     expect(boundary.add).toHaveBeenCalledOnce();
     const sentText = boundary.add.mock.calls[0][0] as string;
-    const sentPayload = (JSON.parse(sentText) as { payload: Record<string, unknown> }).payload;
-    expect(sentPayload.user_message).toBe('讲讲逆元怎么消元');
-    expect(Object.keys(sentPayload).sort()).toEqual(
-      ['chip_kind', 'derivation_policy', 'session_id', 'surface', 'user_message'].sort(),
+    expect(sentText).toBe(
+      `学习者本人原话（仅作为学习记忆的来源，不代表已确认的事实）：\n${learnerMessage}`,
     );
     expect(sentText).not.toContain('VERBATIM');
+    expect(sentText).not.toContain('PRIVATE_');
 
     // Recovery floor: reopened rows are re-enqueued, yet the gate still refuses the paid add.
-    await db.update(event).set({ ingest_at: null }).where(inArray(event.id, answerIds));
+    await db.update(event).set({ ingest_at: null }).where(inArray(event.id, rejectedIds));
     boundary.sent.length = 0;
     await buildMemoryIngestOutboxRecoverHandler(db, boundary.boss)([]);
-    expect(boundary.sent.slice().sort()).toEqual(answerIds.slice().sort());
-    for (const id of answerIds) await ingest()([{ data: { event_id: id } }]);
+    expect(boundary.sent.slice().sort()).toEqual(rejectedIds.slice().sort());
+    for (const id of rejectedIds) await ingest()([{ data: { event_id: id } }]);
     expect(boundary.add).toHaveBeenCalledOnce();
     expect(await db.select().from(provider_attempt)).toHaveLength(1);
 

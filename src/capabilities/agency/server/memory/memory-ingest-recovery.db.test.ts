@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { event, provider_attempt, provider_attempt_admission } from '@/db/schema';
+import { requestCopilotConversationDeletion } from '@/capabilities/copilot/server/conversation-lifecycle';
+import { event, learning_session, provider_attempt, provider_attempt_admission } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { type Mem0Like, createMemoryClient } from '@/server/ai/mem0/client';
+import { type Mem0Like, type MemoryEventInput, createMemoryClient } from '@/server/ai/mem0/client';
 import {
   createMem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
 } from '@/server/ai/provider-attempt-runtime';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { memoryClientMock } from '../../../../../tests/helpers/memory-client-mock';
 import type { MemoryIngestReplayRequest } from './memory-ingest-recovery-contract';
 import {
   assertMemoryIngestReplayGrant,
@@ -22,22 +24,37 @@ import {
   claimMemoryIngest,
   memoryReconcileHandoffEventId,
   persistIngestCompleted,
+  readIngestCompleted,
+  writeMemoryHandoffRecord,
 } from './memory-reconcile-handoff-store';
 import { buildMemoryEventIngestHandler } from './triggers';
 
 async function stalledSource(sourceId = 'stalled-owner-event', actor: 'user' | 'agent' = 'user') {
   const db = testDb();
+  const sessionId = `session-${sourceId}`;
+  await db.insert(learning_session).values({
+    id: sessionId,
+    type: 'conversation',
+    entrypoint: 'copilot',
+    status: 'active',
+    started_at: new Date(),
+    created_at: new Date(),
+    updated_at: new Date(),
+    version: 0,
+  });
   await writeEvent(db, {
     id: sourceId,
+    session_id: sessionId,
     actor_kind: actor,
     actor_ref: 'owner',
-    action: 'experimental:recovery_test_source',
+    action: 'experimental:copilot_user_ask',
     subject_kind: 'query',
     subject_id: 'query-recovery',
     outcome: 'success',
     ingest_at: new Date(),
     affected_scopes: ['topic:algebra', 'preference:learning'],
     payload: {
+      user_message: 'Review the distinction between a necessary and a sufficient condition.',
       tool_name: 'search',
       input: {
         query: 'Review the distinction between a necessary and a sufficient condition.',
@@ -45,7 +62,18 @@ async function stalledSource(sourceId = 'stalled-owner-event', actor: 'user' | '
       },
     },
   });
-  await claimMemoryIngest(db, sourceId);
+  if (actor === 'user') {
+    await claimMemoryIngest(db, sourceId);
+  } else {
+    // Existing excluded-source records must remain inspectable without admitting a new add.
+    await db.transaction((tx) =>
+      writeMemoryHandoffRecord(tx, sourceId, 'add_started', {
+        version: 1,
+        handoff_kind: 'add_started',
+        source_event_id: sourceId,
+      }),
+    );
+  }
   const markerId = memoryReconcileHandoffEventId('add_started', sourceId);
   await db
     .update(event)
@@ -61,6 +89,22 @@ async function stalledSource(sourceId = 'stalled-owner-event', actor: 'user' | '
     allowPaidReplay: true,
   };
   return request;
+}
+
+function sourceInput(sourceId: string): MemoryEventInput {
+  return {
+    id: sourceId,
+    actor_kind: 'user',
+    action: 'experimental:copilot_user_ask',
+    subject_kind: 'query',
+    subject_id: 'query-recovery',
+    payload: {
+      user_message: 'The loaded learner text must not leave after deletion.',
+    },
+    affected_scopes: ['topic:algebra'],
+    created_at: new Date(),
+    kind: 'event',
+  };
 }
 
 function providerBoundary() {
@@ -141,8 +185,8 @@ describe('explicit single-event memory ingest recovery', () => {
     ).rejects.toThrow(/conflicts/);
   });
 
-  // @invariant concurrency: only one current replay grant can authorize a user source
-  // @fails-if stale concurrent authorization wins or completed/non-user sources receive a replay grant
+  // @invariant concurrency: only one current replay grant can authorize an admitted learner source
+  // @fails-if stale authorization wins or excluded historical, completed or non-user sources receive or execute a replay grant
   it('rejects stale concurrent authorizations and non-user or completed sources', async () => {
     const request = await stalledSource();
     const results = await Promise.allSettled([
@@ -151,9 +195,38 @@ describe('explicit single-event memory ingest recovery', () => {
     ]);
     expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
     const agent = await stalledSource('agent-output', 'agent');
-    await expect(authorizeMemoryIngestReplay(testDb(), agent)).rejects.toThrow(
-      /existing user event/,
+    await expect(authorizeMemoryIngestReplay(testDb(), agent)).rejects.toThrow(/source excluded/);
+    await expect(claimMemoryIngest(testDb(), agent.sourceEventId)).rejects.toThrow(
+      /source excluded/,
     );
+    const historical = await stalledSource('historical-non-ask');
+    const historicalGrant = await authorizeMemoryIngestReplay(testDb(), historical);
+    await testDb()
+      .update(event)
+      .set({ action: 'experimental:legacy_memory_source' })
+      .where(eq(event.id, historical.sourceEventId));
+    expect(
+      (await listStalledMemoryIngests(testDb())).candidates.find(
+        (row) => row.sourceEventId === historical.sourceEventId,
+      ),
+    ).toMatchObject({ admission: 'excluded', replayAllowed: false });
+    await expect(
+      authorizeMemoryIngestReplay(testDb(), {
+        ...historical,
+        requestId: randomUUID(),
+        expectedFenceId: memoryIngestReplayGrantId(historicalGrant),
+      }),
+    ).rejects.toThrow(/source excluded/);
+    const boundary = providerBoundary();
+    await expect(
+      buildMemoryEventIngestHandler(testDb(), boundary.boss, {
+        memoryClient: boundary.client,
+        replayGrant: historicalGrant,
+      })([{ data: { event_id: historical.sourceEventId } }]),
+    ).rejects.toThrow(/source excluded/);
+    expect(boundary.getAll).not.toHaveBeenCalled();
+    expect(boundary.add).not.toHaveBeenCalled();
+    expect(await readIngestCompleted(testDb(), historical.sourceEventId)).toBeNull();
     const completed = await stalledSource('already-completed');
     await persistIngestCompleted(testDb(), {
       sourceEventId: completed.sourceEventId,
@@ -164,6 +237,47 @@ describe('explicit single-event memory ingest recovery', () => {
     expect(
       (await listStalledMemoryIngests(testDb())).candidates.map((row) => row.sourceEventId),
     ).not.toContain(completed.sourceEventId);
+  });
+
+  // @invariant security: deletion revokes recovery eligibility and blocks a loaded source before provider start
+  // @fails-if deleted or deletion-requested sessions remain replayable or loaded text crosses the provider claim
+  it('rejects deleted sources in inventory and at the provider-start claim', async () => {
+    const request = await stalledSource('deleted-session-source');
+    const sessionId = `session-${request.sourceEventId}`;
+    expect(await requestCopilotConversationDeletion(testDb(), sessionId)).toMatchObject({
+      status: 'deleted',
+    });
+    expect(
+      (await listStalledMemoryIngests(testDb())).candidates.find(
+        (row) => row.sourceEventId === request.sourceEventId,
+      ),
+    ).toMatchObject({ admission: 'excluded', replayAllowed: false });
+    await expect(authorizeMemoryIngestReplay(testDb(), request)).rejects.toThrow(/source excluded/);
+
+    const loadRequest = await stalledSource('loaded-race-source');
+    const loadSessionId = `session-${loadRequest.sourceEventId}`;
+    const providerSend = vi.fn();
+    const addEventMemoryOnce = vi.fn(
+      async (_input, _providerOperation, beforeProviderAdd: () => Promise<void>) => {
+        await requestCopilotConversationDeletion(testDb(), loadSessionId);
+        await beforeProviderAdd();
+        providerSend();
+        return { result: { results: [] }, resolution: 'provider_result' as const };
+      },
+    );
+    await expect(
+      buildMemoryEventIngestHandler(
+        testDb(),
+        { send: vi.fn(), getJobById: vi.fn() },
+        {
+          loadEvent: async () => sourceInput(loadRequest.sourceEventId),
+          memoryClient: memoryClientMock({ addEventMemoryOnce }),
+        },
+      )([{ data: { event_id: loadRequest.sourceEventId } }]),
+    ).rejects.toThrow(/source excluded/);
+    expect(providerSend).not.toHaveBeenCalled();
+    expect(addEventMemoryOnce).toHaveBeenCalledOnce();
+    expect(await readIngestCompleted(testDb(), loadRequest.sourceEventId)).toBeNull();
   });
 
   // @invariant concurrency: recent markers and invalid replay grants cannot cross the external memory boundary
@@ -307,6 +421,56 @@ describe('explicit single-event memory ingest recovery', () => {
         terminal_status: 'succeeded',
       }),
     ]);
+  });
+
+  // @invariant security: sessionless owner-edited verbatim enters the provider only through its existing claim contract, while sessionless inferred asks remain excluded
+  // @fails-if sessionless edits are rejected or sessionless inferred asks reach any provider lookup/add
+  it('keeps a sessionless owner-edited conjecture verbatim while rejecting sessionless asks', async () => {
+    const sourceId = 'sessionless-owner-edit';
+    await testDb()
+      .update(event)
+      .set({
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: 'conjecture-sessionless',
+        session_id: null,
+        payload: {
+          rating: 'accept',
+          conjecture_id: 'conjecture-sessionless',
+          corrected_by_owner: true,
+          corrected_claim_md: 'Preserve this corrected claim verbatim.',
+        },
+      })
+      .where(eq(event.id, (await stalledSource(sourceId)).sourceEventId));
+    const boundary = providerBoundary();
+    await buildMemoryEventIngestHandler(testDb(), boundary.boss, {
+      memoryClient: memoryClientMock({
+        addVerbatimOnce: vi.fn(async (_text, _metadata, _projectionKey, _operation, before) => {
+          await before();
+          return { results: [] };
+        }),
+      }),
+    })([{ data: { event_id: sourceId } }]);
+    expect(boundary.add).not.toHaveBeenCalled();
+
+    const askId = 'sessionless-inferred-ask';
+    await testDb()
+      .update(event)
+      .set({
+        action: 'experimental:copilot_user_ask',
+        subject_kind: 'query',
+        subject_id: 'query-sessionless',
+        session_id: null,
+        payload: { user_message: 'This inferred ask must not be admitted.' },
+      })
+      .where(eq(event.id, (await stalledSource(askId)).sourceEventId));
+    await expect(
+      buildMemoryEventIngestHandler(testDb(), boundary.boss, {
+        memoryClient: boundary.client,
+      })([{ data: { event_id: askId } }]),
+    ).resolves.toBeUndefined();
+    expect(boundary.add).not.toHaveBeenCalled();
+    expect(boundary.getAll).not.toHaveBeenCalled();
   });
 
   // @invariant concurrency: live provider reservations prevent replay while completed sources remain excluded

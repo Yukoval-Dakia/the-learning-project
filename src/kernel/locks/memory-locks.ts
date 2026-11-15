@@ -3,7 +3,11 @@
 import { sql } from 'drizzle-orm';
 
 import type { Tx } from '@/db/client';
-import { advisoryLockRegistry, deriveHashtextExtendedLockKey } from '@/kernel/locks/registry';
+import {
+  advisoryLockRegistry,
+  deriveHashtextExtendedLockKey,
+  deriveHashtextPairLockNamespace,
+} from '@/kernel/locks/registry';
 import { PURPOSE_BRIEF_LOCK } from '@/kernel/read-models/purpose-change';
 
 /** Serializes ingest markers, provider-start reservations and replay grants for one source event. */
@@ -20,6 +24,15 @@ export async function lockMemoryOperatorRequest(tx: Tx, requestId: string): Prom
     requestId,
   });
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+}
+
+/** Reuses the session deletion writer's exact two-key queue lock. */
+export async function lockMemorySessionDeletion(tx: Tx, sessionId: string | null): Promise<void> {
+  if (sessionId === null) return;
+  const namespace = deriveHashtextPairLockNamespace(advisoryLockRegistry.copilotSessionQueue);
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext(${namespace}), hashtext(${sessionId}))`,
+  );
 }
 
 /** Serializes purpose-change brief cleanup for one operation and brief scope. */

@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { type Server, createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { Memory } from 'mem0ai/oss';
 import type { Job } from 'pg-boss';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installModelEndpointHostAllowlist } from '@/core/config/model-endpoint-allowlist';
-import { provider_attempt } from '@/db/schema';
+import { event, learning_session, provider_attempt } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { createMemoryClient } from '@/server/ai/mem0/client';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { readIngestCompleted } from './memory-reconcile-handoff-store';
@@ -15,9 +19,14 @@ import { buildMemoryEventIngestHandler } from './triggers';
 vi.hoisted(() => vi.stubEnv('MEM0_TELEMETRY', 'false'));
 let server: Server;
 let endpoint: string;
+let historyDirectory: string;
+let historyPath: string;
 let failExtraction = true;
 let calls = 0;
+const inferenceRequests: string[] = [];
 beforeAll(async () => {
+  historyDirectory = await mkdtemp(join(tmpdir(), 'mem0-source-history-'));
+  historyPath = join(historyDirectory, 'history.db');
   server = createServer(async (request, response) => {
     let raw = '';
     for await (const chunk of request) raw += chunk;
@@ -36,6 +45,7 @@ beforeAll(async () => {
       );
       return;
     }
+    inferenceRequests.push(raw);
     if (failExtraction) {
       response
         .writeHead(400)
@@ -61,6 +71,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await resetDb();
   calls = 0;
+  inferenceRequests.length = 0;
   failExtraction = true;
   vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
 });
@@ -68,20 +79,35 @@ afterEach(() => vi.unstubAllEnvs());
 afterAll(async () => {
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  await rm(historyDirectory, { recursive: true, force: true });
 });
 
 describe('actual SDK failure through Memory ingestion owner', () => {
-  async function setup() {
+  async function setup(
+    userMessage = '先画树状图，再写条件概率；保留反例和未验证边界。',
+    legacyHistory = false,
+  ) {
     const id = randomUUID();
+    const sessionId = randomUUID();
+    await testDb().insert(learning_session).values({
+      id: sessionId,
+      type: 'conversation',
+      status: 'active',
+      started_at: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
     await writeEvent(testDb(), {
       id,
+      session_id: sessionId,
       actor_kind: 'user',
       actor_ref: 'user:memory-test',
-      action: 'experimental:memory_failure_test',
+      action: 'experimental:copilot_user_ask',
       subject_kind: 'event',
       subject_id: id,
       payload: {
-        text: '先画树状图，再写条件概率；保留反例和未验证边界。',
+        user_message: userMessage,
         examples: [
           { correct: true, confidence: null },
           { correct: false, condition: 'reversed' },
@@ -102,7 +128,8 @@ describe('actual SDK failure through Memory ingestion owner', () => {
         new Memory({
           ...config,
           vectorStore: { provider: 'memory', config: { dimension: 4, dbPath: ':memory:' } },
-          disableHistory: true,
+          historyDbPath: historyPath,
+          ...(legacyHistory ? { disableHistory: false } : {}),
         }),
     });
     const send = vi.fn(async () => null);
@@ -122,9 +149,12 @@ describe('actual SDK failure through Memory ingestion owner', () => {
     };
     return { id, handler, job, send };
   }
+  // @invariant security: withdrawn learner text in existing SQLite history never reaches a later extraction request, while empty extraction remains complete and is not repurchased
+  // @fails-if current SDK config reloads persisted history or an empty result is retried as new paid work
   it('preserves legitimate empty extraction and replays its completion without a new call', async () => {
     failExtraction = false;
-    const { id, handler, job, send } = await setup();
+    const withdrawnText = 'WITHDRAWN_HISTORY_A：我习惯先画树状图。';
+    const { id, handler, job, send } = await setup(withdrawnText, true);
     await handler([job]);
     expect(await readIngestCompleted(testDb(), id)).toMatchObject({
       memory_count: 0,
@@ -140,5 +170,17 @@ describe('actual SDK failure through Memory ingestion owner', () => {
       .where(eq(provider_attempt.lane_id, 'mem0.event-memory'));
     expect(attempts).toHaveLength(1);
     expect(attempts[0].terminal_status).toBe('succeeded');
+
+    expect(inferenceRequests.at(-1)).toContain(withdrawnText);
+    await testDb()
+      .update(event)
+      .set({ payload: { user_message: withdrawnText, derivation_policy: 'answer_only' } })
+      .where(eq(event.id, id));
+    expect(await readEventDerivationPolicy(testDb(), id)).toBe('answer_only');
+    const currentText = 'CURRENT_LEARNER_B：我偏好分步解释。';
+    const next = await setup(currentText);
+    await next.handler([next.job]);
+    expect(inferenceRequests.at(-1)).toContain(currentText);
+    expect(inferenceRequests.at(-1)).not.toContain(withdrawnText);
   });
 });

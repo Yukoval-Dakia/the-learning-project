@@ -35,11 +35,18 @@ async function main(): Promise<void> {
       await buildMemoryEventIngestHandler(db, boss, { replayGrant: grant })([
         { data: { event_id: command.request.sourceEventId } },
       ]);
+      const { readIngestCompleted } = await import(
+        '../src/capabilities/agency/server/memory/memory-reconcile-handoff-store'
+      );
+      const completed = await readIngestCompleted(db, command.request.sourceEventId);
+      if (!completed) throw new Error('memory ingest recovery did not seal completion');
       console.log(
         JSON.stringify({
           sourceEventId: command.request.sourceEventId,
           grantId: memoryIngestReplayGrantId(grant),
           status: 'completed',
+          resolution: completed.resolution,
+          memoryCount: completed.memory_count,
         }),
       );
     } finally {
