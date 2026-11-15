@@ -104,9 +104,10 @@ export async function handleSettlementRerankDelivery(
         eq(assessment_issuance.issuance_id, assessment_submission.issuance_id),
       )
       .where(eq(assessment_submission.submission_id, member.inputs.submissionId));
-    if (!binding?.issuanceId.startsWith('iss_stream_'))
+    const issuanceId = binding?.issuanceId;
+    if (!issuanceId?.startsWith('iss_stream_'))
       return finish({ status: 'skipped', reason: 'settlement is not stream-issued' });
-    const streamItemId = binding.issuanceId.slice('iss_stream_'.length);
+    const streamItemId = issuanceId.slice('iss_stream_'.length);
     const [attempt] = await tx
       .select()
       .from(event)
@@ -120,7 +121,7 @@ export async function handleSettlementRerankDelivery(
       .select()
       .from(practice_stream_item)
       .where(eq(practice_stream_item.id, streamItemId));
-    if (!slot || slot.item_kind !== 'question' || slot.ref_id !== attempt.subject_id)
+    if (slot?.item_kind !== 'question' || slot.ref_id !== attempt.subject_id)
       return finish({ status: 'skipped', reason: 'issued stream row no longer exists' });
     await lockPracticeStreamPartition(tx, slot.date, slot.session_id);
     const [current] = await tx
