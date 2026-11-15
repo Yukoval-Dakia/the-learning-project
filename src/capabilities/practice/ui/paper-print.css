@@ -1,0 +1,120 @@
+.pf-paper-print {
+  display: none;
+}
+
+.pf-paper-print-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.pf-paper-print-action p {
+  max-width: 28em;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+@media print {
+  @page frozen-paper {
+    size: A4 portrait;
+    margin: 15mm;
+  }
+
+  body:has(.pf-paper-print) *:not(:has(.pf-paper-print), .pf-paper-print, .pf-paper-print *) {
+    display: none !important;
+  }
+
+  html:has(.pf-paper-print),
+  body:has(.pf-paper-print),
+  body *:has(.pf-paper-print) {
+    display: block !important;
+    position: static !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    max-width: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+
+  .pf-paper-print {
+    display: block;
+    page: frozen-paper;
+    color: #111;
+    font-family: var(--font-sans, sans-serif);
+    font-size: 11pt;
+    line-height: 1.7;
+  }
+
+  .pf-paper-print h1 {
+    font-size: 18pt;
+  }
+
+  .pf-paper-print h2 {
+    font-size: 12pt;
+    break-after: avoid;
+  }
+
+  .pf-paper-print-question + .pf-paper-print-question {
+    break-before: page;
+  }
+
+  .pf-paper-print-section + .pf-paper-print-section {
+    break-before: page;
+  }
+
+  .pf-paper-print :is(.un-blk-opts, .un-blk-blank, .rs-slotfield, figure, table, .katex-display) {
+    break-inside: avoid;
+  }
+
+  .pf-paper-print :is(.rs-fig-zoom, .rs-attach-add, input[type="file"], .un-blk-head) {
+    display: none;
+  }
+
+  body:has(.pf-paper-print) .pf-paper-print button {
+    display: inline-flex !important;
+    opacity: 1;
+  }
+
+  .pf-paper-print [data-mode="disabled"] {
+    opacity: 1;
+  }
+
+  .pf-paper-print :is(input:not([type="file"]), textarea) {
+    color: #111;
+    background: #fff;
+    border: 1px solid #777;
+    opacity: 1;
+  }
+
+  .pf-paper-print textarea {
+    min-height: 35mm;
+  }
+
+  .pf-paper-print-match {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 30mm;
+  }
+
+  .pf-paper-print-writing {
+    min-height: 20mm;
+    border-bottom: 1px solid #777;
+  }
+
+  .pf-paper-print :is(input, textarea)::placeholder {
+    color: transparent;
+  }
+
+  .pf-paper-print img {
+    max-width: 100%;
+    max-height: 220mm;
+    object-fit: contain;
+  }
+}
