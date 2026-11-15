@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { PaperTaskRef } from '@/capabilities/practice/public';
 import type { TeachingBrief } from '@/capabilities/shell/server/teaching-brief';
 import { ActivityRef } from '@/core/schema/activity';
 import { CauseCategory } from '@/core/schema/cause';
@@ -347,6 +348,14 @@ export const WorkbenchSummaryResponseSchema = z.object({
   active_sessions: z.array(
     z.object({
       id: z.string(),
+      paper_id: z.string().nullable(),
+      task_ref: z
+        .object({
+          kind: z.literal('paper_review'),
+          session_id: z.string().min(1),
+          occurrence_ref: z.string().min(1),
+        })
+        .nullable() satisfies z.ZodType<PaperTaskRef | null>,
       status: z.string(),
       summary_md: z.string().nullable(),
       started_at: z.number().int(),
