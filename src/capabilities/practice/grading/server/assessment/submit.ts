@@ -99,6 +99,20 @@ export type { SaveSubmissionRequest, SaveSubmissionResult } from '@/core/schema/
 
 import type { SaveSubmissionRequest, SaveSubmissionResult } from '@/core/schema/assessment';
 
+/**
+ * 一条已接收提交，加上它在 effective head 上当前生效的 evaluation。
+ * head 按 submission 绑定；行不存在或尚未激活时 effective_evaluation_id 为 null。
+ */
+export interface AcceptedSubmissionState {
+  submission_id: SubmissionIdT;
+  evaluation_group_id: EvaluationGroupIdT;
+  submitted_at: string;
+  idempotency_key: string;
+  response_set: ResponseSetT;
+  group_evidence: GroupEvidenceT[];
+  effective_evaluation_id: string | null;
+}
+
 export interface IssuanceState {
   issuance: AssessmentIssuanceT | null;
   /** 恢复快照所需的作答期公开 DTO（由冻结绑定 + pinned revision 重建）。 */
@@ -119,14 +133,7 @@ export interface IssuanceState {
     updated_at: string;
   } | null;
   /** 本 issuance 已接收的提交（恢复 UI 显示“已提交”锚点）。 */
-  submissions: Array<{
-    submission_id: SubmissionIdT;
-    evaluation_group_id: EvaluationGroupIdT;
-    submitted_at: string;
-    idempotency_key: string;
-    response_set: ResponseSetT;
-    group_evidence: GroupEvidenceT[];
-  }>;
+  submissions: AcceptedSubmissionState[];
   /** 最新已接收提交的判分进度（与 judge_run 轮询同一投影，同步/异步同形）；未判完 = 缺省。 */
   settled?: Awaited<ReturnType<typeof readNativeJudgeSettled>>;
 }
@@ -621,8 +628,8 @@ export async function saveSubmission(
 
 /**
  * 单发题状态快照：issuance（冻结坐标）+ practice_dto（冻结题面重建）+
- * admission_generation_observed（发题事件读取）+ live draft + 已接收提交列表 +
- * 最新提交的判分进度（只读永久判分证据）。
+ * admission_generation_observed（发题事件读取）+ live draft + 已接收提交列表
+ * （每条带该提交当前生效的 evaluation id）+ 最新提交的判分进度（只读永久判分证据）。
  * 恢复 promise 的真相源 —— draft=null 即“服务器没有未保存草稿”。
  */
 export async function getIssuanceState(
@@ -649,8 +656,13 @@ export async function getIssuanceState(
       idempotency_key: assessment_submission.idempotency_key,
       response_set: assessment_submission.response_set,
       group_evidence: assessment_submission.group_evidence,
+      effective_evaluation_id: evaluation_effective_head.effective_evaluation_id,
     })
     .from(assessment_submission)
+    .leftJoin(
+      evaluation_effective_head,
+      eq(evaluation_effective_head.submission_id, assessment_submission.submission_id),
+    )
     .where(eq(assessment_submission.issuance_id, issuanceId))
     .orderBy(desc(assessment_submission.submitted_at));
 
@@ -729,14 +741,17 @@ export async function getIssuanceState(
           updated_at: draftRow.updated_at.toISOString(),
         }
       : null,
-    submissions: submissions.map((row) => ({
-      submission_id: row.submission_id,
-      evaluation_group_id: row.evaluation_group_id,
-      submitted_at: row.submitted_at.toISOString(),
-      idempotency_key: row.idempotency_key,
-      response_set: row.response_set,
-      group_evidence: row.group_evidence,
-    })),
+    submissions: submissions.map(
+      (row): AcceptedSubmissionState => ({
+        submission_id: row.submission_id,
+        evaluation_group_id: row.evaluation_group_id,
+        submitted_at: row.submitted_at.toISOString(),
+        idempotency_key: row.idempotency_key,
+        response_set: row.response_set,
+        group_evidence: row.group_evidence,
+        effective_evaluation_id: row.effective_evaluation_id,
+      }),
+    ),
     ...(settled ? { settled } : {}),
   };
 }

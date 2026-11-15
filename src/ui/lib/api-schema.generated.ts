@@ -20683,6 +20683,7 @@ export interface operations {
                             run_id: string;
                         };
                         submissions: {
+                            effective_evaluation_id: string | null;
                             evaluation_group_id: string;
                             group_evidence: {
                                 evidence: {
@@ -27064,6 +27065,7 @@ export interface operations {
                                         run_id: string;
                                     };
                                     submissions: {
+                                        effective_evaluation_id: string | null;
                                         evaluation_group_id: string;
                                         group_evidence: {
                                             evidence: {
@@ -28812,6 +28814,7 @@ export interface operations {
                                             run_id: string;
                                         };
                                         submissions: {
+                                            effective_evaluation_id: string | null;
                                             evaluation_group_id: string;
                                             group_evidence: {
                                                 evidence: {
@@ -30069,6 +30072,7 @@ export interface operations {
                                         run_id: string;
                                     };
                                     submissions: {
+                                        effective_evaluation_id: string | null;
                                         evaluation_group_id: string;
                                         group_evidence: {
                                             evidence: {
