@@ -5,6 +5,7 @@ import {
   KnowledgeClientProvider,
   loadKnowledgeDetailPage,
 } from '@/capabilities/knowledge/ui-public';
+import { NoteBodyPreview } from '@/capabilities/notes/ui-public';
 import { startKnowledgeEdgeCreateClient } from '../knowledge-edge-create-client';
 import { startKnowledgeEdgeProposalsClient } from '../knowledge-edge-proposals-client';
 import { startKnowledgeEdgesClient } from '../knowledge-edges-client';
@@ -42,7 +43,12 @@ function KnowledgeDetailPage() {
     <StartWorkbenchShell pathname={`/knowledge/${encodeURIComponent(id)}`}>
       <KnowledgeClientProvider value={knowledgeClient}>
         <Suspense>
-          <Page id={id} navigate={startNavigate} returnToPlan={returnToPlan} />
+          <Page
+            id={id}
+            navigate={startNavigate}
+            returnToPlan={returnToPlan}
+            NoteBodyPreview={NoteBodyPreview}
+          />
         </Suspense>
       </KnowledgeClientProvider>
     </StartWorkbenchShell>
