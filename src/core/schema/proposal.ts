@@ -93,8 +93,25 @@ export const ProposalDecisionInput = z
     reason_md: z.string().trim().min(1).max(2000).optional(),
     affected_refs: z.array(ActivityRef).min(1).optional(),
     corrected_payload: z
-      .object({ claim_md: z.string().trim().min(1).max(CONJECTURE_CLAIM_MAX_CHARS) })
+      .object({
+        // conjecture owner edit.
+        claim_md: z.string().trim().min(1).max(CONJECTURE_CLAIM_MAX_CHARS).optional(),
+        // goal_scope owner edit: the learner's final ordered knowledge-point
+        // list (array order is the learn order). Validated at accept against the
+        // stored proposal — must be a non-empty subset of the proposed ids; the
+        // learner may remove or reorder but never inject a foreign id.
+        goal_scope: z
+          .object({ ordered_knowledge_ids: z.array(z.string().min(1)).min(1) })
+          .strict()
+          .optional(),
+      })
       .strict()
+      // Exactly one owner variant: a conjecture edit carries claim_md, a
+      // goal_scope edit carries goal_scope — never both (a cross-owner payload
+      // would smuggle an unrelated variant into another owner's accept).
+      .refine((v) => (v.claim_md !== undefined) !== (v.goal_scope !== undefined), {
+        message: 'corrected_payload requires exactly one owner edit',
+      })
       .optional(),
     // block_merge is lossy (absorbed blocks fold into the primary and cannot
     // be un-merged). Accepting one requires an explicit confirm_lossy: true;
@@ -428,11 +445,28 @@ export type KnowledgeMutationProposalChangeT = z.infer<typeof KnowledgeMutationP
 // user-confirmable nodes the goal covers; `sequence_hint` is AI-internal
 // ordering (NOT a progress metric, ND-4). The user can edit any of these
 // before accepting — accept materializes the goal row.
+const GoalScopeOrderedPoint = z.object({
+  knowledge_id: z.string().min(1),
+  // 1-based position in the recommended learn order. AI-inferred ordering, NOT
+  // progress; only ranks members of this scope list against each other.
+  order: z.number().int().min(1),
+});
+export type GoalScopeOrderedPointT = z.infer<typeof GoalScopeOrderedPoint>;
+
 export const GoalScopeProposalChange = z.object({
   title: z.string().min(1).max(280),
   // nullable / optional — cross-subject goals allowed (ND-1).
   subject_id: z.string().min(1).nullable().optional(),
+  // YUK-2124 — the learner's verbatim words that produced `title` (≤500 chars).
+  // Optional: absent on system-suggested goals (nightly); present when a real
+  // learner turn supplied the request so provenance and the paid receipt can
+  // trace back to the words rather than a derived label.
+  learner_words: z.string().min(1).max(500).optional(),
   scope_knowledge_ids: z.array(z.string().min(1)).default([]),
+  // YUK-2124 — ordered knowledge-point path. Optional so historical goal_scope
+  // payloads still parse; when present it is the canonical per-point order and
+  // `scope_knowledge_ids` remains the unordered coverage set.
+  ordered_scope: z.array(GoalScopeOrderedPoint).optional(),
   sequence_hint: z.number().int().min(0).default(0),
   reasoning: z.string().min(1).max(4000),
 });

@@ -208,6 +208,8 @@ export function proposalDecisionBody(
     newRelationType?: string;
     userNote?: string;
     correctedClaimMd?: string;
+    /** goal_scope edit: the learner's final ordered knowledge-point ids. */
+    correctedGoalScopeIds?: readonly string[];
     /** Accept-only: the learner confirmed an irreversible block merge (YUK-1404). */
     confirmLossy?: true;
   } = {},
@@ -220,6 +222,13 @@ export function proposalDecisionBody(
     // Empty edits reach validation instead of degrading to an uncorrected accept.
     ...(opts.correctedClaimMd !== undefined
       ? { corrected_payload: { claim_md: opts.correctedClaimMd } }
+      : {}),
+    ...(opts.correctedGoalScopeIds !== undefined
+      ? {
+          corrected_payload: {
+            goal_scope: { ordered_knowledge_ids: [...opts.correctedGoalScopeIds] },
+          },
+        }
       : {}),
   };
 }

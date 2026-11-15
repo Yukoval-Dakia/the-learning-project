@@ -11,6 +11,7 @@ import { runProposalDismiss } from '@/kernel/proposals/decision-protocol';
 import { createLearningIntentNote } from '@/kernel/records/learning-intent-note-birth';
 import { type BossDispatch, dispatchNoteGeneration } from '@/kernel/records/note-handoff-protocol';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
+import { goalIntentTopic, sealGoalScopeReceipt } from './goal-intent-request';
 import { acceptGoalScopeProposal } from './goals/accept';
 import { acceptGoalCompletionProposal } from './goals/completion';
 import { createLearningIntentKnowledgeNode } from './learning-intent';
@@ -109,12 +110,17 @@ export const relearnProposalAcceptApplier: ProposalAcceptApplier = async (db, in
     ),
   );
 
-export const goalScopeProposalAcceptApplier: ProposalAcceptApplier = async (db, input) =>
-  wrap(
+export const goalScopeProposalAcceptApplier: ProposalAcceptApplier = async (db, input) => {
+  const result = wrap(
     await acceptGoalScopeProposal(db as Db, input.proposalId, inboxView(input), {
       user_note: input.user_note,
+      corrected_payload: input.corrected_payload,
     }),
   );
+  const topic = goalIntentTopic(input.proposal.payload);
+  if (topic) await sealGoalScopeReceipt(db as Db, topic, input.proposalId);
+  return result;
+};
 
 export const agencyProposalDismissApplier: ProposalDismissApplier = async (db, input) => {
   const result = await runProposalDismiss(db as Db, input.proposalId, {
@@ -124,6 +130,8 @@ export const agencyProposalDismissApplier: ProposalDismissApplier = async (db, i
   });
   const topic = learningIntentTopic(input.proposal.payload);
   if (topic) await sealLearningIntentOutlineReceipt(db as Db, topic, input.proposalId);
+  const goalTopic = goalIntentTopic(input.proposal.payload);
+  if (goalTopic) await sealGoalScopeReceipt(db as Db, goalTopic, input.proposalId);
   return { kind: input.proposal.payload.kind, result };
 };
 

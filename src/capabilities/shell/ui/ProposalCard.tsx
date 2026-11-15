@@ -383,6 +383,13 @@ export function ProposalCard({
   const [pickingRel, setPickingRel] = useState(false);
   // Block merges are irreversible: accept first asks for an explicit confirmation.
   const [confirmingMerge, setConfirmingMerge] = useState(false);
+  // goal_scope path is editable before accept: the learner may reorder or drop
+  // points. `scopeEdit` holds the working ordered list (null = not editing /
+  // unchanged proposal). On accept the edited ids go as corrected_payload.
+  const [scopeEdit, setScopeEdit] = useState<
+    { knowledge_id: string; label: string }[] | null
+  >(null);
+  const [scopeEditing, setScopeEditing] = useState(false);
   // A decided card is on its way out: nothing on it can be pressed again.
   const locked = busy || leaving;
   const slotRef = useRef<HTMLDivElement>(null);
@@ -417,7 +424,11 @@ export function ProposalCard({
   const decide = async (
     decision: ProposalDecision,
     label: string,
-    opts: { newRelationType?: string; confirmLossy?: true } = {},
+    opts: {
+      newRelationType?: string;
+      confirmLossy?: true;
+      correctedGoalScopeIds?: readonly string[];
+    } = {},
   ) => {
     setBusy(true);
     try {
@@ -498,6 +509,18 @@ export function ProposalCard({
   const confidence = confidenceOf(p, change);
   const learningPlan =
     p.kind === 'learning_item' ? learningItemPlanPreviewOf(p.payload.proposed_change) : null;
+  const goalScopePoints = p.presentation?.goal_scope?.ordered_points ?? null;
+  // The working ordered list the learner sees/edits: the proposed order until
+  // they reorder/drop a point, then their edit. Array order is the learn order.
+  const proposedScope = (goalScopePoints ?? []).map((pt) => ({
+    knowledge_id: pt.knowledge_id,
+    label: pt.label,
+  }));
+  const workingScope = scopeEdit ?? proposedScope;
+  const scopeDirty =
+    scopeEdit !== null &&
+    (scopeEdit.length !== proposedScope.length ||
+      scopeEdit.some((pt, i) => pt.knowledge_id !== proposedScope[i]?.knowledge_id));
   const imageCandidate =
     p.kind === 'image_candidate' ? imageCandidateViewOf(p.payload.proposed_change) : null;
   const mergePreview = p.kind === 'block_merge' ? p.presentation?.block_merge : null;
@@ -624,6 +647,88 @@ export function ProposalCard({
                 ))}
               </ol>
             )}
+          </div>
+        )}
+
+        {goalScopePoints && goalScopePoints.length > 0 && (
+          <div className="ib-plan">
+            <div className="ib-plan-hub">
+              <span className="ib-kicker">学习顺序</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={locked}
+                onClick={() => {
+                  if (scopeEditing) {
+                    setScopeEditing(false);
+                  } else {
+                    setScopeEdit((cur) => cur ?? [...proposedScope]);
+                    setScopeEditing(true);
+                  }
+                }}
+              >
+                {scopeEditing ? '完成' : '调整顺序'}
+              </Button>
+            </div>
+            <ol className="ib-plan-steps">
+              {workingScope.map((point, i) => (
+                <li key={`${point.knowledge_id}:${i}`}>
+                  <span className="ib-plan-dot" data-kind="atomic" aria-hidden="true" />
+                  <span>
+                    <b>{point.label}</b>
+                  </span>
+                  {scopeEditing && (
+                    <span className="ib-scope-edit">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={i === 0}
+                        aria-label="上移"
+                        onClick={() =>
+                          setScopeEdit((cur) => {
+                            const next = [...(cur ?? proposedScope)];
+                            const [moved] = next.splice(i, 1);
+                            next.splice(i - 1, 0, moved);
+                            return next;
+                          })
+                        }
+                      >
+                        ↑
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={i === workingScope.length - 1}
+                        aria-label="下移"
+                        onClick={() =>
+                          setScopeEdit((cur) => {
+                            const next = [...(cur ?? proposedScope)];
+                            const [moved] = next.splice(i, 1);
+                            next.splice(i + 1, 0, moved);
+                            return next;
+                          })
+                        }
+                      >
+                        ↓
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={workingScope.length <= 1}
+                        aria-label="移除"
+                        onClick={() =>
+                          setScopeEdit((cur) =>
+                            (cur ?? proposedScope).filter((_, j) => j !== i),
+                          )
+                        }
+                      >
+                        ✕
+                      </Button>
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
           </div>
         )}
 
@@ -776,7 +881,15 @@ export function ProposalCard({
                 onClick={() =>
                   p.kind === 'block_merge' || mergesKnowledge
                     ? setConfirmingMerge(true)
-                    : void decide('accept', acceptedLabel)
+                    : void decide(
+                        'accept',
+                        acceptedLabel,
+                        p.kind === 'goal_scope' && scopeDirty
+                          ? {
+                              correctedGoalScopeIds: workingScope.map((pt) => pt.knowledge_id),
+                            }
+                          : {},
+                      )
                 }
               >
                 {isArchiveEdge ? (

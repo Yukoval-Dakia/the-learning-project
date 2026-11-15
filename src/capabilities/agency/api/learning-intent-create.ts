@@ -5,7 +5,13 @@ import type { Db } from '@/db/client';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { makeRunTaskFn } from '../server/ai-runtime';
-import { LearningIntentError, type RunTaskFn } from '../server/learning-intent';
+import { runGoalIntentRequest } from '../server/goal-intent-request';
+import { parseGoalIntent } from '../server/goal-intent-parse';
+import {
+  LearningIntentError,
+  type RunTaskFn,
+  findTopicNodeForIntent,
+} from '../server/learning-intent';
 import { runLearningIntentRequest } from '../server/learning-intent-request';
 import { CreateLearningIntentBodySchema } from './contracts';
 
@@ -35,11 +41,50 @@ export async function requestLearningIntent(
     );
   }
 
-  return runLearningIntentRequest(
-    database,
-    parsed.data.topic,
-    runTaskFn ?? makeRunTaskFn(database),
-  );
+  const topic = parsed.data.topic;
+  const runner = runTaskFn ?? makeRunTaskFn(database);
+
+  // Deterministic lane: the learner's words decide whether this is a North-Star
+  // goal (goal_scope proposal via the canonical runGoalScopeAndWrite owner) or
+  // an atomic learning-item plan (the existing learning_item outline path).
+  // A bare topic that resolves to a live knowledge node stays on the atomic
+  // lane so the learning_item feature keeps working; words that do not match a
+  // node — 「我想把三角函数学好」 — are goal semantics.
+  const atomicNode = await findTopicNodeForIntent(database, topic);
+  if (atomicNode === null) {
+    const intent = await parseGoalIntent(database, topic);
+    if (intent) {
+      // A goal frame was recognized but no subject could be resolved. Do NOT
+      // silently pick a domain — surface an honest clarify and never claim a
+      // paid send, so the learner re-specifies the subject rather than getting
+      // a goal proposed over a guessed subtree.
+      if (intent.subjectId === null) {
+        throw new ApiError(
+          'clarify_goal_subject',
+          '想学的这个目标还没对应到具体科目，先说说想学哪一门？',
+          422,
+        );
+      }
+      const proposal = await runGoalIntentRequest(
+        database,
+        topic,
+        intent.title,
+        intent.subjectId,
+        runner,
+      );
+      return {
+        kind: 'goal_scope' as const,
+        proposal_id: proposal.proposal_id,
+        goal_id: proposal.goal_id,
+        scope_count: proposal.scope_count,
+      };
+    }
+    // Unparseable words that also name no node: fall through to the atomic
+    // planner, which reports topic_not_found rather than manufacturing a goal.
+  }
+
+  const atomic = await runLearningIntentRequest(database, topic, runner);
+  return { kind: 'learning_item' as const, ...atomic };
 }
 
 export function learningIntentErrorResponse(err: unknown): Response {

@@ -21,6 +21,9 @@ const GoalProposedChange = z.object({
   title: z.string().optional(),
   subject_id: z.string().nullable().optional(),
   scope_knowledge_ids: z.array(z.string()).optional(),
+  ordered_scope: z
+    .array(z.object({ knowledge_id: z.string(), order: z.number().int() }))
+    .optional(),
   sequence_hint: z.number().optional(),
 });
 
@@ -66,16 +69,29 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
   // retract is applied in pass 2 so it interleaves chronologically.
   const acceptedAtByProposeId = new Map<string, Date>();
   const materializedGoalByProposeId = new Map<string, string>();
+  const materializedScopeByProposeId = new Map<string, string[]>();
 
   for (const fe of ordered) {
     if (fe.action !== 'rate' || fe.subject_kind !== 'event') continue;
-    const payload = fe.payload as { rating?: unknown; materialized_goal_id?: unknown };
+    const payload = fe.payload as {
+      rating?: unknown;
+      materialized_goal_id?: unknown;
+      materialized_scope?: unknown;
+    };
     if (payload.rating !== 'accept') continue;
     const proposeId = fe.caused_by_event_id;
     if (!proposeId) continue;
     acceptedAtByProposeId.set(proposeId, fe.created_at);
     if (typeof payload.materialized_goal_id === 'string') {
       materializedGoalByProposeId.set(proposeId, payload.materialized_goal_id);
+    }
+    // The accepted scope (possibly learner-edited) is replayed verbatim so the
+    // fold reproduces the row's ordered scope after a corrected accept.
+    if (Array.isArray(payload.materialized_scope)) {
+      const scope = payload.materialized_scope.filter(
+        (id): id is string => typeof id === 'string',
+      );
+      materializedScopeByProposeId.set(proposeId, scope);
     }
   }
 
@@ -139,7 +155,25 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
         // Same normalization as the accept writer (alias→canonical, unknown→null) so
         // fold == row; replay can drift only if the subject row was hard-removed.
         subject_id: pc.data.subject_id ? resolveKnownSubjectId(pc.data.subject_id) : null,
-        scope_knowledge_ids: [...(pc.data.scope_knowledge_ids ?? [])],
+        // Same ordered_scope derivation as the accept writer (accept.ts): when
+        // ordered_scope covers the confirmed set exactly, it is the canonical
+        // per-point order persisted on the row — keeps fold == row.
+        scope_knowledge_ids: (() => {
+          // A corrected accept persisted the learner's final ordered scope on
+          // the rate payload — replay it verbatim so fold == row.
+          const corrected = materializedScopeByProposeId.get(fe.id);
+          if (corrected !== undefined) return [...corrected];
+          const scope = pc.data.scope_knowledge_ids ?? [];
+          const ordered = pc.data.ordered_scope;
+          if (!ordered || ordered.length === 0) return [...scope];
+          const scopeSet = new Set(scope);
+          const orderedIds = ordered.map((p) => p.knowledge_id);
+          const covers =
+            orderedIds.length === scope.length &&
+            orderedIds.every((id) => scopeSet.has(id)) &&
+            new Set(orderedIds).size === orderedIds.length;
+          return covers ? orderedIds : [...scope];
+        })(),
         // An accepted scope is an explicit user-confirmed selection, never live-derived.
         scope_mode: 'explicit',
         sequence_hint:

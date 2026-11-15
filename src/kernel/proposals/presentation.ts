@@ -140,6 +140,12 @@ export interface ProposalPresentation {
   evidence_labels: Record<string, string>;
   knowledge_edge?: { from_label: string; to_label: string };
   knowledge_mutation?: ProposalKnowledgeMutationPresentation;
+  /**
+   * YUK-2124 — goal_scope ordered knowledge-point path. Ordered by the
+   * proposal's ordered_scope (accept materializes the same order); absent on
+   * legacy goal_scope payloads with no ordered_scope.
+   */
+  goal_scope?: { ordered_points: { knowledge_id: string; label: string; order: number }[] };
   block_merge: {
     primary: ProposalBlockPreview | null;
     merged: ProposalBlockPreview[];
@@ -758,7 +764,9 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem(
           '范围',
           Array.isArray(change?.scope_knowledge_ids)
-            ? `${change.scope_knowledge_ids.length} 个知识点`
+            ? Array.isArray(change?.ordered_scope) && change.ordered_scope.length > 0
+              ? `${change.ordered_scope.length} 个知识点（已按学习顺序排列）`
+              : `${change.scope_knowledge_ids.length} 个知识点`
             : null,
         ),
         reasonSummaryItem('判断依据', change?.reasoning),
@@ -1310,6 +1318,7 @@ export async function loadProposalPresentations(
   const blockMergeSessionIds = new Set<string>();
   const edgeKnowledgeIds = new Set<string>();
   const mutationKnowledgeIds = new Set<string>();
+  const goalScopeKnowledgeIds = new Set<string>();
   for (const proposal of proposals) {
     presentations.set(proposal.id, {
       title: proposalDisplayTitle(proposal.payload),
@@ -1334,6 +1343,11 @@ export async function loadProposalPresentations(
         mutationKnowledgeIds.add(id);
       }
     }
+    if (proposal.payload.kind === 'goal_scope') {
+      for (const point of proposal.payload.proposed_change.ordered_scope ?? []) {
+        goalScopeKnowledgeIds.add(point.knowledge_id);
+      }
+    }
     if (proposal.payload.kind !== 'block_merge') continue;
     blockMergeSessionIds.add(proposal.payload.proposed_change.ingestion_session_id);
     blockIds.add(proposal.payload.proposed_change.primary_block_id);
@@ -1355,6 +1369,33 @@ export async function loadProposalPresentations(
       presentation.knowledge_edge = {
         from_label: names.get(change.from_knowledge_id) ?? change.from_knowledge_id.slice(0, 8),
         to_label: names.get(change.to_knowledge_id) ?? change.to_knowledge_id.slice(0, 8),
+      };
+    }
+  }
+
+  // YUK-2124 — resolve ordered goal_scope point labels in one batch so the
+  // inbox renders the real ordered path, not just a count.
+  if (goalScopeKnowledgeIds.size > 0) {
+    const names = await readPresentationDataOptional(
+      db,
+      'goal scope knowledge names',
+      new Map<string, string>(),
+      (tx) => loadEdgeKnowledgeNames(tx, [...goalScopeKnowledgeIds]),
+    );
+    for (const proposal of proposals) {
+      if (proposal.payload.kind !== 'goal_scope') continue;
+      const presentation = presentations.get(proposal.id);
+      if (!presentation) continue;
+      const ordered = proposal.payload.proposed_change.ordered_scope ?? [];
+      if (ordered.length === 0) continue;
+      presentation.goal_scope = {
+        ordered_points: [...ordered]
+          .sort((a, b) => a.order - b.order)
+          .map((point) => ({
+            knowledge_id: point.knowledge_id,
+            label: names.get(point.knowledge_id) ?? point.knowledge_id.slice(0, 8),
+            order: point.order,
+          })),
       };
     }
   }

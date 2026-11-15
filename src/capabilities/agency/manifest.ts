@@ -12,7 +12,7 @@ import {
   AgentNotesQuerySchema,
   AgentNotesResponseSchema,
   CreateLearningIntentBodySchema,
-  LearningIntentProposalResponseSchema,
+  CreateLearningIntentResponseSchema,
   LearningItemPlanBody,
   LearningItemPlanResponseSchema,
   LearningItemPlansQuerySchema,
@@ -179,7 +179,7 @@ export const agencyCapability = defineCapability({
         path: '/api/learning-intents',
         operationId: 'createLearningIntentProposal',
         request: { body: CreateLearningIntentBodySchema },
-        responses: { 200: LearningIntentProposalResponseSchema, ...API_ERROR_RESPONSES },
+        responses: { 200: CreateLearningIntentResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/learning-intent-create').then((m) => m.POST),
       },
@@ -393,6 +393,9 @@ export const agencyCapability = defineCapability({
       {
         kind: 'goal_scope',
         accept: {
+          // The learner may reorder/narrow the proposed path before accepting;
+          // the owner validates the corrected ordered ids against the proposal.
+          correctedPayload: true,
           load: () =>
             import('./server/proposal-accept-applier').then(
               (module) => module.goalScopeProposalAcceptApplier,
