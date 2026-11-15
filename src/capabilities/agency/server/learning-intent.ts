@@ -435,6 +435,18 @@ async function findTopicNode(db: Db, topic: string): Promise<KnowledgeNodeRow | 
   return null;
 }
 
+/**
+ * The entry's atomic-lane check. Exported for the API dispatcher: a bare topic
+ * that resolves to a live node stays on the learning-item path; words that
+ * name no node are goal semantics handled by the goal-intent request.
+ */
+export async function findTopicNodeForIntent(
+  db: Db,
+  topic: string,
+): Promise<KnowledgeNodeRow | null> {
+  return findTopicNode(db, topic);
+}
+
 async function loadChildren(db: Db, parentId: string): Promise<KnowledgeNodeRow[]> {
   return db
     .select({

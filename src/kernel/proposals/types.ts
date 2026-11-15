@@ -22,7 +22,9 @@ export interface ProposalDecisionActor {
 export const USER_DECISION_ACTOR: ProposalDecisionActor = { kind: 'user', ref: 'self' };
 
 export interface ProposalCorrectedPayload {
-  readonly claim_md: string;
+  readonly claim_md?: string;
+  /** goal_scope owner edit: learner's final ordered knowledge-point ids. */
+  readonly goal_scope?: { readonly ordered_knowledge_ids: readonly string[] };
 }
 
 export interface ProposalLifecycleResult {

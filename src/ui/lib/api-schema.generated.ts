@@ -23892,6 +23892,12 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        goal_id: string;
+                        /** @enum {string} */
+                        kind: "goal_scope";
+                        proposal_id: string;
+                        scope_count: number;
+                    } | {
                         atomics: {
                             knowledge_id: string;
                             one_line_intent: string;
@@ -23909,6 +23915,8 @@ export interface operations {
                             summary_md: string;
                             title: string;
                         };
+                        /** @enum {string} */
+                        kind: "learning_item";
                         knowledge_node: {
                             domain: string | null;
                             id: string;
@@ -33648,6 +33656,11 @@ export interface operations {
                                 kind: "goal_scope";
                                 learner_summary?: string;
                                 proposed_change: {
+                                    learner_words?: string;
+                                    ordered_scope?: {
+                                        knowledge_id: string;
+                                        order: number;
+                                    }[];
                                     reasoning: string;
                                     /** @default [] */
                                     scope_knowledge_ids: string[];
@@ -34371,6 +34384,13 @@ export interface operations {
                                 }[];
                                 evidence_labels: {
                                     [key: string]: string;
+                                };
+                                goal_scope?: {
+                                    ordered_points: {
+                                        knowledge_id: string;
+                                        label: string;
+                                        order: number;
+                                    }[];
                                 };
                                 knowledge_edge?: {
                                     from_label: string;
@@ -34831,6 +34851,11 @@ export interface operations {
                                 kind: "goal_scope";
                                 learner_summary?: string;
                                 proposed_change: {
+                                    learner_words?: string;
+                                    ordered_scope?: {
+                                        knowledge_id: string;
+                                        order: number;
+                                    }[];
                                     reasoning: string;
                                     /** @default [] */
                                     scope_knowledge_ids: string[];
@@ -35555,6 +35580,13 @@ export interface operations {
                                 evidence_labels: {
                                     [key: string]: string;
                                 };
+                                goal_scope?: {
+                                    ordered_points: {
+                                        knowledge_id: string;
+                                        label: string;
+                                        order: number;
+                                    }[];
+                                };
                                 knowledge_edge?: {
                                     from_label: string;
                                     to_label: string;
@@ -35748,7 +35780,10 @@ export interface operations {
                     /** @enum {boolean} */
                     confirm_lossy?: true;
                     corrected_payload?: {
-                        claim_md: string;
+                        claim_md?: string;
+                        goal_scope?: {
+                            ordered_knowledge_ids: string[];
+                        };
                     };
                     /** @enum {string} */
                     decision: "accept" | "reverse" | "change_type" | "dismiss" | "retract";

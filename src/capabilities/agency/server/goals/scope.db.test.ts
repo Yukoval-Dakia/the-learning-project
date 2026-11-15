@@ -33,15 +33,25 @@ describe('runGoalScopeAndWrite', () => {
     });
   }
 
+  // @invariant grading: one accepted goal_scope proposal materializes exactly one
+  // ordered goal scope; a second accept is idempotent and cannot duplicate the goal.
+  // @fails-if the accept transaction replays the goal insert or loses the ordered
+  // scope array, yielding duplicate goals or an unreadable ordered learning path.
   it('accept is idempotent (second accept does not duplicate the goal row)', async () => {
     const db = testDb();
     await insertKnowledge('k1');
     const fakeRunTask = async () => ({
-      text: JSON.stringify({ scope_knowledge_ids: ['k1'], sequence_hint: 0, reasoning: 'r' }),
+      text: JSON.stringify({
+        scope_knowledge_ids: ['k1'],
+        ordered_scope: [{ knowledge_id: 'k1', order: 1 }],
+        sequence_hint: 0,
+        reasoning: 'r',
+      }),
     });
     const { proposal_id, goal_id } = await runGoalScopeAndWrite({
       db,
       goalTitle: 'g',
+      subjectId: 'yuwen',
       runTaskFn: fakeRunTask,
     });
     if (!proposal_id || !goal_id) throw new Error('expected ids');
