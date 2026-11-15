@@ -94,7 +94,9 @@ function dedupeKey(
 ): string {
   // \x00 separators keep concatenated fields unambiguous across boundary shifts.
   return createHash('sha256')
-    .update(`${sessionId}\x00${brief}\x00${alt}\x00${caption ?? ''}${images ? `\x00${images}` : ''}`)
+    .update(
+      `${sessionId}\x00${brief}\x00${alt}\x00${caption ?? ''}${images ? `\x00${images}` : ''}`,
+    )
     .digest('hex');
 }
 
@@ -139,14 +141,27 @@ export async function drawingSourcesAuthorized(
     DrawingRow,
     'sources' | 'source_epochs' | 'source_scoped' | 'session_id' | 'source_event_id'
   >,
+  options: {
+    lockSources?: boolean;
+    verifyImageBytes?: (
+      manifest: Awaited<ReturnType<typeof readDrawingImageManifest>>,
+    ) => Promise<unknown>;
+  } = {},
 ): Promise<boolean> {
-  if (row.sources.length > 0 && !(await recheckSources(db, row.sources)).ok) return false;
-  if (row.source_epochs.length > 0 && !(await sourceEpochsIntact(db, row.source_epochs))) {
-    return false;
-  }
-  if (row.source_scoped.length > 0 && (await anyRestrictedLearnerSource(db))) return false;
   try {
-    await readDrawingImageManifest(db, row);
+    // Study's root/source/issuance locks precede additional turn-ledger locks.
+    const manifest = await readDrawingImageManifest(db, row);
+    if (options.lockSources) {
+      await db.transaction(async (tx) => {
+        for (const source of row.sources) await lockDerivationSources(tx, source);
+      });
+    }
+    if (row.sources.length > 0 && !(await recheckSources(db, row.sources)).ok) return false;
+    if (row.source_epochs.length > 0 && !(await sourceEpochsIntact(db, row.source_epochs))) {
+      return false;
+    }
+    if (row.source_scoped.length > 0 && (await anyRestrictedLearnerSource(db))) return false;
+    await options.verifyImageBytes?.(manifest);
   } catch (error) {
     if (error instanceof DrawingImageInputError) return false;
     throw error;
@@ -292,6 +307,20 @@ export async function requestDrawing(
   const sessionId = ctx.sessionId;
   const boss = await (deps.boss ?? getStartedBoss)();
   return ctx.db.transaction(async (tx) => {
+    let imageManifest: Awaited<ReturnType<typeof readDrawingImageManifest>>;
+    try {
+      imageManifest = await readDrawingImageManifest(tx, {
+        session_id: sessionId,
+        sources: [...snapshot.sources],
+        source_event_id: ctx.causedByEventId ?? null,
+      });
+    } catch (error) {
+      if (!(error instanceof DrawingImageInputError)) throw error;
+      return {
+        status: 'unavailable',
+        issues: [{ code: error.code, path: '/brief', detail: error.message }],
+      };
+    }
     // Lock source documents FOR SHARE, then re-derive authorization and freeze
     // epochs — the stored set is what the send gate re-checks, never model claims.
     for (const source of snapshot.sources) await lockDerivationSources(tx, source);
@@ -321,20 +350,6 @@ export async function requestDrawing(
       }
     }
 
-    let imageManifest: Awaited<ReturnType<typeof readDrawingImageManifest>>;
-    try {
-      imageManifest = await readDrawingImageManifest(tx, {
-        session_id: sessionId,
-        sources: [...snapshot.sources],
-        source_event_id: ctx.causedByEventId ?? null,
-      });
-    } catch (error) {
-      if (!(error instanceof DrawingImageInputError)) throw error;
-      return {
-        status: 'unavailable',
-        issues: [{ code: error.code, path: '/brief', detail: error.message }],
-      };
-    }
     const key = dedupeKey(
       sessionId,
       input.brief,

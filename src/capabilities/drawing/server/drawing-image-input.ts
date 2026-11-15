@@ -6,7 +6,6 @@ import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import { QuestionGroupStructure } from '@/core/schema/assessment/structure';
 import type { Db, Tx } from '@/db/client';
 import {
-  assessment_issuance,
   assessment_response_draft,
   type drawing,
   event,
@@ -14,9 +13,12 @@ import {
   question_revision,
 } from '@/db/schema';
 import { getR2 } from '@/kernel/object-storage';
-import { lineageQuestionIds, readSourceUsageEpochs } from '@/kernel/read-models/usage-policy';
-import { createAssessmentAssetLoader } from '@/kernel/records/assessment-assets';
-import { issuanceRowToContract } from '@/kernel/records/assessment-issuance';
+import { lineageQuestionIds } from '@/kernel/read-models/usage-policy';
+import {
+  createAssessmentAssetLoader,
+  withinAssessmentSignal,
+} from '@/kernel/records/assessment-assets';
+import { withStudyAuthorization } from '@/kernel/records/hint-continuity';
 import type { MultimodalTaskInput } from '@/server/ai/runner';
 import type { DrawingImageManifestEntry } from '../tasks/drawing-task';
 
@@ -26,8 +28,8 @@ const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif
 
 export class DrawingImageInputError extends Error {
   readonly code = 'source_image_unavailable';
-  constructor() {
-    super('原题图片的版本、公开范围或内容无法核验，这次绘图没有执行。');
+  constructor(cause?: unknown) {
+    super('原题图片的版本、公开范围或内容无法核验，这次绘图没有执行。', { cause });
     this.name = 'DrawingImageInputError';
   }
 }
@@ -68,113 +70,99 @@ export async function readDrawingImageManifest(
       throw new DrawingImageInputError();
     }
     const focus = parsed.data;
-    const [issued] = await db
-      .select()
-      .from(assessment_issuance)
-      .where(eq(assessment_issuance.issuance_id, focus.issuance_id));
-    const [revision] = await db
-      .select({ group_id: question_revision.group_id, structure: question_revision.structure })
-      .from(question_revision)
-      .where(eq(question_revision.revision_id, focus.revision_id));
-    // Publication holds this share lock until its asset/ready transaction commits.
-    const [draft] = await db
-      .select({ save_epoch: assessment_response_draft.save_epoch })
-      .from(assessment_response_draft)
-      .where(eq(assessment_response_draft.issuance_id, focus.issuance_id))
-      .for('share');
-    if (
-      !issued ||
-      !revision ||
-      issued.revision_id !== focus.revision_id ||
-      draft?.save_epoch !== focus.save_epoch ||
-      grant.binding_digest !== canonicalHash(issuanceRowToContract(issued).binding)
-    ) {
-      throw new DrawingImageInputError();
+    try {
+      const bound = await withStudyAuthorization(
+        db,
+        { issuanceId: focus.issuance_id, questionId: focus.question_id },
+        async (tx, { issuance: issued, revision }, binding, sources, sourceEpochs) => {
+          // The outer publish transaction retains this lock through asset/ready commit.
+          const [draft] = await tx
+            .select({ save_epoch: assessment_response_draft.save_epoch })
+            .from(assessment_response_draft)
+            .where(eq(assessment_response_draft.issuance_id, focus.issuance_id))
+            .for('share');
+          if (
+            revision.revision_id !== focus.revision_id ||
+            draft?.save_epoch !== focus.save_epoch ||
+            grant.binding_digest !== binding ||
+            grant.source_digest !== sources ||
+            grant.source_usage_epochs === undefined ||
+            canonicalHash(grant.source_usage_epochs) !== canonicalHash(sourceEpochs)
+          )
+            throw new DrawingImageInputError();
+          const structure = QuestionGroupStructure.safeParse(revision.structure);
+          if (
+            !structure.success ||
+            structure.data.group_id !== revision.group_id ||
+            issued.part_ids.length === 0 ||
+            issued.part_ids.some((id) => !structure.data.parts.some((p) => p.part_id === id)) ||
+            (focus.question_id !== revision.group_id &&
+              !issued.part_ids.includes(focus.question_id))
+          ) {
+            throw new DrawingImageInputError();
+          }
+          const parts = structure.data.parts.filter(
+            (part) =>
+              issued.part_ids.includes(part.part_id) &&
+              (focus.question_id === revision.group_id || part.part_id === focus.question_id),
+          );
+          const materialIds = new Set(parts.flatMap((part) => part.material_ids));
+          if (
+            [...materialIds].some(
+              (id) => !structure.data.materials.some((m) => m.material_id === id),
+            )
+          ) {
+            throw new DrawingImageInputError();
+          }
+          for (const material of structure.data.materials) {
+            if (
+              !materialIds.has(material.material_id) ||
+              material.kind !== 'figure' ||
+              !isPublicSharedMaterial(material)
+            ) {
+              continue;
+            }
+            if (
+              !/^sha256:[0-9a-f]{64}$/.test(material.asset.digest) ||
+              !issued.material_bindings.some(
+                (b) =>
+                  b.material_id === material.material_id &&
+                  b.asset_digest === material.asset.digest,
+              )
+            ) {
+              throw new DrawingImageInputError();
+            }
+            manifest.push({
+              ...focus,
+              material_id: material.material_id,
+              ...material.asset,
+              contains_learner_handwriting: material.contains_learner_handwriting ?? 'unknown',
+            });
+          }
+          for (const part of parts) {
+            const surfaces = [
+              part.prompt_md,
+              ...structure.data.materials
+                .filter(
+                  (m) => part.material_ids.includes(m.material_id) && isPublicSharedMaterial(m),
+                )
+                .map((m) => m.content_md ?? ''),
+            ];
+            if (
+              /!\[[^\]]*\]\(|<img\b|如图|见图|下图|图中|图所示/i.test(surfaces.join('\n')) &&
+              !manifest.some((m) => part.material_ids.includes(m.material_id))
+            ) {
+              throw new DrawingImageInputError();
+            }
+          }
+          return [revision.group_id, ...parts.map((part) => part.part_id)];
+        },
+      );
+      boundQuestionIds = bound;
+    } catch (error) {
+      if (error instanceof DrawingImageInputError) throw error;
+      throw new DrawingImageInputError(error);
     }
-    const structure = QuestionGroupStructure.safeParse(revision.structure);
-    if (
-      !structure.success ||
-      structure.data.group_id !== revision.group_id ||
-      issued.part_ids.length === 0 ||
-      issued.part_ids.some((id) => !structure.data.parts.some((p) => p.part_id === id)) ||
-      (focus.question_id !== revision.group_id && !issued.part_ids.includes(focus.question_id))
-    ) {
-      throw new DrawingImageInputError();
-    }
-    const [publication] = await db
-      .select({ payload: event.payload })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, 'experimental:assessment_publish'),
-          eq(event.subject_id, revision.group_id),
-          sql`${event.payload}->>'revision_id' = ${focus.revision_id}`,
-        ),
-      )
-      .limit(1);
-    if (
-      !publication?.payload.study_sources ||
-      grant.source_digest !== canonicalHash(publication.payload.study_sources)
-    ) {
-      throw new DrawingImageInputError();
-    }
-    const epochs = grant.source_usage_epochs;
-    if (!epochs || typeof epochs !== 'object' || Array.isArray(epochs)) {
-      throw new DrawingImageInputError();
-    }
-    for (const [documentId, epoch] of Object.entries(epochs)) {
-      const current = await readSourceUsageEpochs(db, { kind: 'document', id: documentId });
-      if (typeof epoch !== 'string' || current[documentId] !== epoch) {
-        throw new DrawingImageInputError();
-      }
-    }
-    const parts = structure.data.parts.filter(
-      (part) =>
-        issued.part_ids.includes(part.part_id) &&
-        (focus.question_id === revision.group_id || part.part_id === focus.question_id),
-    );
-    const materialIds = new Set(parts.flatMap((part) => part.material_ids));
-    if ([...materialIds].some((id) => !structure.data.materials.some((m) => m.material_id === id))) {
-      throw new DrawingImageInputError();
-    }
-    for (const material of structure.data.materials) {
-      if (
-        !materialIds.has(material.material_id) ||
-        material.kind !== 'figure' ||
-        !isPublicSharedMaterial(material)
-      ) {
-        continue;
-      }
-      if (
-        !/^sha256:[0-9a-f]{64}$/.test(material.asset.digest) ||
-        !issued.material_bindings.some(
-          (b) => b.material_id === material.material_id && b.asset_digest === material.asset.digest,
-        )
-      ) {
-        throw new DrawingImageInputError();
-      }
-      manifest.push({
-        ...focus,
-        material_id: material.material_id,
-        ...material.asset,
-        contains_learner_handwriting: material.contains_learner_handwriting ?? 'unknown',
-      });
-    }
-    for (const part of parts) {
-      const surfaces = [
-        part.prompt_md,
-        ...structure.data.materials
-          .filter((m) => part.material_ids.includes(m.material_id) && isPublicSharedMaterial(m))
-          .map((m) => m.content_md ?? ''),
-      ];
-      if (
-        /!\[[^\]]*\]\(|<img\b|如图|见图|下图|图中|图所示/i.test(surfaces.join('\n')) &&
-        !manifest.some((m) => part.material_ids.includes(m.material_id))
-      ) {
-        throw new DrawingImageInputError();
-      }
-    }
-    boundQuestionIds = [revision.group_id, ...parts.map((part) => part.part_id)];
   }
 
   // Live columns are only a veto for unbound images, never a fallback source.
@@ -199,7 +187,10 @@ export async function readDrawingImageManifest(
         or(
           inArray(question_revision.group_id, unbound),
           sql`EXISTS (SELECT 1 FROM jsonb_array_elements(${question_revision.structure}->'parts') p
-            WHERE p->>'part_id' IN (${sql.join(unbound.map((id) => sql`${id}`), sql`, `)}))`,
+            WHERE p->>'part_id' IN (${sql.join(
+              unbound.map((id) => sql`${id}`),
+              sql`, `,
+            )}))`,
         ),
       );
     if (
@@ -208,7 +199,9 @@ export async function readDrawingImageManifest(
         const parsedStructure = QuestionGroupStructure.safeParse(r.structure);
         return (
           !parsedStructure.success ||
-          parsedStructure.data.materials.some((m) => m.kind === 'figure' && isPublicSharedMaterial(m))
+          parsedStructure.data.materials.some(
+            (m) => m.kind === 'figure' && isPublicSharedMaterial(m),
+          )
         );
       })
     ) {
@@ -218,33 +211,57 @@ export async function readDrawingImageManifest(
   return manifest;
 }
 
+export async function loadDrawingImageBytes(
+  db: Db | Tx,
+  manifest: readonly DrawingImageManifestEntry[],
+): Promise<MultimodalTaskInput['images']> {
+  // This existing reader uses only select; Tx shares that API and keeps publish on its connection.
+  const load = createAssessmentAssetLoader(db as Db, (key) => getR2().get(key));
+  const signal = AbortSignal.timeout(30_000);
+  const images: MultimodalTaskInput['images'] = [];
+  const loaded = new Map<
+    string,
+    { image: MultimodalTaskInput['images'][number]; byteSize: number }
+  >();
+  let totalBytes = 0;
+  if (manifest.length > 16) throw new DrawingImageInputError();
+  for (const entry of manifest) {
+    const identity = `${entry.asset_id}:${entry.digest}`;
+    const cached = loaded.get(identity);
+    if (cached) {
+      totalBytes += cached.byteSize;
+      if (totalBytes > MAX_IMAGE_BYTES) throw new DrawingImageInputError();
+      images.push(cached.image);
+      continue;
+    }
+    let asset: Awaited<ReturnType<typeof load>>;
+    try {
+      asset = await withinAssessmentSignal(() => load(entry, signal), signal);
+    } catch {
+      throw new DrawingImageInputError();
+    }
+    if (!asset) throw new DrawingImageInputError();
+    totalBytes += asset.bytes.length;
+    if (
+      !IMAGE_MIMES.has(asset.mime_type) ||
+      asset.bytes.length === 0 ||
+      totalBytes > MAX_IMAGE_BYTES ||
+      `sha256:${createHash('sha256').update(asset.bytes).digest('hex')}` !== entry.digest
+    )
+      throw new DrawingImageInputError();
+    const image = { data: Buffer.from(asset.bytes).toString('base64'), mediaType: asset.mime_type };
+    loaded.set(identity, { image, byteSize: asset.bytes.length });
+    images.push(image);
+  }
+  return images;
+}
+
 export async function loadDrawingImageInput(
   db: Db,
   source: ImageSource & { brief: string; alt: string; caption: string | null },
 ): Promise<MultimodalTaskInput> {
   const image_manifest = await readDrawingImageManifest(db, source);
-  const load = createAssessmentAssetLoader(db, (key) => getR2().get(key));
-  const images: MultimodalTaskInput['images'] = [];
-  let totalBytes = 0;
-  if (image_manifest.length > 16) throw new DrawingImageInputError();
-  for (const entry of image_manifest) {
-    let asset: Awaited<ReturnType<typeof load>>;
-    try {
-      asset = await load(entry, new AbortController().signal);
-    } catch {
-      throw new DrawingImageInputError();
-    }
-    if (
-      !asset ||
-      !IMAGE_MIMES.has(asset.mime_type) ||
-      asset.bytes.length === 0 ||
-      (totalBytes += asset.bytes.length) > MAX_IMAGE_BYTES ||
-      `sha256:${createHash('sha256').update(asset.bytes).digest('hex')}` !== entry.digest
-    ) {
-      throw new DrawingImageInputError();
-    }
-    images.push({ data: Buffer.from(asset.bytes).toString('base64'), mediaType: asset.mime_type });
-  }
+  const images = await loadDrawingImageBytes(db, image_manifest);
   return {
     text: JSON.stringify({
       brief: source.brief,
