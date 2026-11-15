@@ -6,7 +6,7 @@
 // module keeps the DB context loaders, the single-turn orchestration, and the
 // re-exported parse surface so importers keep one entrypoint.
 
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { Db } from '@/db/client';
@@ -18,9 +18,11 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   TeachingError,
   type TeachingStructuredQuestionT,
+  type TeachingTurnInput,
   type TeachingTurnOutputT,
   parseTurnOutput,
 } from '../tasks/teaching-turn';
+import { loadTeachingLearnerPicture } from './teaching/learner-picture';
 
 export {
   TeachingError,
@@ -47,79 +49,90 @@ export interface PlanTeachingTurnParams {
 
 // Single context loader shared by planTeachingTurn and the teaching skill.
 export async function loadTeachingContext(db: Db, learningItemId: string) {
-  const liRows = await db
-    .select({
-      id: learning_item.id,
-      title: learning_item.title,
-      content: learning_item.content,
-      knowledge_ids: learning_item.knowledge_ids,
-      parent_learning_item_id: learning_item.parent_learning_item_id,
-      primary_artifact_id: learning_item.primary_artifact_id,
-    })
-    .from(learning_item)
-    .where(eq(learning_item.id, learningItemId))
-    .limit(1);
-  const li = liRows[0];
-  if (!li) {
-    throw new TeachingError('learning_item_not_found', `learning_item ${learningItemId} not found`);
-  }
-
-  let knowledgeNode: { id: string; name: string; domain: string | null } | null = null;
-  const firstKnowledgeId = (li.knowledge_ids as string[])[0];
-  if (firstKnowledgeId) {
-    const kRows = await db
-      .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
-      .from(knowledge)
-      .where(eq(knowledge.id, firstKnowledgeId))
-      .limit(1);
-    if (kRows[0]) knowledgeNode = kRows[0];
-  }
-
-  let atomicSections: unknown = null;
-  let atomicBodyText: string | null = null;
-  if (li.primary_artifact_id) {
-    const aRows = await db
-      .select({ body_blocks: artifact.body_blocks })
-      .from(artifact)
-      .where(eq(artifact.id, li.primary_artifact_id))
-      .limit(1);
-    if (aRows[0]) {
-      atomicSections = bodyBlocksToNoteSections(aRows[0].body_blocks);
-      atomicBodyText = noteBodyText(aRows[0].body_blocks);
-    }
-  }
-
-  let parentHubSummary: string | null = null;
-  if (li.parent_learning_item_id) {
-    const hubRows = await db
-      .select({ primary_artifact_id: learning_item.primary_artifact_id })
-      .from(learning_item)
-      .where(eq(learning_item.id, li.parent_learning_item_id))
-      .limit(1);
-    const hubArtifactId = hubRows[0]?.primary_artifact_id;
-    if (hubArtifactId) {
-      const haRows = await db
-        .select({ attrs: artifact.attrs })
-        .from(artifact)
-        .where(eq(artifact.id, hubArtifactId))
+  return db.transaction(
+    async (tx) => {
+      await tx.execute(sql`SET LOCAL statement_timeout = '5s'`);
+      const asOf = new Date();
+      const liRows = await tx
+        .select({
+          id: learning_item.id,
+          title: learning_item.title,
+          content: learning_item.content,
+          knowledge_ids: learning_item.knowledge_ids,
+          parent_learning_item_id: learning_item.parent_learning_item_id,
+          primary_artifact_id: learning_item.primary_artifact_id,
+        })
+        .from(learning_item)
+        .where(eq(learning_item.id, learningItemId))
         .limit(1);
-      parentHubSummary =
-        (haRows[0]?.attrs as { summary_md?: string } | undefined)?.summary_md ?? null;
-    }
-  }
+      const li = liRows[0];
+      if (!li) {
+        throw new TeachingError(
+          'learning_item_not_found',
+          `learning_item ${learningItemId} not found`,
+        );
+      }
 
-  return {
-    learning_item: {
-      title: li.title,
-      one_line_intent: li.content,
-      knowledge_node: knowledgeNode ? { id: knowledgeNode.id, name: knowledgeNode.name } : null,
+      let knowledgeNode: { id: string; name: string; domain: string | null } | null = null;
+      const firstKnowledgeId = (li.knowledge_ids as string[])[0];
+      if (firstKnowledgeId) {
+        const kRows = await tx
+          .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+          .from(knowledge)
+          .where(eq(knowledge.id, firstKnowledgeId))
+          .limit(1);
+        if (kRows[0]) knowledgeNode = kRows[0];
+      }
+
+      let atomicSections: unknown = null;
+      let atomicBodyText: string | null = null;
+      if (li.primary_artifact_id) {
+        const aRows = await tx
+          .select({ body_blocks: artifact.body_blocks })
+          .from(artifact)
+          .where(eq(artifact.id, li.primary_artifact_id))
+          .limit(1);
+        if (aRows[0]) {
+          atomicSections = bodyBlocksToNoteSections(aRows[0].body_blocks);
+          atomicBodyText = noteBodyText(aRows[0].body_blocks);
+        }
+      }
+
+      let parentHubSummary: string | null = null;
+      if (li.parent_learning_item_id) {
+        const hubRows = await tx
+          .select({ primary_artifact_id: learning_item.primary_artifact_id })
+          .from(learning_item)
+          .where(eq(learning_item.id, li.parent_learning_item_id))
+          .limit(1);
+        const hubArtifactId = hubRows[0]?.primary_artifact_id;
+        if (hubArtifactId) {
+          const haRows = await tx
+            .select({ attrs: artifact.attrs })
+            .from(artifact)
+            .where(eq(artifact.id, hubArtifactId))
+            .limit(1);
+          parentHubSummary =
+            (haRows[0]?.attrs as { summary_md?: string } | undefined)?.summary_md ?? null;
+        }
+      }
+
+      return {
+        learning_item: {
+          title: li.title,
+          one_line_intent: li.content,
+          knowledge_node: knowledgeNode ? { id: knowledgeNode.id, name: knowledgeNode.name } : null,
+        },
+        parent_hub_summary: parentHubSummary,
+        atomic_sections: atomicSections,
+        atomic_body_text: atomicBodyText,
+        curriculum: await readLearnerCurriculum(tx),
+        learner_picture: await loadTeachingLearnerPicture(tx, firstKnowledgeId, asOf),
+        subjectProfile: resolveSubjectProfile(knowledgeNode?.domain),
+      };
     },
-    parent_hub_summary: parentHubSummary,
-    atomic_sections: atomicSections,
-    atomic_body_text: atomicBodyText,
-    curriculum: await readLearnerCurriculum(db),
-    subjectProfile: resolveSubjectProfile(knowledgeNode?.domain),
-  };
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
 }
 
 async function loadMessages(db: Db, sessionId: string) {
@@ -145,12 +158,13 @@ export async function planTeachingTurn(
   const context = await loadTeachingContext(db, learningItemId);
   const messages = await loadMessages(db, sessionId);
 
-  const input = {
+  const input: TeachingTurnInput = {
     learning_item: context.learning_item,
     parent_hub_summary: context.parent_hub_summary,
     atomic_sections: context.atomic_sections,
     atomic_body_text: context.atomic_body_text,
     curriculum: context.curriculum,
+    learner_picture: context.learner_picture,
     messages,
   };
   const result = await runTaskFn('TeachingTurnTask', input, {
