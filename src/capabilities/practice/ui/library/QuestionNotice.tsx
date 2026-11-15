@@ -21,25 +21,36 @@ import { useForceEnable, useRestore, useVerifyDraft, writeErrorText } from './us
 
 const MIN_REASON = 2;
 
-function DraftNotice({
-  id,
-  admission,
-}: {
-  id: string;
-  /** Shown as a fact only. An old draft is still verified by hand whatever this says. */
-  admission: QuestionFullDetail['serving']['admission'];
-}) {
+function VerificationNotice({ detail }: { detail: QuestionFullDetail }) {
+  const { id, serving } = detail;
+  const { admission } = serving;
+  const sourceFailed = serving.hold_reason === 'source_check_failed';
+  const legacyDraft = isDraft(detail) && !detail.admission_owned;
   const { getDraftDetail } = useLibraryClient();
   const check = useQuery({
     queryKey: [LIBRARY_KEY, 'draft-check', id],
     queryFn: () => getDraftDetail(id),
+    enabled: isDraft(detail),
     retry: false,
   });
   const verify = useVerifyDraft();
   const force = useForceEnable();
   const [forcing, setForcing] = useState(false);
   const [reason, setReason] = useState('');
-  const words = check.data ? VERIFY_WORDS[check.data.verify_status] : null;
+  const canonicalDraftReview = check.data?.id === id ? check.data : null;
+  const words = canonicalDraftReview ? VERIFY_WORDS[canonicalDraftReview.verify_status] : null;
+  const failed = sourceFailed || canonicalDraftReview?.verify_status === 'failed';
+  const title = sourceFailed
+    ? holdWords('source_check_failed').title
+    : failed
+      ? VERIFY_WORDS.failed.word
+      : '这道题还没启用';
+  const Icon = failed ? TriangleAlert : CircleDashed;
+  const canVerify = legacyDraft && !sourceFailed;
+  const sourceAction =
+    sourceFailed &&
+    (serving.next_action?.command === 'recheck_source' ||
+      serving.pending_action?.command === 'recheck_source');
   const busy = verify.isPending || force.isPending;
 
   const runVerify = () =>
@@ -65,64 +76,84 @@ function DraftNotice({
     );
 
   return (
-    <section className="qd-notice" data-tone="accent" aria-label="待审核">
+    <section className="qd-notice" data-tone={failed ? 'caution' : 'accent'} aria-label={title}>
       <p className="qd-notice-title">
-        <CircleDashed size={15} aria-hidden="true" />
-        这道题还没启用
+        <Icon size={15} aria-hidden="true" />
+        {title}
       </p>
       <p className="qd-notice-text">
-        {words ? `${words.word}。` : ''}
-        {check.data?.verify_reason
-          ? '核验写下的原因：'
-          : '核验会检查题目和答案，通过后就开始出给你，可能要等一会儿。'}
+        {failed
+          ? sourceFailed
+            ? holdWords('source_check_failed').why
+            : '这次核验没有通过，题目暂未启用。'
+          : words
+            ? `${words.word}。`
+            : check.isPending
+              ? '正在读取核验结果。'
+              : check.isError
+                ? '核验结果暂时没取到。'
+                : '核验会检查题目和答案，通过后才启用。'}
       </p>
-      {check.data?.verify_reason ? (
-        <MathMarkdown className="qd-notice-reason" notation={check.data.notation}>
-          {check.data.verify_reason}
+      {canonicalDraftReview?.verify_reason?.trim() ? (
+        <MathMarkdown className="qd-notice-reason" notation={canonicalDraftReview.notation}>
+          {canonicalDraftReview.verify_reason}
         </MathMarkdown>
+      ) : failed ? (
+        <p className="qd-notice-text">
+          {check.isFetching ? '正在读取这次核对的具体原因。' : '这次核对的具体原因暂时无法读取。'}
+        </p>
       ) : null}
-      {admission && admission.status !== 'admitted' ? (
+      {!sourceFailed && admission && admission.status !== 'admitted' ? (
         <p className="qd-notice-text">
           {[`自动检查：${ADMISSION_WORDS[admission.status].title}`, admission.reason]
             .filter(Boolean)
             .join('。')}
         </p>
       ) : null}
-      <div className="qd-notice-actions">
-        <Button size="sm" variant="primary" disabled={busy} onClick={runVerify}>
-          {verify.isPending ? '正在核验…' : '核验并启用'}
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          aria-expanded={forcing}
-          aria-controls="qd-force"
-          onClick={() => setForcing((open) => !open)}
-        >
-          不核验，直接启用…
-        </Button>
-      </div>
-      <Expand open={forcing} id="qd-force">
-        <div className="qd-force">
-          <label className="qd-field">
-            <span className="qd-field-label">为什么不用核验（会记下来）</span>
-            <input
-              className="qd-input"
-              value={reason}
-              placeholder="比如：我核对过答案"
-              onChange={(e) => setReason(e.currentTarget.value)}
-            />
-          </label>
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={busy || reason.trim().length < MIN_REASON}
-            onClick={runForce}
-          >
-            直接启用
-          </Button>
+      {(legacyDraft || sourceAction) && (
+        <div className="qd-notice-actions">
+          {canVerify && (
+            <Button size="sm" variant="primary" disabled={busy} onClick={runVerify}>
+              {verify.isPending ? '正在核验…' : '核验并启用'}
+            </Button>
+          )}
+          {sourceAction && <ServingButton serving={serving} variant="primary" />}
+          {legacyDraft && (
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-expanded={forcing}
+              aria-controls="qd-force"
+              onClick={() => setForcing((open) => !open)}
+            >
+              不核验，直接启用…
+            </Button>
+          )}
         </div>
-      </Expand>
+      )}
+      {legacyDraft && (
+        <Expand open={forcing} id="qd-force">
+          <div className="qd-force">
+            <label className="qd-field">
+              <span className="qd-field-label">为什么不用核验（会记下来）</span>
+              <input
+                className="qd-input"
+                value={reason}
+                placeholder="比如：我核对过答案"
+                onChange={(e) => setReason(e.currentTarget.value)}
+              />
+            </label>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy || reason.trim().length < MIN_REASON}
+              onClick={runForce}
+            >
+              直接启用
+            </Button>
+          </div>
+        </Expand>
+      )}
     </section>
   );
 }
@@ -187,8 +218,11 @@ function AdmissionNotice({
 /** The one thing this question needs from you, if anything. */
 export function QuestionNotice({ detail }: { detail: QuestionFullDetail }) {
   if (isDeleted(detail)) return <DeletedNotice id={detail.id} />;
+  if (detail.serving.hold_reason === 'source_check_failed') {
+    return <VerificationNotice detail={detail} />;
+  }
   if (isDraft(detail) && !detail.admission_owned) {
-    return <DraftNotice id={detail.id} admission={detail.serving.admission} />;
+    return <VerificationNotice detail={detail} />;
   }
   const admission = admissionHolding(detail.serving);
   if (admission) return <AdmissionNotice admission={admission} serving={detail.serving} />;
