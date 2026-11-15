@@ -2,8 +2,40 @@
 // question card is only the frame, because the question and its answering belong to practice.
 import { ArrowRight, FileText, ListChecks, LoaderCircle, Network } from 'lucide-react';
 import { A5_BANDS } from '@/core/mastery-band';
+import type { AbilityClaim, EvidenceAge } from '@/core/schema/learner-judgment';
+import type { ApiOperationJsonResponse } from '@/ui/lib/api';
 import type { QuestionCardFrameProps } from '../question-card';
 import './reply-cards.css';
+
+type KnowledgeCardData = Extract<
+  ApiOperationJsonResponse<'getEntityCard'>,
+  { entity_kind: 'knowledge'; state: 'ok' }
+>;
+
+const ABILITY_CLAIM_LABEL: Record<AbilityClaim['kind'], string> = {
+  low_observed: '掌握读数偏低',
+  observed: '掌握读数',
+  insufficient_evidence: '证据不足，尚未判断',
+  not_evaluable: '此节点不评掌握',
+  unavailable: '掌握部件暂不可用',
+};
+
+function evidenceAgeText(age: EvidenceAge): string {
+  switch (age.kind) {
+    case 'dated': {
+      const day = age.idle_days === 0 ? '今天' : `${age.idle_days} 天前`;
+      const fresh =
+        age.freshness === 'fresh' ? '还新' : age.freshness === 'mild' ? '开始变旧' : '已旧';
+      return `作答约在 ${day}（${fresh}）${age.growing ? '；不确定随闲置在增大' : '；不确定未随闲置增大'}`;
+    }
+    case 'undated':
+      return '有作答但没有时间戳，无法判断不确定是否在增大。';
+    case 'not_applicable':
+      return age.reason === 'knowledge_role_not_mastery_evaluable'
+        ? '此节点不评掌握，无随时间变化的本人估计。'
+        : '没有可随时间变宽的本人估计。';
+  }
+}
 
 function OpenLabel() {
   return (
@@ -16,8 +48,9 @@ function OpenLabel() {
 
 export function KnowledgeCard(p: {
   name: string;
-  /** Index into the mastery bands; null when there is no evidence yet, and the card then omits it. */
+  /** Canonical evidenced ability band; null when the judgment has no usable reading. */
   band: number | null;
+  judgment: KnowledgeCardData['judgment'];
   lastPractice: string | null;
   onOpen: () => void;
 }) {
@@ -28,7 +61,27 @@ export function KnowledgeCard(p: {
         知识点
       </span>
       <span className="un-cp-block-title">{p.name}</span>
-      {p.band === null ? null : (
+      {p.judgment ? (
+        <>
+          <span className="un-cp-block-band">
+            会做判断：{ABILITY_CLAIM_LABEL[p.judgment.ability_claim.kind]}
+          </span>
+          <span className="un-cp-block-note">{p.judgment.judgement}</span>
+          <span className="un-cp-block-note">
+            证据时效：{evidenceAgeText(p.judgment.uncertainty.evidence_age)}
+          </span>
+          <span className="un-cp-block-note">
+            评估时点{' '}
+            <time dateTime={p.judgment.batch.as_of}>
+              {new Date(p.judgment.batch.as_of).toLocaleString('zh-CN')}
+            </time>
+            {p.judgment.batch.calibration === 'uncalibrated' ? ' · 未个人校准' : null}
+          </span>
+        </>
+      ) : (
+        <span className="un-cp-block-note">当前判断暂未提供，证据时效与评估时点未知。</span>
+      )}
+      {!p.judgment || p.band === null ? null : (
         <span className="un-cp-block-band">
           <span className="un-cp-block-meter" aria-hidden="true">
             {A5_BANDS.map((word, index) => (

@@ -54,6 +54,7 @@ export function EntityCard({
       <KnowledgeCard
         name={data.name}
         band={data.mastery_band}
+        judgment={data.judgment ?? null}
         lastPractice={
           practice
             ? [shortDate(practice.at), practice.outcome ? OUTCOME_WORDS[practice.outcome] : null]
