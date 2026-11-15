@@ -38,6 +38,15 @@ afterAll(async () => {
   _resetBossForTests();
 });
 
+const ADMITTED = {
+  state: 'admitted' as const,
+  evidence: {
+    marking_provenance: 'official' as const,
+    model_slice: null,
+    verification: { structural_check_passed: true, independent_verification: null },
+  },
+};
+
 async function publish(id: string): Promise<PublicationEmbedJobData> {
   const now = new Date();
   await db.insert(question).values({
@@ -55,14 +64,7 @@ async function publish(id: string): Promise<PublicationEmbedJobData> {
     rootId: id,
     actorRef: 'test:publication',
     now,
-    admission: {
-      state: 'admitted',
-      evidence: {
-        marking_provenance: 'official',
-        model_slice: null,
-        verification: { structural_check_passed: true, independent_verification: null },
-      },
-    },
+    admission: ADMITTED,
   });
   if (published.status !== 'published') throw new Error('question did not publish');
   return { group_id: id, revision_id: published.revision_id, source_event_id: published.event_id };
@@ -207,7 +209,7 @@ it.each(['credentials', 'source', 'purpose', 'abort'] as const)(
         rootId: id,
         actorRef: 'test:republish',
         now: new Date(),
-        admission: { state: 'preserve' },
+        admission: ADMITTED,
       });
       if (current.status !== 'published') throw new Error('changed source did not republish');
       data = { group_id: id, revision_id: current.revision_id, source_event_id: current.event_id };

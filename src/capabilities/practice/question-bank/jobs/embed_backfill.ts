@@ -32,8 +32,8 @@ import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 import {
   EMBED_DIMS,
   EMBED_MODEL,
-  EmbeddingRequestNotSentError,
   type EmbedProviderAttemptOptions,
+  EmbeddingRequestNotSentError,
   embedMany,
 } from '@/server/ai/embed';
 import { embedSolutionPriorVectors } from '../server/admission/solution-prior-vectors';
