@@ -22,6 +22,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { type PiToolMount, piDomainMount } from '@/ai/pi-tool-mount';
 import type { SupplyPlanV1T } from '@/core/schema/supply_plan';
 import type { Db } from '@/db/client';
+import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   type DomainToolName,
@@ -30,6 +31,8 @@ import {
 import { runAgentTask } from '@/server/ai/runner';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
+  type SupplyCauseRequirement,
+  checkSupplyPlanDemandConstraints,
   checkSupplyPlanKnowledgeIds,
   checkSupplyPlanStructure,
   parseSupplyPlanOutput,
@@ -72,6 +75,8 @@ export interface SupplyPlanOperationParams {
   subjectProfile: SubjectProfile;
   /** 活 knowledge 节点全集（caller 快照产出）——checkSupplyPlanKnowledgeIds 的判定集。 */
   liveKnowledgeIds: ReadonlySet<string>;
+  deferredKnowledgeIds: ReadonlySet<string>;
+  causeRequirements: readonly SupplyCauseRequirement[];
   /** 当日 jyeoo 预算余量（caller 快照产出）——checkSupplyPlanStructure 的判定值。 */
   jyeooBudgetRemaining: number;
 }
@@ -149,9 +154,15 @@ export async function runSupplyPlanOperation(
       planRejections.push(parsed.reasons);
       continue;
     }
+    const currentDeferredKnowledgeIds = await loadSteeringDeferredKnowledgeIds(db, new Date());
     const reasons = [
       ...checkSupplyPlanStructure(parsed.plan, { jyeooBudgetRemaining }),
       ...checkSupplyPlanKnowledgeIds(parsed.plan, liveKnowledgeIds),
+      ...checkSupplyPlanDemandConstraints(
+        parsed.plan,
+        new Set([...params.deferredKnowledgeIds, ...currentDeferredKnowledgeIds]),
+        params.causeRequirements,
+      ),
     ];
     if (reasons.length === 0) {
       plan = parsed.plan;

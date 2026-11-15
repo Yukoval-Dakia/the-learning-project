@@ -39,7 +39,10 @@ export {
 } from './server/band-level';
 export {
   SUPPLY_CAUSE_RECURRENCE_THRESHOLD,
+  type SupplyCauseRequirement,
+  countSupplyKindCoverage,
   loadSupplyCauseSignals,
+  supplyCauseRef,
   supplyKindForWeakPoint,
 } from './server/cause-driven-supply';
 export { loadCoverageLattice } from './server/coverage-lattice';
@@ -179,6 +182,7 @@ export {
 } from './server/placement-starter-store';
 export { isUnanchoredSupplyPaused } from './server/spend-gate';
 export {
+  checkSupplyPlanDemandConstraints,
   checkSupplyPlanKnowledgeIds,
   checkSupplyPlanStructure,
   parseSupplyPlanOutput,

@@ -61,6 +61,7 @@ import {
 } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
+import { answerClassCompatible } from '@/subjects/question-kind';
 import { rotationClassForKind } from '../../scheduling/public';
 // Stable fingerprint lives in a runtime-free module so operator tooling can derive a target
 // without loading this scanner's readers.
@@ -533,13 +534,13 @@ export function scanCoverageGaps(
 
     for (const point of causes) {
       const kind = supplyKindForWeakPoint(point);
-      if (pool.some((question) => question.kind === kind)) continue;
+      if (pool.some((question) => answerClassCompatible(question.kind, kind))) continue;
       push(f, 'format_diversity', {
         kind,
         difficultyBand: 'near',
         desiredCount: 1,
         minSourceTier: 3,
-        reason: `${causeReason(point)}; missing practice format ${kind}`,
+        reason: `${causeReason(point)}; missing answer-class-compatible practice for ${kind} (not a literal-kind or cause-treatment guarantee)`,
         constraints: { kindRequired: true },
         // Cause recurrence stays below zero-evidence cold-start coverage (priority 1).
         priority: misconceptions.length > 0 ? 0.9 : 0.8,
@@ -790,7 +791,8 @@ export async function assembleScanInput(db: Db | Tx): Promise<ScanInput> {
             point.failure_count >= SUPPLY_CAUSE_RECURRENCE_THRESHOLD &&
             !questions.some(
               (q) =>
-                q.knowledgeIds.includes(f.knowledgeId) && q.kind === supplyKindForWeakPoint(point),
+                q.knowledgeIds.includes(f.knowledgeId) &&
+                answerClassCompatible(q.kind, supplyKindForWeakPoint(point)),
             ),
         ),
     )

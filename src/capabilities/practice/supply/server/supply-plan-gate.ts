@@ -9,6 +9,8 @@ import {
   SupplyPlanV1,
   type SupplyPlanV1T,
 } from '@/core/schema/supply_plan';
+import { answerClassCompatible } from '@/subjects/question-kind';
+import type { SupplyCauseRequirement } from './cause-driven-supply';
 
 export type SupplyPlanParseResult =
   | { ok: true; plan: SupplyPlanV1T }
@@ -109,5 +111,43 @@ export function checkSupplyPlanKnowledgeIds(
       );
     }
   });
+  return reasons;
+}
+
+export function checkSupplyPlanDemandConstraints(
+  plan: SupplyPlanV1T,
+  deferredKnowledgeIds: ReadonlySet<string>,
+  causeRequirements: readonly SupplyCauseRequirement[],
+): string[] {
+  const reasons: string[] = [];
+  const byRef = new Map(causeRequirements.map((requirement) => [requirement.ref, requirement]));
+  const served = new Set<string>();
+  const selectedKnowledgeIds = new Set(plan.items.map((item) => item.knowledge_id));
+  for (const [index, item] of plan.items.entries()) {
+    if (deferredKnowledgeIds.has(item.knowledge_id))
+      reasons.push(`items[${index}] knowledge is deferred`);
+    for (const ref of item.cause_refs ?? []) {
+      const requirement = byRef.get(ref);
+      if (
+        !requirement ||
+        requirement.knowledge_id !== item.knowledge_id ||
+        item.kind === 'any' ||
+        !answerClassCompatible(item.kind, requirement.required_kind)
+      ) {
+        reasons.push(`items[${index}] has an invalid cause reference or answer class`);
+      } else {
+        served.add(ref);
+      }
+    }
+  }
+  // Other demands on the same KC remain legal siblings; they cannot stand in for
+  // its selected cause demands, nor can free-text rationale establish that binding.
+  for (const requirement of causeRequirements) {
+    if (selectedKnowledgeIds.has(requirement.knowledge_id) && !served.has(requirement.ref)) {
+      reasons.push(
+        `selected knowledge ${requirement.knowledge_id} needs cause_refs ${requirement.ref} with answer class of ${requirement.required_kind}`,
+      );
+    }
+  }
   return reasons;
 }

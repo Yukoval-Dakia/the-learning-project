@@ -22,7 +22,8 @@ function buildSupplyPlanPrompt(profile: SubjectProfile): string {
   date: 今晚日期,
   today: 今晚日期与星期（YYYY-MM-DD（周X））,
   subjects: [{ id, display_name, knowledge_nodes: 节点数, frontier: [{ id, name, theta, evidence_count, available_questions, draft_questions, available_by_kind: { 题型: 可发题数 } }] }],
-  cause_signals: { recurrence_threshold: 3, weak_points: { as_of, window_since, scanned_failure_count, weak_points: [{ knowledge_id, cause_category, cause_label, meta_cause, training_destination, required_kind, target_md, failure_count, evidence_strength, evidence_refs }], unknowns }, active_misconceptions: [{ knowledge_id, items: [{ id, title, reasoning, seen }] }] },
+  cause_signals: { recurrence_threshold: 3, weak_points: { as_of, window_since, scanned_failure_count, weak_points: [{ ref, knowledge_id, cause_category, cause_label, meta_cause, training_destination, required_kind, compatible_available_questions, target_md, failure_count, evidence_strength, evidence_refs }], unknowns }, active_misconceptions: [{ knowledge_id, items: [{ id, title, reasoning, seen }] }] },
+  cause_requirements: [{ ref, knowledge_id, required_kind }],  // 已达到复发门槛、非零池且缺兼容答案类的可规划需求
   pending_placement_claims: [{ claim_id, subject_id, knowledge_id }],  // 诊断放置等已声明的供给需求
   selection_misses: [{ knowledge_id, subject_id, reason, event_id, recorded_at }],  // 到期复习选不出可出的题
   steering?: [{ goal_id, instruction_md, learner_words, scope_knowledge_ids, scope_unresolved, until, days_left }],  // 学习者亲口说出的考试/优先安排（在窗口内生效）
@@ -35,7 +36,8 @@ function buildSupplyPlanPrompt(profile: SubjectProfile): string {
 - steering 出现时：考纲内（scope_knowledge_ids）的格子优先补——离 until 越近（days_left 越小）优先级越高；scope_unresolved 是对不上知识点的范围文字，只能忽略，不能发明 id 去填。steering 不改变任何硬约束（仍是同一套 25 项/预算/机检），也不免任何检查。
 - 优先补：available_questions = 0 的前缘节点（零覆盖冷启动）、evidence_count 低但有掌握信号的节点、pending_placement_claims 指向的节点（诊断放置需要题）。
 - selection_misses 是已经落账的选题落空：这些知识点到期，但没有可出的题。夜间供给扫描会按 selection_miss 补它们。不要把同一知识点再写进 items，避免当晚补两次。available_questions 大于 0 仍可能一道都不可出，以 selection_misses 为准。
-- 错因驱动：同一 weak_point 的 failure_count ≥ recurrence_threshold 才是本轮要处理的同错因复发；这是 canonical 读口按独立失败去重后的计数，不累加不同错因、不同知识点或 evidence_refs。若该 KC 的 available_by_kind 缺 required_kind，即使 available_questions > 0 也应补该题型 1 道，rationale 明写「错因驱动」、cause_category、failure_count 和 training_destination。已有该题型时不凭错因再扩题；题型存在只说明格式覆盖，不能声称错因已消除。
+- 错因驱动：同一 weak_point 的 failure_count ≥ recurrence_threshold 才是同错因复发；只用 canonical 独立失败计数，不累加不同错因、KC 或 evidence_refs。以 compatible_available_questions 判覆盖（null 是未测，不是零）：这是执行门相同的答案类兼容口径，含别名，不是 literal kind。choice/fill_blank/true_false 可同属 exact；short_answer 等按现有 semantic 兼容规则覆盖。只承诺答案类代理，不承诺字面题型或已命中/消除错因。
+- cause_requirements 是机器门要核的错因需求：计划选中其中某 KC 时，必须有匹配答案类的项目用 cause_refs 数组引用该 KC 的全部待补 ref；同一答案类多个 ref 合并进同一项。kind='any' 不能承接 cause_refs，另一答案类、未知 ref、跨 KC 引用都会拒绝；同 KC 的其他独立需求可作为不带 cause_refs 的项目并存，但不能替代错因项目。错因项目 count=1，rationale 写「错因驱动」、cause_category、failure_count、training_destination。未选的 KC 可以留待后续，空计划仍合法；不要为塞入需求突破预算/25 项。
 - active_misconceptions 是同 KC 的活跃误解上下文，可提高已达到复发门槛的缺口优先级并帮助说明训练目的；seen 不是独立失败数，不能拿来凑 3 次，也不能把同 KC 的所有误解说成同一个错因。unknowns 保持未知；knowledge_id=null 时不能编造落点；单次失败、纯掌握偏弱不单独驱动补题。
 - available_questions = 0 仍优先冷启动；错因信息写入同一格子的 rationale，不另发重复格子。草稿不算可发覆盖；可发题型和覆盖充足且无上述缺口的节点不要补。
 - 难度档按该节点的 theta 与 evidence_count 判断：无信号给 'near'，theta 低给 'below'/'near'，theta 高且需要拉开给 'above'/'stretch'。
