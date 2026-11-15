@@ -262,17 +262,25 @@ const COPILOT_ASK_MEMORY_KEYS = new Set([
   'chip_kind',
 ]);
 
+function omitTurnDiscussion(payload: Record<string, unknown>): Record<string, unknown> {
+  if (!Object.hasOwn(payload, 'discussion')) return payload;
+  // Entity links are evidence about the turn, not text the learner authored.
+  const { discussion: _discussion, ...rest } = payload;
+  return rest;
+}
+
 function redactQuestionEvidenceForMemory(action: string, payload: unknown): unknown {
   if (!isJsonObject(payload)) return payload;
+  const source = omitTurnDiscussion(payload);
   if (action === 'experimental:copilot_user_ask') {
     const picked: Record<string, unknown> = {};
-    for (const key of COPILOT_ASK_MEMORY_KEYS) if (key in payload) picked[key] = payload[key];
+    for (const key of COPILOT_ASK_MEMORY_KEYS) if (key in source) picked[key] = source[key];
     return picked;
   }
   // review_answer carries the learner's verbatim submission + reasoning_trace
   // as a copilot attachment. The turn's user_message still extracts; the
   // answer text itself never enters the infer prompt.
-  const { review_answer: _reviewAnswer, ...rest } = payload;
+  const { review_answer: _reviewAnswer, ...rest } = source;
   if (!isJsonObject(rest.question_snapshot)) return rest;
   const snapshot = rest.question_snapshot;
   const redactReference = (context: unknown): unknown => {

@@ -301,6 +301,7 @@ export async function reserveCopilotDurableAcceptance(
       reviewAnswer: input.reviewAnswer,
       draftFocus: input.jobData?.draft_focus,
       confirmation: input.confirmation,
+      focusedEntity: input.jobData?.ambient?.focused_entity,
       now: new Date(),
       ...(deterministicRunId ? { eventId: deterministicRunId } : {}),
     });
