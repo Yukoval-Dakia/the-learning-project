@@ -9,10 +9,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
 import { Button, Chip } from '@/ui-next/public';
-
-import { getAppealStatus, type AppealStatus } from './practice-api';
-import { usePracticeClient } from './practice-client';
 import type { PaperSlot } from './practice-api';
+import { type AppealStatus, getAppealStatus } from './practice-api';
+import { usePracticeClient } from './practice-client';
 import { VERDICT_OF } from './use-practice-submit';
 
 const APPEAL_POLL_MS = 3000;

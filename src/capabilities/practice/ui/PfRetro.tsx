@@ -25,8 +25,8 @@ import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { Button, Chip } from '@/ui-next/public';
 
 import type { PaperTaskRef } from '../session/public';
-import type { PaperSlot } from './practice-api';
 import { PaperRetroAppeal } from './PaperRetroAppeal';
+import type { PaperSlot } from './practice-api';
 import { usePracticeClient } from './practice-client';
 
 type Verdict = 'good' | 'hard' | 'again';
