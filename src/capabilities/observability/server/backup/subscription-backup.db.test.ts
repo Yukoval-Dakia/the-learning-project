@@ -66,6 +66,7 @@ const liveSubscriberIdentities = [
   ['practice.learner-return-wake', 1],
   ['practice.question-admission-enqueue', 1],
   ['practice.serving-recheck', 1],
+  ['practice.settlement-stream-rerank', 1],
   ['practice.upload-ready', 1],
   ['practice.web-supply-observe', 1],
 ];
