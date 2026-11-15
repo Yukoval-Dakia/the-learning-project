@@ -63,6 +63,7 @@ import {
   readLearnerJudgments,
   readQuestionCardReviewTimings,
 } from '@/kernel/read-models/learner-judgment';
+import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { EVIDENCE_DEMAND_VERSION } from '@/kernel/supply-contracts';
 import { getPracticeList } from '../../session/public';
@@ -387,6 +388,10 @@ async function readAttemptWindows(
           sql`, `,
         )})
         and e.action in ('attempt', 'experimental:assessment_attempt')
+        // Purpose gate BEFORE the window cap: only derivation-eligible attempt rows
+        // count toward recent_attempts. A restricted newer event must not push an
+        // allowed older one out of the six-row window.
+        and ${sourceAllowsDerivationSql({ kind: 'event', id: sql.raw('e.id') })}
     ) ranked
     where rn <= ${ATTEMPT_WINDOW}
     order by subject_id, rn
@@ -448,14 +453,20 @@ async function readAttemptWindows(
     const latest = bucket[0] ?? null;
     const latestOutcome = latest === null ? null : effectiveOutcome(latest);
     out.set(id, {
-      // A completed window is the lifetime history; a clipped window is only a floor.
-      count: windowComplete
-        ? knownSignal(bucket.length, 'kernel/events:event.attempt', asOf)
-        : unknownSignal<number>(
-            'kernel/events:event.attempt',
-            asOf,
-            'attempt_history_exceeds_window; count is a floor, not a lifetime total',
-          ),
+      // A completed window over derivation-eligible rows is the visible history; a
+      // clipped window is only a floor. An empty window is NOT a proven zero — the
+      // learner may have attempts that are all derivation-restricted — so it stays
+      // unknown rather than a fabricated lifetime count.
+      count:
+        windowComplete && (fetchedByQuestion.get(id) ?? 0) > 0
+          ? knownSignal(bucket.length, 'kernel/events:event.attempt', asOf)
+          : unknownSignal<number>(
+              'kernel/events:event.attempt',
+              asOf,
+              (fetchedByQuestion.get(id) ?? 0) === 0
+                ? 'no_derivation_eligible_attempts_in_scope; may be none or all restricted'
+                : 'attempt_history_exceeds_window; count is a floor, not a lifetime total',
+            ),
       outcomes: counts,
       last_at: latest ? new Date(latest.created_at).toISOString() : null,
       last_outcome:
