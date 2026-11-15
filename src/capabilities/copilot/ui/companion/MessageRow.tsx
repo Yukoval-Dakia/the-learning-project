@@ -81,6 +81,7 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   const turnId = m.reply_event_id;
   const canCorrect = settled && turnId !== undefined && props.turnNumber !== undefined;
   const checkpoint = settled ? m.checkpoint_event_id : undefined;
+  const helpReturnTarget = m.help_return_target;
   return (
     <div className="un-cp-row un-cp-row-ai" data-streaming={generating ? '' : undefined}>
       {/* YUK-1664 — settled: the reply's steps fold into one summary line above the text. */}
@@ -99,17 +100,33 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
           {generationStatus}
         </p>
       ) : null}
-      {settled && props.retry ? (
+      {helpReturnTarget || (settled && props.retry) ? (
         <div className="un-cp-row-actions">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={props.retry.pending || props.retry.disabled}
-            onClick={props.retry.onRetry}
-          >
-            <RefreshCw size={13} aria-hidden="true" />
-            {props.retry.pending ? '发送中…' : '再发一次'}
-          </Button>
+          {helpReturnTarget ? (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  props.navigate(`/questions/${encodeURIComponent(helpReturnTarget.id)}`)
+                }
+              >
+                回看这道题
+              </Button>
+              <span className="un-cp-reply-status">查看已有材料和记录</span>
+            </>
+          ) : null}
+          {settled && props.retry ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={props.retry.pending || props.retry.disabled}
+              onClick={props.retry.onRetry}
+            >
+              <RefreshCw size={13} aria-hidden="true" />
+              {props.retry.pending ? '发送中…' : '再发一次'}
+            </Button>
+          ) : null}
         </div>
       ) : null}
       {m.confirmationIncompatible && <p role="alert">确认题版本或状态不兼容，暂不能操作。</p>}
