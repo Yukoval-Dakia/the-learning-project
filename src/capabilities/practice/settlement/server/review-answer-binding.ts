@@ -131,6 +131,7 @@ export async function captureReviewAnswerBinding(
     'solo_submit',
     original.question_id,
     original.assessment,
+    { reasoning_trace: original.reasoning_trace },
   );
   const [clock] = await database.execute<{ now_ms: number }>(
     sql`SELECT (extract(epoch FROM clock_timestamp()) * 1000)::double precision AS now_ms`,
