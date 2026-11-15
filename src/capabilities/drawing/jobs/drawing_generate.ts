@@ -21,6 +21,7 @@ import { classifyLoginFailure } from '@/server/ai/login-failure';
 import { TaskConfigError } from '@/server/ai/providers';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { getStartedBoss } from '@/server/boss/client';
+import { DrawingImageInputError, loadDrawingImageInput } from '../server/drawing-image-input';
 import {
   DRAWING_JOB_NAME,
   DRAWING_LOGIN_RETRY_MS,
@@ -293,10 +294,11 @@ async function processDrawing(
   }
 
   try {
+    const input = await loadDrawingImageInput(db, row);
     const runText = makeRunTaskTextFn(db);
     const result = await runText(
       DRAWING_TASK_KIND,
-      { brief: row.brief, alt: row.alt, ...(row.caption ? { caption: row.caption } : {}) },
+      input,
       {
         // Literal wire assert: closes the gap between the claim-time resolve
         // and the actual provider request (a repin mid-run cannot slip through).
@@ -392,6 +394,10 @@ async function processDrawing(
   } catch (error) {
     // The pre-send fence wrote its own closure — do not overwrite it.
     if (error instanceof DrawingAbortedError) return;
+    if (error instanceof DrawingImageInputError) {
+      await transition(db, row, 'failed', { error_kind: error.code, error_detail: error.message });
+      return;
+    }
     const login =
       classifyLoginFailure(error) ??
       (error instanceof ChatGPTOAuthFileError ? { kind: 'credential' as const } : undefined);

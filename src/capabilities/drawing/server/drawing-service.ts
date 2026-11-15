@@ -32,6 +32,7 @@ import {
 import type { DrawingBlockIssue, DrawingRequestOutcome } from '@/kernel/tools/drawing-request';
 import type { TurnSourceLedger } from '@/kernel/tools/source-ledger';
 import { getStartedBoss } from '@/server/boss/client';
+import { DrawingImageInputError, readDrawingImageManifest } from './drawing-image-input';
 import {
   DRAWING_EXPIRABLE_STATUSES,
   DRAWING_LIVE_STATUSES,
@@ -58,6 +59,7 @@ const UNJUDGED_DETAIL =
 const ERROR_DETAILS: Record<string, string> = {
   restricted_source: RESTRICTED_DETAIL,
   unjudged_source: UNJUDGED_DETAIL,
+  source_image_unavailable: '原题图片的版本、公开范围或内容无法核验，这次绘图没有执行。',
   quota: '绘图额度暂时用尽，正在等待恢复；恢复后自动继续，不需要重新请求。',
   login: '绘图服务登录失效，正在等待重新登录；恢复后自动继续，不需要重新请求。',
   provider: '绘图服务暂时不可用，这次生成没有成功。可以手动重画。',
@@ -83,10 +85,16 @@ export function drawingBossJobId(drawingId: string, version: number): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function dedupeKey(sessionId: string, brief: string, alt: string, caption?: string): string {
+function dedupeKey(
+  sessionId: string,
+  brief: string,
+  alt: string,
+  caption?: string,
+  images = '',
+): string {
   // \x00 separators keep concatenated fields unambiguous across boundary shifts.
   return createHash('sha256')
-    .update(`${sessionId}\x00${brief}\x00${alt}\x00${caption ?? ''}`)
+    .update(`${sessionId}\x00${brief}\x00${alt}\x00${caption ?? ''}${images ? `\x00${images}` : ''}`)
     .digest('hex');
 }
 
@@ -127,13 +135,22 @@ export async function sourceEpochsIntact(
  */
 export async function drawingSourcesAuthorized(
   db: Db | Tx,
-  row: Pick<DrawingRow, 'sources' | 'source_epochs' | 'source_scoped'>,
+  row: Pick<
+    DrawingRow,
+    'sources' | 'source_epochs' | 'source_scoped' | 'session_id' | 'source_event_id'
+  >,
 ): Promise<boolean> {
   if (row.sources.length > 0 && !(await recheckSources(db, row.sources)).ok) return false;
   if (row.source_epochs.length > 0 && !(await sourceEpochsIntact(db, row.source_epochs))) {
     return false;
   }
   if (row.source_scoped.length > 0 && (await anyRestrictedLearnerSource(db))) return false;
+  try {
+    await readDrawingImageManifest(db, row);
+  } catch (error) {
+    if (error instanceof DrawingImageInputError) return false;
+    throw error;
+  }
   return true;
 }
 
@@ -274,7 +291,6 @@ export async function requestDrawing(
   // Hoisted: closure narrows do not survive into the transaction callback.
   const sessionId = ctx.sessionId;
   const boss = await (deps.boss ?? getStartedBoss)();
-  const key = dedupeKey(sessionId, input.brief, input.alt, input.caption);
   return ctx.db.transaction(async (tx) => {
     // Lock source documents FOR SHARE, then re-derive authorization and freeze
     // epochs — the stored set is what the send gate re-checks, never model claims.
@@ -304,6 +320,28 @@ export async function requestDrawing(
         };
       }
     }
+
+    let imageManifest: Awaited<ReturnType<typeof readDrawingImageManifest>>;
+    try {
+      imageManifest = await readDrawingImageManifest(tx, {
+        session_id: sessionId,
+        sources: [...snapshot.sources],
+        source_event_id: ctx.causedByEventId ?? null,
+      });
+    } catch (error) {
+      if (!(error instanceof DrawingImageInputError)) throw error;
+      return {
+        status: 'unavailable',
+        issues: [{ code: error.code, path: '/brief', detail: error.message }],
+      };
+    }
+    const key = dedupeKey(
+      sessionId,
+      input.brief,
+      input.alt,
+      input.caption,
+      imageManifest.length ? JSON.stringify(imageManifest) : '',
+    );
 
     // Same-content dedupe: a `ready` row holds the key without a TTL (it is
     // served, not waited on); an expired wait row still occupies the partial
