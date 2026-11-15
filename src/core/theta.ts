@@ -75,8 +75,9 @@ export function conjunctiveItemProb(thetas: number[], b: number): number {
 }
 
 /**
- * Multi-KC conjunctive credit assignment: one outcome, several θ_k. Returns each KC's
- * log-likelihood gradient; the caller applies its own K and bWeight.
+ * Multi-KC conjunctive credit assignment: one outcome, several θ_k. Multiple KCs use
+ * log-likelihood gradients; a single KC uses the Elo residual, including structural
+ * chance when known. The caller applies its own K and bWeight.
  *
  *   correct: (1 − p_k)
  *   wrong:   −(1 − p_k) · P_item/(1 − P_item)
@@ -246,10 +247,9 @@ export function pushRtCorrectSample(
 }
 
 /**
- * Continuous conjunctive credit: accepts srtOutcome ∈ [0,1] and delegates at exactly
- * 0/1 so the binary path stays byte-identical. The direction magnitude m scales the
- * whole vector toward zero as the answer slows; the (1−p_k) sensitivity and per-KC
- * clamp are preserved.
+ * Continuous conjunctive credit: delegates at 0/1 for exact binary endpoints.
+ * A single KC lifts latent SRT onto the structural chance scale; multiple KCs retain
+ * the direction magnitude, (1−p_k) sensitivity and per-KC clamp.
  */
 export function conjunctiveCreditsContinuous(
   thetas: number[],
@@ -261,10 +261,13 @@ export function conjunctiveCreditsContinuous(
   if (outcome === 1) return conjunctiveCredits(thetas, b, 1, guessRate);
   if (outcome === 0) return conjunctiveCredits(thetas, b, 0, guessRate);
 
-  const ps = thetas.map((t) => expectedScore(t, b, thetas.length === 1 ? guessRate : 0));
+  const ps = thetas.map((t) => expectedScore(t, b));
   if (ps.length <= 1) {
-    // Single KC (or empty) keeps the continuous Elo residual.
-    return ps.map((p) => outcome - p);
+    if (guessRate === 0) return ps.map((p) => outcome - p);
+    // Lift latent SRT as q=c*y+(1-c)*s, with y given by its signed direction.
+    // Factor q-P3PL so adding chance cannot flip a positive correct residual by cancellation.
+    const chanceResidual = outcome >= 0.5 ? 0 : -guessRate;
+    return ps.map((p) => (1 - guessRate) * (outcome - p) + chanceResidual);
   }
   if (outcome >= 0.5) {
     const m = 2 * (outcome - 0.5);
