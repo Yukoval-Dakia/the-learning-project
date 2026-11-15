@@ -12,7 +12,16 @@ export const loadNoteReaderPage = () =>
 
 export const loadNotesPage = () => import('./ui/NotesPage').then((module) => module.default);
 
-export { NoteListResponseSchema, NotePageJsonResponseSchema } from './api/contracts';
+export type { NoteBodyBlocksWire } from './api/contracts';
+export {
+  NoteBodyBlocksWireSchema,
+  NoteListResponseSchema,
+  NotePageJsonResponseSchema,
+  parseNoteBodyBlocks,
+} from './api/contracts';
+export { questionDetailHref } from './ui/NoteBlocks';
+export type { NoteBodyBlock, NoteDocBodyProps } from './ui/NoteDocBody';
+export { NoteDocBody } from './ui/NoteDocBody';
 export type { NoteListResponse, NoteListRow } from './ui/notes-api';
 export type NoteListClient = typeof import('./ui/notes-api').listNotes;
 

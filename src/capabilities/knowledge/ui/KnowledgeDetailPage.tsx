@@ -24,6 +24,11 @@ import {
   Target,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
+import {
+  NoteDocBody,
+  parseNoteBodyBlocks,
+  questionDetailHref,
+} from '@/capabilities/notes/ui-public';
 import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import { ToastHost } from '@/ui-next/feedback/ToastHost';
 import { FoldList } from '@/ui-next/primitives/FoldList';
@@ -225,6 +230,9 @@ export default function KnowledgeDetailPage({
 
   const db = DECAY_BUCKET_META[node.mastery_decay_bucket];
   const primary = node.primary_atomic;
+  // 主笔记正文经 Notes-owned wire decoder：Knowledge 的窄生成类型不保证
+  // artifact_id/question_id 等 attrs，safeParse 失败走中性降级（不写假链接）。
+  const primaryBody = primary ? parseNoteBodyBlocks(primary.body_blocks) : null;
   const discussJudgment = () => {
     setCompanionFocus({ kind: 'knowledge', id: node.id, title: node.name });
     openCopilot(
@@ -364,16 +372,27 @@ export default function KnowledgeDetailPage({
                       </span>
                       <span className="kn-primary-title">{primary.title}</span>
                     </div>
-                    {/* T6 简化渲染：从 semanticBlock 抽 source_markdown；
-                        完整块渲染（NoteBlocks）随 T7 阅读器落地后可替换。 */}
+                    {/* 设计「主笔记用的就是同一套块渲染（只读）」：与完整阅读器共用
+                        NoteDocBody + Notes CSS scope；data-note-embed 只抵消 reader
+                        版心负边距/页面底色，不另套 reader 三栏布局。解码失败的正文不猜
+                        不渲，给中性降级 + 保「在阅读器中打开」。 */}
                     <div className="kn-primary-body">
-                      {(primary.body_blocks?.content ?? [])
-                        .filter((b) => b.attrs?.source_markdown)
-                        .map((b) => (
-                          <p key={b.attrs?.id ?? b.attrs?.source_markdown} className="kn-primary-p">
-                            {b.attrs?.source_markdown}
-                          </p>
-                        ))}
+                      {primaryBody ? (
+                        <UiNextRoot className="nt-page" data-note-embed="">
+                          <NoteDocBody
+                            type="note_atomic"
+                            title={primary.title}
+                            interactive={null}
+                            blocks={primaryBody.content}
+                            navigate={navigate}
+                            onOpenQuestion={(questionId) =>
+                              navigate(questionDetailHref(questionId))
+                            }
+                          />
+                        </UiNextRoot>
+                      ) : (
+                        <p className="kn-quiet">正文暂时无法预览，可打开阅读器查看。</p>
+                      )}
                     </div>
                     <div className="kn-primary-acts">
                       <Button

@@ -1571,13 +1571,6 @@
     gap: var(--un-sp-2);
   }
 
-  & .kn-primary-p {
-    color: var(--un-text-2);
-    font-size: var(--un-fs-2);
-    line-height: var(--un-lh-prose);
-    white-space: pre-wrap;
-  }
-
   & .kn-primary-acts {
     padding-top: var(--un-sp-3);
     border-top: var(--un-hairline) solid var(--un-line);
