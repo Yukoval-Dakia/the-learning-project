@@ -8,7 +8,7 @@ import { Memory } from 'mem0ai/oss';
 import type { Job } from 'pg-boss';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installModelEndpointHostAllowlist } from '@/core/config/model-endpoint-allowlist';
-import { event, provider_attempt } from '@/db/schema';
+import { event, learning_session, provider_attempt } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { createMemoryClient } from '@/server/ai/mem0/client';
@@ -88,8 +88,19 @@ describe('actual SDK failure through Memory ingestion owner', () => {
     legacyHistory = false,
   ) {
     const id = randomUUID();
+    const sessionId = randomUUID();
+    await testDb().insert(learning_session).values({
+      id: sessionId,
+      type: 'conversation',
+      status: 'active',
+      started_at: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
     await writeEvent(testDb(), {
       id,
+      session_id: sessionId,
       actor_kind: 'user',
       actor_ref: 'user:memory-test',
       action: 'experimental:copilot_user_ask',

@@ -2,9 +2,11 @@
 // Question-bank authoring is audit history; Mem0 inference has a separate,
 // narrower gate so it cannot restrict Curator, brief or profile evidence.
 
-import { inArray, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { allowsDerivation } from '@/core/schema/derivation-policy';
-import { event } from '@/db/schema';
+import type { Db, Tx } from '@/db/client';
+import { event, learning_session } from '@/db/schema';
+import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
 import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 
@@ -78,17 +80,35 @@ export type MemoryIngestAdmission =
   | { kind: 'verbatim'; claim: string; conjectureId: string }
   | { kind: 'excluded' };
 
+export type MemorySourceSessionState =
+  | { readonly present: false; readonly deletionRequested: false; readonly deleted: false }
+  | {
+      readonly present: true;
+      readonly deletionRequested: boolean;
+      readonly deleted: boolean;
+    };
+
 /** Ingest and operator recovery share one decision, separate from general evidence. */
 export function memoryIngestAdmission(input: {
   actor_kind: string;
   action: string;
   subject_kind: string;
   payload: unknown;
+  session_id: string | null | undefined;
+  session_state: MemorySourceSessionState;
 }): MemoryIngestAdmission {
+  const sourceAllowsSessionState =
+    input.session_id !== undefined &&
+    (input.session_id === null
+      ? !input.session_state.present
+      : input.session_state.present &&
+        !input.session_state.deletionRequested &&
+        !input.session_state.deleted);
   if (
     !shouldExtractToMemory(input) ||
     isLearnerAnswerAction(input.action) ||
-    !allowsDerivation(input.payload)
+    !allowsDerivation(input.payload) ||
+    !sourceAllowsSessionState
   ) {
     return { kind: 'excluded' };
   }
@@ -96,6 +116,7 @@ export function memoryIngestAdmission(input: {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload))
     return { kind: 'excluded' };
   if (input.action === COPILOT_USER_ASK_ACTION) {
+    if (input.session_id === null) return { kind: 'excluded' };
     return 'user_message' in payload &&
       typeof payload.user_message === 'string' &&
       payload.user_message.trim().length > 0
@@ -119,6 +140,47 @@ export function memoryIngestAdmission(input: {
     if (claim && conjectureId) return { kind: 'verbatim', claim, conjectureId };
   }
   return { kind: 'excluded' };
+}
+
+/** Owner-level source read: one event, live purpose, and live session deletion state. */
+export async function readMemorySourceAdmission(
+  db: Db | Tx,
+  sourceId: string,
+): Promise<MemoryIngestAdmission> {
+  if ((await readEventDerivationPolicy(db, sourceId)) !== 'allow') return { kind: 'excluded' };
+  const rows = await db
+    .select({
+      actor_kind: event.actor_kind,
+      action: event.action,
+      subject_kind: event.subject_kind,
+      payload: event.payload,
+      session_id: event.session_id,
+    })
+    .from(event)
+    .where(eq(event.id, sourceId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return { kind: 'excluded' };
+  const sessionRows = row.session_id
+    ? await db
+        .select({
+          deletionRequestedAt: learning_session.deletion_requested_at,
+          deletedAt: learning_session.deleted_at,
+        })
+        .from(learning_session)
+        .where(eq(learning_session.id, row.session_id))
+        .limit(1)
+    : [];
+  const sessionState: MemorySourceSessionState = row.session_id
+    ? sessionRows[0]
+      ? {
+          present: true,
+          deletionRequested: sessionRows[0].deletionRequestedAt !== null,
+          deleted: sessionRows[0].deletedAt !== null,
+        }
+      : { present: false, deletionRequested: false, deleted: false }
+    : { present: false, deletionRequested: false, deleted: false };
+  return memoryIngestAdmission({ ...row, session_state: sessionState });
 }
 
 /**

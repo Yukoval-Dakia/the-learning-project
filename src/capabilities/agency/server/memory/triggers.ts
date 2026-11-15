@@ -10,7 +10,7 @@ import {
 import { loadSubjectBriefEvents, subjectScopeHasNewEvidence } from './active-subjects';
 import { type GenerateBrief, regenerateMemoryBrief, scopeHasNewEvidence } from './brief';
 import { executePurposeBrief } from './brief-purpose';
-import { memoryIngestAdmission } from './learner-evidence';
+import { readMemorySourceAdmission } from './learner-evidence';
 import {
   type MemoryClient,
   type MemoryEventInput,
@@ -106,19 +106,7 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
   const rows = await db
     .select()
     .from(event)
-    .where(
-      and(
-        eq(event.id, eventId),
-        eventAllowsDerivationSql(),
-        // A deleting/deleted conversation stops feeding extraction at the load
-        // choke point: outbox rows already queued simply resolve to null.
-        sql`NOT EXISTS (
-          SELECT 1 FROM learning_session ls
-          WHERE ls.id = ${event.session_id}
-            AND (ls.deletion_requested_at IS NOT NULL OR ls.deleted_at IS NOT NULL)
-        )`,
-      ),
-    )
+    .where(and(eq(event.id, eventId), eventAllowsDerivationSql()))
     .limit(1);
   const row = rows[0];
   if (!row) return null;
@@ -194,7 +182,7 @@ export function buildMemoryEventIngestHandler(
       }
       if (!row) continue;
 
-      const admission = memoryIngestAdmission(row);
+      const admission = await readMemorySourceAdmission(db, row.id);
       if (admission.kind === 'excluded') {
         if (deps.replayGrant) throw new MemoryReconcileHandoffError('excluded operator source');
         continue;

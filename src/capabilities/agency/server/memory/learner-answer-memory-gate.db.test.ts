@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { event, provider_attempt, question } from '@/db/schema';
+import { event, learning_session, provider_attempt, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { type Mem0Like, createMemoryClient } from '@/server/ai/mem0/client';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -95,6 +95,15 @@ describe('learner answer memory gate', () => {
   it('admits only learner ask text and keeps excluded evidence out on poll, recovery and operator replay', async () => {
     const db = testDb();
     const boundary = providerBoundary();
+    await db.insert(learning_session).values({
+      id: 'session-mem-1',
+      type: 'conversation',
+      status: 'active',
+      started_at: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
     // answer events' subject feeds the derivation lineage — the row must exist and be clean
     await db.insert(question).values({
       id: 'q-mem-gate',
@@ -114,6 +123,7 @@ describe('learner answer memory gate', () => {
     ) =>
       writeEvent(db, {
         id,
+        session_id: 'session-mem-1',
         actor_kind: actor,
         actor_ref: 'self',
         action,

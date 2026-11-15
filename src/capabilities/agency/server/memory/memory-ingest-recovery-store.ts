@@ -1,12 +1,13 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event, provider_attempt, provider_attempt_admission } from '@/db/schema';
+import { lockEventDerivationSources } from '@/kernel/events/derivation-policy';
 import {
-  lockEventDerivationSources,
-  readEventDerivationPolicy,
-} from '@/kernel/events/derivation-policy';
-import { lockMemoryIngestSource, lockMemoryOperatorRequest } from '@/kernel/locks/memory-locks';
-import { type MemoryIngestAdmission, memoryIngestAdmission } from './learner-evidence';
+  lockMemoryIngestSource,
+  lockMemoryOperatorRequest,
+  lockMemorySessionDeletion,
+} from '@/kernel/locks/memory-locks';
+import { type MemoryIngestAdmission, readMemorySourceAdmission } from './learner-evidence';
 import { providerOperationIdForInvocation } from './mem0-runtime';
 import {
   type MemoryIngestReplayGrant,
@@ -67,18 +68,7 @@ async function grantsForSource(db: Db | Tx, sourceId: string): Promise<MemoryIng
 }
 
 async function readSourceAdmission(db: Db | Tx, sourceId: string): Promise<MemoryIngestAdmission> {
-  if ((await readEventDerivationPolicy(db, sourceId)) !== 'allow') return { kind: 'excluded' };
-  const rows = await db
-    .select({
-      actor_kind: event.actor_kind,
-      action: event.action,
-      subject_kind: event.subject_kind,
-      payload: event.payload,
-    })
-    .from(event)
-    .where(eq(event.id, sourceId))
-    .limit(1);
-  return rows[0] ? memoryIngestAdmission(rows[0]) : { kind: 'excluded' };
+  return readMemorySourceAdmission(db, sourceId);
 }
 
 async function assertAdmittedSource(db: Db | Tx, sourceId: string): Promise<void> {
@@ -147,6 +137,12 @@ export async function authorizeMemoryIngestReplay(
     allow_paid_replay: true,
   };
   return db.transaction(async (tx) => {
+    const sourceRows = await tx
+      .select({ sessionId: event.session_id })
+      .from(event)
+      .where(eq(event.id, input.sourceEventId))
+      .limit(1);
+    await lockMemorySessionDeletion(tx, sourceRows[0]?.sessionId ?? null);
     await lockMemoryIngestSource(tx, input.sourceEventId);
     // Global request identity also fences accidental reuse for another source.
     await lockMemoryOperatorRequest(tx, input.requestId);
@@ -208,6 +204,12 @@ export async function claimMemoryIngestReplay(
   sourceId: string,
 ): Promise<void> {
   await db.transaction(async (tx) => {
+    const sourceRows = await tx
+      .select({ sessionId: event.session_id })
+      .from(event)
+      .where(eq(event.id, sourceId))
+      .limit(1);
+    await lockMemorySessionDeletion(tx, sourceRows[0]?.sessionId ?? null);
     await lockMemoryIngestSource(tx, sourceId);
     await assertMemoryIngestReplayGrant(tx, grant, sourceId);
     await lockEventDerivationSources(tx, sourceId);
