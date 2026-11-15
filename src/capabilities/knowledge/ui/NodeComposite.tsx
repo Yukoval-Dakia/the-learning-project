@@ -18,59 +18,20 @@
 import { ChevronDown, CircleAlert, Eye, Network } from 'lucide-react';
 import { useState } from 'react';
 import { A5_BANDS, UNKNOWN_BAND_LABEL } from '@/core/mastery-band';
+import { Button } from '@/ui-next/public';
 import { BandChipView } from './BandChip';
+import type { KnowledgeNodePage } from './knowledge-api';
 import { type NodeThreeDimInput, buildNodeThreeDim } from './node-dims';
 
-// Canonical learner-judgment wire shape. Mirrors the `judgment` field added to
-// KnowledgeNodePageResponseSchema (YUK-1587); declared here so the component
-// does not depend on the generated API schema, which is regenerated under a
-// heavy window. When the generator runs, `node.judgment` satisfies this shape
-// structurally.
-export interface NodeJudgment {
-  ability_claim:
-    | { kind: 'low_observed'; rule: { low: number }; calibration: 'uncalibrated' }
-    | { kind: 'observed'; rule: { low: number }; calibration: 'uncalibrated' }
-    | { kind: 'insufficient_evidence'; reason: string }
-    | { kind: 'not_evaluable'; reason: 'knowledge_role_not_mastery_evaluable' }
-    | { kind: 'unavailable'; reason: string };
-  uncertainty: {
-    evidence_age:
-      | { kind: 'not_applicable'; reason: string }
-      | { kind: 'undated'; reason: 'observed_evidence_without_timestamp' }
-      | {
-          kind: 'dated';
-          idle_days: number;
-          freshness: 'fresh' | 'mild' | 'stale';
-          growing: boolean;
-        };
-    component_disagreement:
-      | { kind: 'unknown'; reason: string }
-      | {
-          kind: 'divergence_observed';
-          direction: 'ability_high_retention_low' | 'ability_low_retention_high';
-          rule: { high: number; low: number };
-          calibration: 'uncalibrated';
-        }
-      | {
-          kind: 'no_divergence_observed';
-          rule: { high: number; low: number };
-          calibration: 'uncalibrated';
-        }
-      | { kind: 'partial_coverage'; missing: 'ability' | 'retention'; reason: string };
-  };
-  judgement: string;
-  batch: {
-    version: 'v0-incumbent';
-    calibration: 'uncalibrated';
-    as_of: string;
-  };
-}
+type NodeJudgment = KnowledgeNodePage['judgment'];
 
 export interface NodeCompositeProps {
   /** 焦点节点的三维 RAW 读模型（node-page wire 平铺字段的结构子集）。 */
   input: NodeThreeDimInput;
   /** Canonical learner-judgment projection carried on the same node-page wire. */
   judgment: NodeJudgment;
+  /** Opens a draft question about this judgment in the companion. */
+  onDiscussJudgment: () => void;
 }
 
 // Canonical ability_claim → honest label. low_observed is 「低掌握读数」, never
@@ -124,8 +85,8 @@ function disagreementText(
   switch (disagreement.kind) {
     case 'divergence_observed':
       return disagreement.direction === 'ability_high_retention_low'
-        ? '掌握读数高而记忆保持低——可能会了但快忘。'
-        : '记忆保持高而掌握读数低——可能记得但不会用。';
+        ? '掌握读数高于分歧阈值而记忆保持低于分歧阈值。'
+        : '记忆保持高于分歧阈值而掌握读数低于分歧阈值。';
     case 'no_divergence_observed':
       return '两个读数未见跨阈值的背离。';
     case 'partial_coverage':
@@ -137,7 +98,7 @@ function disagreementText(
   }
 }
 
-export function NodeComposite({ input, judgment }: NodeCompositeProps) {
+export function NodeComposite({ input, judgment, onDiscussJudgment }: NodeCompositeProps) {
   const [open, setOpen] = useState(false);
   const three = buildNodeThreeDim(input);
   const comp = three.composite;
@@ -182,8 +143,8 @@ export function NodeComposite({ input, judgment }: NodeCompositeProps) {
             ))}
           </ul>
 
-          {/* YUK-1587 — canonical learner-judgment projection：从同一批
-              readLearnerJudgments 的 focal item 投影，只渲已读字段，不新增推断。 */}
+          {/* Canonical learner-judgment projection from the same batch that
+              feeds mastery/retention above; only already-published fields render. */}
           <section className="kn-judgment" aria-label="当前判断与依据">
             <p className="kn-judgment-text">{judgment.judgement}</p>
             <dl className="kn-judgment-rows">
@@ -217,6 +178,9 @@ export function NodeComposite({ input, judgment }: NodeCompositeProps) {
               评估时点 {new Date(judgment.batch.as_of).toLocaleString('zh-CN')} ·{' '}
               {judgment.batch.version} · 未个人校准
             </p>
+            <Button variant="ghost" size="sm" onClick={onDiscussJudgment}>
+              询问这项判断
+            </Button>
           </section>
         </>
       )}

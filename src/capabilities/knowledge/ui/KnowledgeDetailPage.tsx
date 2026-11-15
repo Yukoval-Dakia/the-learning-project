@@ -225,6 +225,13 @@ export default function KnowledgeDetailPage({
 
   const db = DECAY_BUCKET_META[node.mastery_decay_bucket];
   const primary = node.primary_atomic;
+  const discussJudgment = () => {
+    setCompanionFocus({ kind: 'knowledge', id: node.id, title: node.name });
+    openCopilot(
+      `关于「${node.name}」的当前判断（评估时点 ${new Date(node.judgment.batch.as_of).toLocaleString('zh-CN')}）：\n\n${node.judgment.judgement}\n\n我的疑问是：`,
+      { send: false },
+    );
+  };
   const otherNotes = node.notes.filter((n) => n.id !== primary?.id);
   const byKind = new Map<string, NoteSummary[]>();
   for (const n of otherNotes) {
@@ -293,6 +300,7 @@ export default function KnowledgeDetailPage({
           evidenceCount: node.evidence_count,
         }}
         judgment={node.judgment}
+        onDiscussJudgment={discussJudgment}
       />
 
       <div className="kn-detail-grid">
