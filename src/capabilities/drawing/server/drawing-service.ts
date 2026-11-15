@@ -7,6 +7,9 @@
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
+import { canonicalHash } from '@/core/migration/canonical';
+import { PublishedQuestionRevision, validateIssuanceBinding } from '@/core/schema/assessment';
+import { DraftFocus } from '@/core/schema/assessment/draft-focus';
 import type { Db, Tx } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
@@ -29,6 +32,12 @@ import {
   readSourceUsageEpochs,
   sourceAllowsDerivation,
 } from '@/kernel/read-models/usage-policy';
+import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
+import {
+  loadIssuanceStudyCoordinate,
+  projectFrozenStudyReference,
+  recordDrawingStudyAssistanceExposure,
+} from '@/kernel/records/study-reference';
 import type { DrawingBlockIssue, DrawingRequestOutcome } from '@/kernel/tools/drawing-request';
 import type { TurnSourceLedger } from '@/kernel/tools/source-ledger';
 import { getStartedBoss } from '@/server/boss/client';
@@ -57,7 +66,7 @@ export type DrawingBoss = Pick<Awaited<ReturnType<typeof getStartedBoss>>, 'send
 const RESTRICTED_DETAIL =
   '这次请求读到的资料无法完整核验来源，或来源不允许派生绘图。已拒画——可以改成描述性的回答，或明确只用本轮消息本身的内容重新请求。';
 const UNJUDGED_DETAIL =
-  '这次绘图涉及的题目还没有判定结果，图上不能带未判定的答案。先作答并完成判定，或改用不含答案的描述重新请求。';
+  '这次请求无法核验为只画未判定题目的题设。请在当前题目明确请求「画一下题设」，或先作答并完成判定。';
 
 /** Stable learner-facing detail per error_kind; raw diagnostics stay DB-side. */
 const ERROR_DETAILS: Record<string, string> = {
@@ -183,9 +192,9 @@ export class DrawingAuthorizationError extends Error {
 }
 
 /**
- * Answer-leak gate: a question the learner has no committed judgment on may
- * not drive a drawing — brief/alt/caption could carry its answer. The question
- * set follows the provenance closure of every bound source, not only top-level
+ * Find questions needing frozen-stem authorization because they have no
+ * committed judgment. The set follows the provenance closure of every bound
+ * source, not only top-level
  * question nodes. Judged means: a real attempt event (`outcome` column set)
  * whose judgment survives — an effective (or execution-embedded) judge event
  * anchored by subject_id/caused_by_event_id — or a native
@@ -247,6 +256,78 @@ async function unjudgedQuestionIds(
     }
   }
   return questionIds.filter((id) => !judged.has(id));
+}
+
+/** No purpose grant exists for free-form asks: admit only the complete stem command
+ * and the frozen public face verbatim. Model-written intent is not authorization. */
+async function cleanStemCoordinate(
+  db: Db | Tx,
+  unjudged: readonly string[],
+  sessionId: string,
+  askId: string | undefined,
+  input: { brief: string; alt: string; caption?: string },
+): Promise<{ issuanceId: string; questionId: string } | undefined> {
+  if (!askId) return undefined;
+  const [ask] = await db.select().from(event).where(eq(event.id, askId));
+  const rawFocus = ask?.payload.draft_focus;
+  const grant =
+    rawFocus && typeof rawFocus === 'object' ? (rawFocus as Record<string, unknown>) : undefined;
+  const focus = DraftFocus.safeParse(
+    grant && {
+      question_id: grant.question_id,
+      issuance_id: grant.issuance_id,
+      revision_id: grant.revision_id,
+      save_epoch: grant.save_epoch,
+    },
+  );
+  if (
+    !ask ||
+    ask.session_id !== sessionId ||
+    ask.actor_kind !== 'user' ||
+    ask.actor_ref !== 'user:self' ||
+    ask.action !== 'experimental:copilot_user_ask' ||
+    ask.payload.surface !== 'copilot' ||
+    ask.payload.derivation_policy !== 'allow' ||
+    ask.payload.user_message !== '画一下题设' ||
+    ask.payload.review_answer !== undefined ||
+    ask.payload.confirmation !== undefined ||
+    !focus.success ||
+    unjudged.some((id) => id !== focus.data.question_id)
+  )
+    return undefined;
+  const coordinate = await loadIssuanceStudyCoordinate(
+    db,
+    focus.data.issuance_id,
+    focus.data.question_id,
+  );
+  if (coordinate.status !== 'assistable') return undefined;
+  const revision = PublishedQuestionRevision.safeParse(revisionRowToContract(coordinate.revision));
+  const issuance = issuanceRowToContract(coordinate.issuance);
+  if (
+    !revision.success ||
+    revision.data.revision_id !== focus.data.revision_id ||
+    validateIssuanceBinding(issuance.binding, revision.data).length > 0
+  )
+    return undefined;
+  const frozen = projectFrozenStudyReference(revision.data, issuance);
+  if (
+    !frozen.promptMd.trim() ||
+    !frozen.referenceMd ||
+    input.brief !== frozen.promptMd ||
+    input.alt !== '题设' ||
+    (input.caption !== undefined && input.caption !== '')
+  )
+    return undefined;
+  const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, '');
+  const requested = normalize(`${input.brief}\n${input.alt}\n${input.caption ?? ''}`);
+  if (
+    frozen.referenceMd.split(/\r?\n/).some((line) => {
+      const answer = normalize(line);
+      return answer.length > 0 && requested.includes(answer);
+    })
+  )
+    return undefined;
+  return { issuanceId: focus.data.issuance_id, questionId: focus.data.question_id };
 }
 
 /**
@@ -343,16 +424,38 @@ export async function requestDrawing(
       ([document_id, usage_epoch]) => ({ document_id, usage_epoch }),
     );
 
-    // Answer-layer gate: outside the restricted answer-reveal surface, a bound
-    // question with no judged attempt may not drive a drawing.
+    let stemCoordinate: { issuanceId: string; questionId: string } | undefined;
     if (!ctx.answerOnly) {
       const unjudged = await unjudgedQuestionIds(tx, snapshot.sources);
       if (unjudged.length > 0) {
-        return {
-          status: 'unavailable',
-          issues: [{ code: 'unjudged_source', path: '/brief', detail: UNJUDGED_DETAIL }],
-        };
+        stemCoordinate = await cleanStemCoordinate(
+          tx,
+          unjudged,
+          sessionId,
+          ctx.causedByEventId,
+          input,
+        );
+        if (!stemCoordinate) {
+          return {
+            status: 'unavailable',
+            issues: [{ code: 'unjudged_source', path: '/brief', detail: UNJUDGED_DETAIL }],
+          };
+        }
       }
+    }
+
+    // Record the single study-assistance exposure for this admitted request
+    // before the drawing insert, atomically inside the dispatch transaction.
+    if (stemCoordinate) {
+      await recordDrawingStudyAssistanceExposure(tx, {
+        ...stemCoordinate,
+        actorRef: ctx.actorRef,
+        contentDigest: `sha256:${canonicalHash({
+          brief: input.brief,
+          alt: input.alt,
+          caption: input.caption ?? null,
+        })}`,
+      });
     }
 
     const key = dedupeKey(
