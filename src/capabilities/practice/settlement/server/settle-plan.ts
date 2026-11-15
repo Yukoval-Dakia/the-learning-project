@@ -23,12 +23,15 @@ import {
   ratingForVerdict,
   resolveThetaDecision,
 } from '@/core/schema/assessment';
+import { evaluateScoringRule } from '@/core/schema/assessment/scoring-rule';
+import type { StructuralGuessing } from '@/core/theta-grid';
 import type { Tx } from '@/db/client';
 import { event, question, question_revision } from '@/db/schema';
 import {
   type CalibrationEvidencePlan,
   type FsrsSubject,
   type SettlementPlan,
+  readOriginalThetaGuessing,
   subjectKey,
 } from '@/kernel/read-models/assessment-settlements';
 import { resolveCurrentEffectiveCauseForQuestion } from '@/kernel/read-models/cause-policy';
@@ -85,6 +88,7 @@ function unitExecutorKinds(plan: ExecutionPlanT): Map<string, string> {
 }
 
 interface SettlementScope {
+  thetaGuessing?: StructuralGuessing;
   preserveScheduling: boolean;
   difficultyLabelStreamItemId: string | null;
   frozenAbilityGlobalByKnowledgeId?: AbilityGlobalByKnowledgeId;
@@ -108,6 +112,71 @@ interface SettlementScope {
   causeLean: -1 | 0 | 1;
 }
 
+/** Only a plain, single-key, binary selection domain supports the structural 1/k model. */
+function frozenThetaGuessing(
+  input: ActivationSettleInput,
+  spec: ResponseSpecT,
+  basis: ScoringBasisT,
+): StructuralGuessing | undefined {
+  if (basis.units.length !== 1) return undefined;
+  const unit = basis.units[0];
+  if (
+    unit.slot_refs.length !== 1 ||
+    unit.evidence_slot_refs.length > 0 ||
+    unit.requires_group_evidence ||
+    !(unit.points !== null && unit.points > 0)
+  )
+    return undefined;
+  const slot = spec.slots.find((row) => row.slot_id === unit.slot_refs[0]);
+  if (
+    slot?.kind !== 'select' ||
+    slot.pick !== 'one' ||
+    slot.axes ||
+    slot.text ||
+    slot.at_most_per_coordinate ||
+    unit.criterion.kind !== 'select_key' ||
+    unit.criterion.accepted_item_ids.length !== 1 ||
+    !unit.rule
+  )
+    return undefined;
+  if (
+    slot.items.length < 2 ||
+    slot.items.some(
+      (item) =>
+        !item.label_md?.trim() || item.coordinates || item.gap_after_codepoint !== undefined,
+    )
+  )
+    return undefined;
+  const ids = new Set(slot.items.map((item) => item.item_id));
+  const correctId = unit.criterion.accepted_item_ids[0];
+  const response = input.submission.response_set.entries.find(
+    (row) => row.slot_id === slot.slot_id,
+  );
+  // `pick: one` is only a render hint: the accepted response must prove one known selection.
+  if (
+    ids.size !== slot.items.length ||
+    !ids.has(correctId) ||
+    response?.kind !== 'select' ||
+    response.state !== 'answered' ||
+    response.item_ids.length !== 1 ||
+    !ids.has(response.item_ids[0])
+  )
+    return undefined;
+  for (const correct of [true, false]) {
+    const award = evaluateScoringRule(unit.rule, {
+      kind: 'set',
+      hit: correct ? 1 : 0,
+      wrong: correct ? 0 : 1,
+      miss: correct ? 0 : 1,
+      picked: 1,
+      expected: 1,
+      hit_ids: correct ? [correctId] : [],
+    });
+    if (award.kind !== 'points' || award.points !== (correct ? unit.points : 0)) return undefined;
+  }
+  return { version: 1, choiceCount: ids.size };
+}
+
 export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<SettlementScope> {
   const [revision] = await tx
     .select()
@@ -125,6 +194,11 @@ export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<S
     input.inputScope?.issued_part_ids ?? input.issuance.part_ids,
   );
   const plan = revision.execution_plan as ExecutionPlanT;
+  const originalThetaMath = await readOriginalThetaGuessing(tx, input.submission.submission_id);
+  const thetaGuessing =
+    originalThetaMath === null
+      ? frozenThetaGuessing(input, spec, basis)
+      : originalThetaMath.guessing;
   const partIds = input.inputScope?.issued_part_ids ?? input.issuance.part_ids;
   const fullScope = partIds.length === revision.structure.parts.length;
   const wanted = new Set<string>([input.questionGroupId, ...partIds]);
@@ -214,6 +288,7 @@ export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<S
     byId.get(input.questionGroupId) ?? null,
   );
   return {
+    thetaGuessing,
     frozenLearningScope: frozen !== null,
     schedulingPolicy: original?.payload.scheduling_policy,
     capture: input.forgettingCapture ?? {
@@ -619,6 +694,7 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
     kcObservations: observations,
     kcWrongCause,
     theta,
+    ...(scope.thetaGuessing ? { thetaGuessing: scope.thetaGuessing } : {}),
     judgeRoute,
     difficultyLabelStreamItemId: scope.difficultyLabelStreamItemId,
     calibration,

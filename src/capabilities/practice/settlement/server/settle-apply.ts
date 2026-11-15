@@ -218,6 +218,10 @@ export async function executePlan(
       questionId: theta.anchorQuestionId,
       outcome: theta.outcome,
       responseTimeMs: theta.responseTimeMs,
+      guessing:
+        plan.verdict.normalized === theta.outcome && !theta.kcEvidence
+          ? plan.thetaGuessing
+          : undefined,
       ...(theta.kcEvidence ? { kcEvidence: theta.kcEvidence } : {}),
       difficulty: theta.anchorDifficulty,
       attemptEventId: settlementEventId,

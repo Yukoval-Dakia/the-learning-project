@@ -63,27 +63,33 @@ export function uniformPrior(): ThetaGridPosterior {
  *
  * c ∈ [0, 1): choicesToGuess only returns {0} ∪ (0, 1/2]. c=1 is out of domain and
  * degrades only through gridUpdate's total>0 guard. Never source c from irt_c; it is
- * derived from choices_md, not fitted.
+ * derived from a verified frozen choice domain, not fitted.
  */
 export function binaryLikelihood(offset: number, bPrime: number, outcome: 0 | 1, c = 0): number {
   // 3PL lower asymptote: c=0 delegates to the 1PL path for the byte-identical anchor.
-  // c>0 is the choice-question guess rate; c is derived from choices_md, never fitted.
+  // c>0 is the structural choice-question guess rate, never a fitted item parameter.
   if (c === 0) {
     const p = expectedScore(offset, bPrime);
     return outcome === 1 ? p : 1 - p;
   }
   const phat = expectedScore(offset, bPrime);
-  return outcome === 1 ? c + (1 - c) * phat : (1 - c) * (1 - phat);
+  return outcome === 1 ? expectedScore(offset, bPrime, c) : (1 - c) * (1 - phat);
 }
 
 /**
- * Structural 3PL guess rate from choices_md: c = 1/k. Fewer than two options (null,
- * empty, single-choice placeholder) means c=0, so the 1PL path is byte-identical.
- * Not wired into a live caller until the grid→SoT cut-over.
+ * Structural 3PL guess rate from frozen options or their sealed cardinality: c = 1/k.
+ * Unknown or fewer than two options retain the byte-identical 1PL path.
  */
-export function choicesToGuess(choices: readonly string[] | null | undefined): number {
-  if (!choices || choices.length < 2) return 0; // 非选择题 → 1PL 退化
-  return 1 / choices.length;
+export function choicesToGuess(choices: readonly string[] | number | null | undefined): number {
+  const count = typeof choices === 'number' ? choices : choices?.length;
+  if (count === undefined || !Number.isSafeInteger(count) || count < 2) return 0;
+  return 1 / count;
+}
+
+/** Absence on a historical contribution means its original 1PL credit semantics. */
+export interface StructuralGuessing {
+  version: 1;
+  choiceCount: number;
 }
 
 /**
