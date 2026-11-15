@@ -9,6 +9,7 @@ import type { LearnerContextResult } from '@/kernel/read-models/learner-context'
 import { trimUnitsToBudget } from './budget';
 import { readContractSection } from './contract';
 import { readDeltaSection, shanghaiLabel } from './delta';
+import { renderMemoryEvidence } from './evidence-narrative';
 import { readSteadySection } from './steady';
 import type { DeltaSection } from './types';
 
@@ -57,7 +58,7 @@ export async function assembleCoachContext(
       {
         rank: 4,
         name: 'portrait',
-        markdown: steady.portraitMd ? `画像：${steady.portraitMd}` : null,
+        markdown: renderMemoryEvidence(steady.portraitMd),
       },
     ],
     {
