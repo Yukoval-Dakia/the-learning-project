@@ -33,8 +33,6 @@ import {
 } from './memory-reconcile-handoff-store';
 import { recoverPurposeChanges } from './purpose-repair';
 
-export { shouldExtractToMemory } from './learner-evidence';
-
 const SUBJECT_SCOPE_PREFIX = 'subject:';
 
 export const MEMORY_EVENT_INGEST_QUEUE = 'memory_event_ingest';
