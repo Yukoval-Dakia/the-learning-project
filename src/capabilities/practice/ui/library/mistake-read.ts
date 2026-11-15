@@ -57,9 +57,13 @@ export interface MistakeRecord {
   createdAtSec: number;
   /** The prompt as it was when this attempt happened (frozen per record). */
   promptMd: string;
+  promptMaterials: MistakeRow['prompt_materials'];
+  referenceMd: string | null;
   wrongAnswerMd: string;
   wrongAnswerImages: readonly string[];
+  knowledgeIds: readonly string[];
   cause: MistakeCause | null;
+  causeDescription: string | null;
   /** Owner-projected target; null means this row is not the question's editable attempt. */
   causeEdit: MistakeCauseEdit | null;
   standing: RecordStanding;
@@ -102,9 +106,13 @@ function toRecord(row: MistakeRow): MistakeRecord {
     id: row.id,
     createdAtSec: row.created_at,
     promptMd: row.prompt_md,
+    promptMaterials: row.prompt_materials,
+    referenceMd: row.reference_md,
     wrongAnswerMd: row.wrong_answer_md,
     wrongAnswerImages: row.wrong_answer_image_refs,
+    knowledgeIds: row.knowledge_ids,
     cause: toCause(row.cause),
+    causeDescription: row.cause?.label ?? null,
     causeEdit: row.cause_edit
       ? {
           attemptEventId: row.cause_edit.attempt_event_id,
