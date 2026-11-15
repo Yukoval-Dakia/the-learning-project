@@ -460,16 +460,15 @@ export function PracticePresentation(props: PracticePresentationProps) {
             current: target.current,
             options: [],
             selected: null,
-            note: target.current?.note ?? '',
+            note: '',
             mode: loading ? 'busy' : failed ? 'disabled' : 'readonly',
             notice: {
-              title: loading
-                ? '正在读取错因…'
-                : failed
-                  ? '错因尚未读取成功，可以重新读取。'
-                  : target.state.status === 'owner-confirmed-unavailable'
-                    ? target.state.reason
-                    : undefined,
+              title:
+                target.state.status === 'loading'
+                  ? '正在读取错因…'
+                  : target.state.status === 'transient-failed'
+                    ? '错因尚未读取成功，可以重新读取。'
+                    : target.state.reason,
             },
             noticeTone: failed ? 'error' : 'status',
             actions: failed
