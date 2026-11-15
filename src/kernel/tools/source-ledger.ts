@@ -91,6 +91,8 @@ const FIELD_KINDS: Record<string, SourceKind> = {
   caused_by_event_id: 'event',
   origin_event_id: 'event',
   attempt_event_id: 'event',
+  ask_event_id: 'event',
+  reply_event_id: 'event',
   judge_event_id: 'event',
   review_event_id: 'event',
   last_review_event_id: 'event',
