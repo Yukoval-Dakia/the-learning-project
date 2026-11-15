@@ -79,8 +79,9 @@ export {
   resolveDailyPracticeBudget,
 } from './stream-inputs';
 // reRankAfterAnswer moved to stream-rerank.ts; this re-export keeps the existing
-// import path for callers and tests unchanged.
-export { reRankAfterAnswer } from './stream-rerank';
+// import path for callers and tests unchanged, and binds the legacy call below.
+import { reRankAfterAnswer } from './stream-rerank';
+export { reRankAfterAnswer };
 export type { StreamScope, StreamView } from './stream-view';
 export { getStreamViewItem } from './stream-view';
 
@@ -1262,4 +1263,8 @@ export async function recomposeStream(
   await writeObservationsBestEffort(db, observations);
   if (mixNote) await writeStreamMixNoteBestEffort(db, date, mixNote);
   return added;
+}
+
+function toSignalsJson(signal: CollectedSignal | undefined): Record<string, unknown> {
+  return { ...signal };
 }
