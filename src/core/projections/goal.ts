@@ -88,9 +88,7 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
     // The accepted scope (possibly learner-edited) is replayed verbatim so the
     // fold reproduces the row's ordered scope after a corrected accept.
     if (Array.isArray(payload.materialized_scope)) {
-      const scope = payload.materialized_scope.filter(
-        (id): id is string => typeof id === 'string',
-      );
+      const scope = payload.materialized_scope.filter((id): id is string => typeof id === 'string');
       materializedScopeByProposeId.set(proposeId, scope);
     }
   }

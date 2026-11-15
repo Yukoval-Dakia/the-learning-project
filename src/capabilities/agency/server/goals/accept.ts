@@ -92,7 +92,9 @@ export async function acceptGoalScopeProposal(
   const scopeSet = new Set(scopeKnowledgeIds);
   const ordered = Array.isArray(change.ordered_scope) ? change.ordered_scope : [];
   const orderedIds = ordered
-    .map((p) => (p && typeof p === 'object' ? (p as { knowledge_id?: unknown }).knowledge_id : null))
+    .map((p) =>
+      p && typeof p === 'object' ? (p as { knowledge_id?: unknown }).knowledge_id : null,
+    )
     .filter((id): id is string => typeof id === 'string');
   if (ordered.length > 0) {
     const coversExactly =

@@ -5,10 +5,7 @@
 
 import type { Db } from '@/db/client';
 import { loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
-import {
-  getKnownSubjects,
-  resolveSelectableSubjectId,
-} from '@/subjects/profile';
+import { getKnownSubjects, resolveSelectableSubjectId } from '@/subjects/profile';
 import { normalizeLearningIntentTopic } from './learning-intent-reuse';
 
 export interface GoalIntentParse {

@@ -632,8 +632,7 @@ export default function TodayPage({
                 <LearningIntentComposer
                   initialTopic={newestGoal?.title ?? ''}
                   pendingCount={
-                    (s.proposals.by_kind.learning_item ?? 0) +
-                    (s.proposals.by_kind.goal_scope ?? 0)
+                    (s.proposals.by_kind.learning_item ?? 0) + (s.proposals.by_kind.goal_scope ?? 0)
                   }
                   autoApplyEnabled={s.auto_apply_enabled}
                   navigate={navigate}

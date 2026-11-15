@@ -386,9 +386,9 @@ export function ProposalCard({
   // goal_scope path is editable before accept: the learner may reorder or drop
   // points. `scopeEdit` holds the working ordered list (null = not editing /
   // unchanged proposal). On accept the edited ids go as corrected_payload.
-  const [scopeEdit, setScopeEdit] = useState<
-    { knowledge_id: string; label: string }[] | null
-  >(null);
+  const [scopeEdit, setScopeEdit] = useState<{ knowledge_id: string; label: string }[] | null>(
+    null,
+  );
   const [scopeEditing, setScopeEditing] = useState(false);
   // A decided card is on its way out: nothing on it can be pressed again.
   const locked = busy || leaving;
@@ -717,9 +717,7 @@ export function ProposalCard({
                         disabled={workingScope.length <= 1}
                         aria-label="移除"
                         onClick={() =>
-                          setScopeEdit((cur) =>
-                            (cur ?? proposedScope).filter((_, j) => j !== i),
-                          )
+                          setScopeEdit((cur) => (cur ?? proposedScope).filter((_, j) => j !== i))
                         }
                       >
                         ✕

@@ -5,8 +5,8 @@ import type { Db } from '@/db/client';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { makeRunTaskFn } from '../server/ai-runtime';
-import { runGoalIntentRequest } from '../server/goal-intent-request';
 import { parseGoalIntent } from '../server/goal-intent-parse';
+import { runGoalIntentRequest } from '../server/goal-intent-request';
 import {
   LearningIntentError,
   type RunTaskFn,

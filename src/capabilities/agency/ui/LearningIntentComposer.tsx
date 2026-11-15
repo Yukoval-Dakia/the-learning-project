@@ -112,8 +112,7 @@ export function LearningIntentComposer({
 
         {mutation.isError && (
           <p className="li-intent-error" role="alert">
-            {mutation.error instanceof ApiError &&
-            mutation.error.code === 'clarify_goal_subject'
+            {mutation.error instanceof ApiError && mutation.error.code === 'clarify_goal_subject'
               ? mutation.error.message
               : '学习路径暂时没有生成，请稍后重试。你的现有目标和学习数据没有变化。'}
           </p>
