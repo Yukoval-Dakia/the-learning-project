@@ -4,7 +4,7 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
 import { runAttributionFollowup } from '@/capabilities/practice/failure-learning/jobs/attribution_followup';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
-import { item_calibration, knowledge, mastery_state, question } from '@/db/schema';
+import { event, item_calibration, knowledge, mastery_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { EvidenceDemandV1, type EvidenceDemandV1T } from '@/kernel/supply-contracts';
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
@@ -183,6 +183,22 @@ async function seedLearner() {
     runTaskFn: (async () => ({ text: JSON.stringify(cause) })) as never,
     enqueueVariantGen: async () => {},
   });
+  // Learner-authored note observed by the guard; >= 24 squashed chars.
+  await writeEvent(db, {
+    id: 'user_cause1',
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:user_cause',
+    subject_kind: 'event',
+    subject_id: 'attempt1',
+    outcome: 'success',
+    payload: {
+      primary_category: 'concept',
+      user_notes: '我在草稿纸上写的是先令导数等于零再分类讨论，但是没有考虑a小于零的情况。',
+    },
+    caused_by_event_id: 'attempt1',
+    created_at: new Date(now.getTime() + 1000),
+  });
   await db.insert(mastery_state).values({
     id: 'm1',
     subject_kind: 'knowledge',
@@ -282,6 +298,66 @@ it('fills ticket learner state from the server and refuses drafts that copy a le
   expect(JSON.stringify(bodies[2])).toContain('learner_text_copied');
   expect(await testDb().select().from(question)).toHaveLength(1);
   await boss.stop({ graceful: false });
+});
+
+// @invariant security: a read that fetches external candidates never carries observed learner text into its request.
+// @fails-if either fetch tool executes with an argument reproducing a learner window, or the refusal leaks the copied text.
+it('refuses external candidate fetches whose arguments copy observed learner text', async () => {
+  const learnerNote = '我在草稿纸上写的是先令导数等于零再分类讨论，但是没有考虑a小于零的情况。';
+  for (const step of [
+    {
+      tool: 'web_fetch_candidates',
+      args: { anchor_knowledge_id: 'k_param', count: 1, kind: learnerNote },
+    },
+    { tool: 'jyeoo_fetch_candidates', args: { grade: 10, kind: learnerNote } },
+  ]) {
+    await resetDb();
+    await seedLearner();
+    _resetBossForTests();
+    const boss = await getStartedBoss();
+    await createJobQueue(boss, 'question_preparer_run', EXPIRE_LLM);
+    const ticket = EvidenceDemandV1.parse({
+      version: 1,
+      demand_id: 'demand:test:egress',
+      policy_version: 'supply-v2-phase-a',
+      subject_id: 'math',
+      claim: {
+        kind: 'knowledge_mastery',
+        statement: '分类讨论',
+        knowledge_ids: ['k_param'],
+      },
+      evidence: { observables: ['分类正确'], minimum_observations: 1 },
+      task: { kinds: ['choice'], allowed_uses: ['practice'] },
+      difficulty: { band: 'near', scale: 'loom_difficulty_1_5', target_value: null },
+      inventory_goal: { eligible_count: 1, horizon_days: 7 },
+      control: { needed_by: null, max_budget_micro_usd: 100000, max_attempts: 1 },
+      causes: [{ kind: 'coverage_gap' }],
+    });
+    await enqueueQuestionPreparerTicket(
+      testDb(),
+      ticket,
+      buildQuestionPreparerTarget(ticket, { reason: 'test' }),
+    );
+    const [job] = await boss.fetch<{ ticket: EvidenceDemandV1T }>('question_preparer_run');
+    if (!job) throw new Error('ticket job missing');
+    bodies.length = 0;
+    script = [
+      { tool: 'query_mistakes', args: { filter: { knowledgeId: 'k_param' } } },
+      { tool: step.tool, args: step.args },
+    ];
+    await runQuestionPreparer(testDb(), job.id, job.data);
+    const nextTurn = JSON.stringify(bodies[2]);
+    expect(nextTurn).toContain('learner_external_egress_refused');
+    expect(nextTurn.includes('我在草稿纸'), `${step.tool} refusal must not echo learner text`).toBe(
+      false,
+    );
+    const actions = (await testDb().select({ action: event.action }).from(event)).map(
+      (row) => row.action,
+    );
+    expect(actions).not.toContain('experimental:web_fetch_candidates');
+    expect(actions).not.toContain('experimental:jyeoo_fetch');
+    await boss.stop({ graceful: false });
+  }
 });
 
 // @invariant security: a question the learner got wrong never comes back as the preparer's new prompt.
