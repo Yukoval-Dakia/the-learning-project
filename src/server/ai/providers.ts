@@ -745,7 +745,7 @@ export function resolveTaskBinding(
   // YUK-1547 — per-task explicit opt-in (task.<kind>.override_global_pin=true):
   // a COMPLETE+legal task.<kind> pair beats the global pin (env AI_PROVIDER_*
   // AND DB lane.global.*) for this task only. The explicit per-call override
-  // arg still outranks the pair (solver2 env / modelBinding stay usable), and
+  // arg still outranks the pair (modelBinding stays usable), and
   // an opted task with an incomplete or unservable pair is a config error —
   // never a silent paid fallback to the pinned/default model. Tasks without
   // the flag keep the old layering byte-for-byte.

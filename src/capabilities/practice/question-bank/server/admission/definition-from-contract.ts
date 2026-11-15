@@ -1,11 +1,14 @@
 // Converts frozen contract slots and preserves private answers as adjudication evidence.
-// Deterministic typed criteria are author evidence; independent solves may correct them.
+// Deterministic typed criteria are author evidence; adjudication may correct them.
 
 import { CURRENT_BLANK_NORMALIZATION } from '@/core/schema/assessment/answer-compare';
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import type { ResponseSlotT } from '@/core/schema/assessment/response';
 import type { BlankNormalizationT, ScoringUnitCriterionT } from '@/core/schema/assessment/scoring';
-import type { NormalizedContract } from '@/kernel/records/assessment-normalization';
+import {
+  type NormalizedContract,
+  isMissingReferencePlaceholder,
+} from '@/kernel/records/assessment-normalization';
 import type {
   AdmissionSourceAnswer,
   AdmissionUnitKind,
@@ -125,7 +128,7 @@ function convertSlot(slot: ResponseSlotT): { slot: ResponseSlotT; targetKind: Ad
   }
 }
 
-/** seed 提取：已有 typed 判据 → 待双解和裁决核验的作者证据（仅同形可比较；异种判据
+/** seed 提取：已有 typed 判据 → 待盲解和裁决核验的作者证据（仅同形可比较；异种判据
  * 不作为种子 —— solve 重新产出并报告）。 */
 function seedFor(
   unitKind: AdmissionUnitKind,
@@ -237,6 +240,7 @@ export function definitionFromContract(contract: NormalizedContract): QuestionAd
   const originalSlotById = new Map(
     contract.response_spec.slots.map((slot) => [slot.slot_id, slot] as const),
   );
+  const origins = contract.rule_statement_origins ?? {};
   const units: AdmissionUnitSpec[] = contract.scoring_basis.units.map((unit) => {
     const primarySlotId = unit.slot_refs[0];
     const conversion = primarySlotId != null ? convertedById.get(primarySlotId) : undefined;
@@ -245,6 +249,11 @@ export function definitionFromContract(contract: NormalizedContract): QuestionAd
     const { seed, constraint } = seedFor(unitKind, unit.criterion);
     const convertedSlot =
       conversion && conversion.slot !== conversion.original ? conversion.slot : null;
+    const statement =
+      unit.criterion.kind === 'rule_reference' ? unit.criterion.statement_md : undefined;
+    const placeholder =
+      origins[unit.scoring_unit_id] === 'placeholder' ||
+      (origins[unit.scoring_unit_id] == null && isMissingReferencePlaceholder(unit.criterion));
     return {
       scoring_unit_id: unit.scoring_unit_id,
       part_id: conversion?.slot.part_id ?? originalSlotById.get(primarySlotId ?? '')?.part_id ?? '',
@@ -259,8 +268,8 @@ export function definitionFromContract(contract: NormalizedContract): QuestionAd
       seeded_rule: unit.rule ?? null,
       ...(constraint != null ? { seed_constraint: constraint } : {}),
       blank_normalization: unitKind === 'blank' ? blankNormalizationFor(seed) : null,
-      printed_rule_md:
-        unit.criterion.kind === 'rule_reference' ? unit.criterion.statement_md : undefined,
+      rule_statement_md: statement,
+      printed_rule_md: placeholder ? undefined : statement,
     };
   });
 
@@ -274,7 +283,6 @@ export function definitionFromContract(contract: NormalizedContract): QuestionAd
   // part 归属。
   const source_answers: AdmissionSourceAnswer[] = [];
   const seenTexts = new Set<string>();
-  const origins = contract.rule_statement_origins ?? {};
   for (const unit of contract.scoring_basis.units) {
     if (unit.criterion.kind !== 'rule_reference') continue;
     if (origins[unit.scoring_unit_id] !== 'reference') continue;

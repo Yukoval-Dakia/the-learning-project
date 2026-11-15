@@ -1,7 +1,8 @@
 // Solution-method prior: HOW a part is solved — methods with key steps, specific error
-// mechanisms, prerequisite knowledge and a difficulty prior, written by one pass after the
-// keys are settled. It is metadata, never an admission gate: a missing or malformed prior
-// only means the part has no prior. Frozen per (revision, part).
+// mechanisms, prerequisite knowledge and a difficulty prior. Admission takes it from the
+// blind solve; the backfill describes settled keys. It is metadata, never an admission
+// gate: a missing or malformed prior only means the part has no prior. Frozen per
+// (revision, part).
 //
 // The prior carries the solution path, so it is private like the reference answer.
 // Server-side consumers read it here; no learner-facing path may expose it before the
@@ -27,6 +28,8 @@ const PriorMethod = z.object({
   core_idea_md: Text(200),
   key_step_md: Text(200),
   steps_md: z.array(Text(160)).max(6).default([]),
+  /** Parallel to steps_md: index into the part's prerequisites, or null. */
+  step_prerequisites: z.array(z.number().int().min(0).nullable()).max(6).default([]),
 });
 const PriorPitfall = z.object({
   mechanism_md: Text(300),
@@ -58,6 +61,11 @@ export const SolutionPriorRecord = z.strictObject({
   prior_version: z.literal(SOLUTION_PRIOR_VERSION),
   parts: z.array(SolutionPriorPart).min(1),
   task_run_ids: z.array(z.string().min(1)).min(1),
+  /**
+   * Whether the blind solve's keys are the published keys. Only `matched` may seed a
+   * difficulty anchor; absent = a prior written against settled keys.
+   */
+  solver_key_status: z.enum(['matched', 'overridden', 'unsettled']).optional(),
 });
 export type SolutionPriorRecordT = z.infer<typeof SolutionPriorRecord>;
 
@@ -101,11 +109,29 @@ export function salvageSolverPrior(
     const row = record(entry);
     const partId = typeof row?.part_id === 'string' ? row.part_id : null;
     if (row == null || partId == null || !allowed.has(partId) || seen.has(partId)) continue;
+    // Prerequisite and method indices point into the solver's lists, which may lose items.
+    const prerequisiteAt = new Map<number, number>();
+    const prerequisites: SolutionPriorPartT['prerequisites'] = [];
+    (Array.isArray(row.prerequisites) ? row.prerequisites : []).forEach((raw, index) => {
+      const r = record(raw);
+      const parsed = PriorPrerequisite.safeParse(
+        r == null ? raw : { ...r, knowledge_id: r.knowledge_id || null },
+      );
+      if (!parsed.success || prerequisites.length >= MAX_PREREQUISITES) return;
+      const knowledgeId = parsed.data.knowledge_id;
+      prerequisiteAt.set(
+        index,
+        prerequisites.push(
+          knowledgeId != null && !candidateIds.has(knowledgeId)
+            ? { ...parsed.data, knowledge_id: null }
+            : parsed.data,
+        ) - 1,
+      );
+    });
     const methods: SolutionPriorPartT['methods'] = [];
-    // A pitfall's method_idx points into the solver's list, which may lose items here.
     const methodAt = new Map<number, number>();
     (Array.isArray(row.methods) ? row.methods : []).forEach((raw, index) => {
-      const parsed = PriorMethod.safeParse(raw);
+      const parsed = PriorMethod.safeParse(withStepObjects(raw, prerequisiteAt));
       if (!parsed.success || methods.length >= MAX_METHODS) return;
       methodAt.set(index, methods.push(parsed.data) - 1);
     });
@@ -119,20 +145,6 @@ export function salvageSolverPrior(
         ...(idx != null ? { method_idx: idx } : {}),
       };
     });
-    const prerequisites = salvageList(
-      Array.isArray(row.prerequisites)
-        ? row.prerequisites.map((p) => {
-            const r = record(p);
-            return r == null ? p : { ...r, knowledge_id: r.knowledge_id || null };
-          })
-        : row.prerequisites,
-      PriorPrerequisite,
-      MAX_PREREQUISITES,
-    ).map((p) =>
-      p.knowledge_id != null && !candidateIds.has(p.knowledge_id)
-        ? { ...p, knowledge_id: null }
-        : p,
-    );
     const difficulty = PriorDifficulty.safeParse(row.difficulty);
     parts.push({
       part_id: partId,
@@ -143,6 +155,28 @@ export function salvageSolverPrior(
     });
   }
   return parts;
+}
+
+/**
+ * The blind solve writes `steps: [{step_md, prerequisite_idx}]`; stored methods keep
+ * `steps_md` with a parallel `step_prerequisites`. Steps that fail validation drop with
+ * their index, and an index to a dropped prerequisite becomes null.
+ */
+function withStepObjects(raw: unknown, prerequisiteAt: ReadonlyMap<number, number>): unknown {
+  const method = record(raw);
+  if (method == null || !Array.isArray(method.steps)) return raw;
+  const { steps, ...rest } = method;
+  const stepsMd: string[] = [];
+  const stepPrerequisites: (number | null)[] = [];
+  for (const step of steps as unknown[]) {
+    const s = record(step);
+    const text = typeof s?.step_md === 'string' ? s.step_md.trim() : '';
+    if (text.length === 0 || text.length > 160 || stepsMd.length >= 6) continue;
+    stepsMd.push(text);
+    const idx = s?.prerequisite_idx;
+    stepPrerequisites.push(typeof idx === 'number' ? (prerequisiteAt.get(idx) ?? null) : null);
+  }
+  return { ...rest, steps_md: stepsMd, step_prerequisites: stepPrerequisites };
 }
 
 /** One solver's raw prior → the record publication stores; null if nothing usable. */
@@ -224,7 +258,11 @@ export async function recordAdmissionSolutionPrior(
   // Replays and re-admissions of a frozen revision must not seed an anchor from a prior
   // that was never stored.
   if (written.length === 0) return { parts_written: 0 };
-  const difficulties = input.record.parts
+  // A blind solve the published keys overrode (or could not confirm) describes its own
+  // path, not the question's: keep it for annotation, never as a difficulty anchor.
+  const anchored =
+    input.record.solver_key_status === undefined || input.record.solver_key_status === 'matched';
+  const difficulties = (anchored ? input.record.parts : [])
     .map((part) => part.difficulty)
     .filter((d): d is NonNullable<typeof d> => d != null);
   if (difficulties.length > 0) {

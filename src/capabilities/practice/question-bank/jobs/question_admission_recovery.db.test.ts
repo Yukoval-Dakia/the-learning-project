@@ -1,24 +1,67 @@
+import { createServer } from 'node:http';
+import { agentLoop } from '@earendil-works/pi-agent-core';
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { PgBoss } from 'pg-boss';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { ProviderTransportEvidence, RequestSendState } from '@/ai/task-result';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
+import { canonicalHash } from '@/core/migration/canonical';
+import { computePaidEffectIdentity } from '@/core/paid-work/protocol/paid-effect-protocol';
+import {
+  admitPaidEffectIntent,
+  cancelPaidEffectUnsentIntent,
+  claimPaidEffectSend,
+  markPaidEffectUnknown,
+  recordPaidEffectApplication,
+  recordPaidEffectResult,
+  reservePaidEffect,
+  voidPaidEffectWithSuccessor,
+} from '@/core/paid-work/server/paid-effect-store';
+import {
+  DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+  QUESTION_ADMISSION_PAID_UNIT,
+} from '@/core/question-admission-policy';
 import { taskInputHash } from '@/core/task-input-hash';
-import { ai_task_runs, knowledge, paid_effect, question } from '@/db/schema';
+import {
+  ai_task_runs,
+  event,
+  knowledge,
+  paid_effect,
+  paid_effect_authorization,
+  question,
+  question_group_lifecycle,
+  question_revision,
+  question_solution_prior,
+} from '@/db/schema';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import * as norm from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
+import { PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
+import { createLoomPiModels } from '@/server/ai/pi-models';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { ADMISSION_FAMILY, admissionJobId } from '../server/admission/enqueue';
+import { ADJUDICATION_TASK_KIND } from '../server/admission/adjudicate';
+import { definitionFromContract } from '../server/admission/definition-from-contract';
+import {
+  ADMISSION_FAMILY,
+  admissionJobId,
+  enqueuePublishedQuestionAdmission,
+} from '../server/admission/enqueue';
+import { FrozenAdmissionInput } from '../server/admission/receipt';
+import { solverParts, solverUnits } from '../server/admission/solve';
 import { runAdmissionForQuestion as run } from './question_admission_run';
 
 const bossSends: { name: string; data: unknown; opts: Record<string, unknown> }[] = [];
+let bossSendError: Error | undefined;
 vi.mock('@/server/boss/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/server/boss/client')>()),
   getStartedBoss: async () => ({
     send: async (name: string, data: unknown, opts: Record<string, unknown>) => {
+      if (bossSendError) throw bossSendError;
       bossSends.push({ name, data, opts });
       return 'wake-job-id';
     },
@@ -120,11 +163,14 @@ interface Seeded {
 
 /** One publication's full provenance chain: question+revision+lifecycle plus
  * the publish event the purpose binding anchors to. */
-async function seedAdmission(opts: { compositeUnit?: boolean } = {}): Promise<Seeded> {
+async function seedAdmission(
+  opts: { compositeUnit?: boolean; row?: Partial<norm.NormalizableQuestionRow> } = {},
+): Promise<Seeded> {
   const db = testDb();
-  const contract = norm.normalizeQuestionRowToContract(
-    JSON.parse(RAW) as norm.NormalizableQuestionRow,
-  );
+  const contract = norm.normalizeQuestionRowToContract({
+    ...(JSON.parse(RAW) as norm.NormalizableQuestionRow),
+    ...opts.row,
+  });
   contract.response_spec.slots[0].placement = { row: 0, col: 0, label: '1' };
   // A scored unit spanning more than one slot has no deterministic upgrade lane.
   if (opts.compositeUnit) {
@@ -149,7 +195,7 @@ async function seedAdmission(opts: { compositeUnit?: boolean } = {}): Promise<Se
   const publishEventId = `pub-${createId()}`;
   await db.$client.unsafe(
     `insert into event (id,session_id,actor_kind,actor_ref,action,subject_kind,subject_id,outcome,payload,caused_by_event_id,task_run_id,cost_micro_usd,created_at,ingest_at)
-     values ('${publishEventId}',null,'system','quiz_gen:persist','experimental:assessment_publish','question','q','success','{"group_id":"q","revision_id":"r","integrity_digest":"${digest}"}'::jsonb,null,null,null,now(),now())`,
+     values ('${publishEventId}',null,'system','quiz_gen:persist','experimental:assessment_publish','question','q','success','{"group_id":"q","revision_id":"r","integrity_digest":"${digest}","admission":"withheld"}'::jsonb,null,null,null,now(),now())`,
   );
   return {
     groupId: 'q',
@@ -224,7 +270,7 @@ async function insertDelivery(
 
 function jobData(seed: Seeded, extra: object = {}) {
   return {
-    admission_version: 4 as const,
+    admission_version: 5 as const,
     question_id: seed.groupId,
     revision_id: seed.revisionId,
     expected_revision_digest: seed.digest,
@@ -235,6 +281,18 @@ function jobData(seed: Seeded, extra: object = {}) {
   };
 }
 
+const PRIOR = {
+  methods: [
+    {
+      core_idea_md: '只改变一个条件，其余保持不变',
+      key_step_md: '找出实验中唯一被改变的量',
+      steps: [{ step_md: '列出每组实验改变的量', prerequisite_idx: 0 }],
+    },
+  ],
+  prerequisites: [{ name_md: '控制变量法' }],
+  difficulty: { b_logit: -0.5, sd_logit: 0.8, basis_md: '一步判断' },
+};
+
 function solveOutput(unitId: string, itemId: string) {
   return {
     units: [
@@ -242,8 +300,57 @@ function solveOutput(unitId: string, itemId: string) {
         scoring_unit_id: unitId,
         status: 'solved',
         answer: { kind: 'select', item_ids: [itemId] },
+        prior: PRIOR,
       },
     ],
+  };
+}
+
+function freeSolveOutput(unitId: string) {
+  return {
+    units: [
+      {
+        scoring_unit_id: unitId,
+        status: 'solved',
+        answer: { kind: 'free', rubric_md: '说明坡度改变时其余条件保持不变。' },
+        prior: PRIOR,
+      },
+    ],
+  };
+}
+
+function passVerdict(seed: Seeded, free: boolean, wrongKey = false) {
+  return {
+    scoring_unit_id: seed.unitId,
+    verdict: 'pass',
+    reason_md: 'fixture adjudication',
+    evidence_errors: [],
+    ...(free
+      ? {
+          decided_key: { kind: 'free', rubric_md: '指出坡度改变、其余条件不变。' },
+          ai_grading_sufficient: true,
+        }
+      : {
+          decided_key: {
+            kind: 'select',
+            item_ids: [wrongKey ? seed.wrongItemId : seed.correctItemId],
+          },
+        }),
+  };
+}
+
+function repairVerdict(unitId: string) {
+  return {
+    scoring_unit_id: unitId,
+    verdict: 'return_for_repair',
+    reason_md: 'fixture adjudication',
+    evidence_errors: [],
+    repair: {
+      repair_target: 'reference_answer',
+      broken_part: 'reference',
+      defect: 'ambiguity',
+      fix_hint_md: 'fixture',
+    },
   };
 }
 
@@ -258,7 +365,7 @@ type Failure =
 
 interface FakeTask {
   task: BoundRunTaskTextFn;
-  calls: { kind: string }[];
+  calls: { kind: string; payload: unknown }[];
 }
 
 function fakeTaskFactory(
@@ -266,21 +373,29 @@ function fakeTaskFactory(
   overrides: {
     failures?: Map<number, Failure>;
     successAnswers?: Map<number, string>;
+    free?: boolean;
+    adjudication?: 'repair' | 'pass' | 'fail';
+    adjudicationWrongKey?: boolean;
   } = {},
 ): FakeTask {
   const failures = overrides.failures ?? new Map();
   const successAnswers = overrides.successAnswers ?? new Map();
-  const calls: { kind: string }[] = [];
+  const calls: { kind: string; payload: unknown }[] = [];
   const task: BoundRunTaskTextFn = async (kind, payload, ctx) => {
     const index = calls.filter((call) => call.kind === kind).length;
-    calls.push({ kind });
+    calls.push({ kind, payload });
     const runId = `probe-${calls.length}`;
     await ctx?.beforeProviderQuery?.({
       taskRunId: runId,
       provider: 'custom:opendesign',
       model: 'deepseek-v4.1-flash',
     });
-    const failure = failures.get(index);
+    const failure =
+      kind === ADJUDICATION_TASK_KIND
+        ? overrides.adjudication === 'fail'
+          ? ({ kind: 'validation' } as const)
+          : undefined
+        : failures.get(index);
     if (failure) {
       if (failure.kind === 'bound') {
         const taskRunId = await insertRun({
@@ -323,7 +438,18 @@ function fakeTaskFactory(
     }
     const taskRunId = await insertRun({ kind, payload, outcome: 'success' });
     const answer = successAnswers.get(index) ?? seed.correctItemId;
-    const output = solveOutput(seed.unitId, answer);
+    const output =
+      kind === ADJUDICATION_TASK_KIND
+        ? {
+            per_unit: [
+              overrides.adjudication === 'pass'
+                ? passVerdict(seed, overrides.free === true, overrides.adjudicationWrongKey)
+                : repairVerdict(seed.unitId),
+            ],
+          }
+        : overrides.free
+          ? freeSolveOutput(seed.unitId)
+          : solveOutput(seed.unitId, answer);
     return {
       text: JSON.stringify(output),
       structured_output: output,
@@ -340,10 +466,320 @@ async function stageRows() {
       unit: paid_effect.unit,
       state: paid_effect.state,
       input: paid_effect.input_json,
+      input_digest: paid_effect.input_digest,
       result: paid_effect.result_json,
     })
     .from(paid_effect)
     .where(eq(paid_effect.family, 'question_admission_stage'));
+}
+
+/**
+ * Rewrite a waiting @5 batch into the exact shape the dual-solve code left behind: the
+ * @4 unit and policy with its frozen solver2 field, and stage rows without policy_id.
+ */
+async function downgradeToDualSolveWait(state: 'waiting' | 'unknown', stageUnknown = false) {
+  const db = testDb();
+  const rows = (await db.$client.unsafe(
+    `select family, entity_id, entity_revision, unit, input_digest, input_json from paid_effect`,
+  )) as {
+    family: string;
+    entity_id: string;
+    entity_revision: string;
+    unit: string;
+    input_digest: string;
+    input_json: Record<string, unknown>;
+  }[];
+  for (const row of rows) {
+    const batch = row.family === ADMISSION_FAMILY;
+    const { policy_id: _policy, ...stageInput } = row.input_json;
+    const input = batch
+      ? { ...row.input_json, policy_id: 'question_admission@4', solver2: null }
+      : stageInput;
+    const unit = batch ? 'admission@4' : row.unit;
+    const identity = computePaidEffectIdentity({
+      family: row.family,
+      entityId: row.entity_id,
+      entityRevision: row.entity_revision,
+      unit,
+      input,
+    });
+    await db.$client.unsafe(
+      `update paid_effect set unit = $1, input_json = $2::jsonb, input_digest = $3
+        where family = $4 and entity_id = $5 and entity_revision = $6 and unit = $7 and input_digest = $8`,
+      [
+        unit,
+        JSON.stringify(input),
+        identity.inputDigest,
+        row.family,
+        row.entity_id,
+        row.entity_revision,
+        row.unit,
+        row.input_digest,
+      ],
+    );
+  }
+  if (state === 'unknown')
+    await db.$client.unsafe(
+      `update paid_effect set state = 'unknown', result_json = null, result_recorded_at = null,
+         unresolved_reason = 'fixture' where family = '${ADMISSION_FAMILY}'`,
+    );
+  if (stageUnknown)
+    await db.$client.unsafe(
+      `update paid_effect set state = 'unknown', result_json = null, result_recorded_at = null,
+         applied_at = null, application_json = null, unresolved_reason = 'fixture'
+        where family = 'question_admission_stage' and result_json->>'kind' = 'waiting'`,
+    );
+}
+
+interface FrozenPaidEffect {
+  family: string;
+  entity_id: string;
+  entity_revision: string;
+  unit: string;
+  input_json: Record<string, unknown>;
+  input_digest: string;
+}
+
+async function frozenV4Rows() {
+  const rows = (await testDb().$client.unsafe(
+    `select family, entity_id, entity_revision, unit, input_json, input_digest from paid_effect
+     where unit = 'admission@4'
+        or (family = 'question_admission_stage' and input_json->>'call_index' = '2')
+     order by family, unit, input_digest`,
+  )) as FrozenPaidEffect[];
+  return rows.map((row) => ({
+    ...row,
+    identity: computePaidEffectIdentity({
+      family: row.family,
+      entityId: row.entity_id,
+      entityRevision: row.entity_revision,
+      unit: row.unit,
+      input: row.input_json,
+    }).inputDigest,
+  }));
+}
+
+async function seedCancelledLegacyAuthorization(seed: Seeded, successorDeliveryId: string) {
+  const db = testDb();
+  await insertDelivery(seed, successorDeliveryId, {
+    ...jobData(seed),
+    admission_version: 4 as const,
+  });
+  const unknownDeliveryId = admissionJobId(
+    seed.groupId,
+    seed.revisionId,
+    `${seed.digest}:legacy-unknown`,
+    0,
+  );
+  await insertDelivery(seed, unknownDeliveryId, {
+    ...jobData(seed),
+    admission_version: 4 as const,
+  });
+  const sourceId = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:legacy-auth`, 0);
+  const sourceData = jobData(seed);
+  await insertDelivery(seed, sourceId, sourceData);
+  const { task } = fakeTaskFactory(seed, {
+    failures: new Map([
+      [0, { kind: 'bound', status: 500 }],
+      [1, { kind: 'bound', status: 500 }],
+    ]),
+  });
+  const sourceRun = await run(
+    db,
+    sourceData,
+    { id: sourceId, jobData: sourceData },
+    { runTask: task },
+  );
+  expect(sourceRun.status).toBe('waiting');
+
+  const [currentRow] = await db
+    .select()
+    .from(paid_effect)
+    .where(
+      and(
+        eq(paid_effect.family, ADMISSION_FAMILY),
+        eq(paid_effect.entity_id, seed.groupId),
+        eq(paid_effect.entity_revision, seed.digest),
+        eq(paid_effect.unit, QUESTION_ADMISSION_PAID_UNIT),
+      ),
+    )
+    .limit(1);
+  if (!currentRow) throw new Error('current @5 input row missing');
+  await db.delete(paid_effect).where(eq(paid_effect.entity_id, seed.groupId));
+
+  const currentInput = FrozenAdmissionInput.parse(currentRow.input_json);
+  const legacyInput = FrozenAdmissionInput.parse({
+    ...currentInput,
+    policy_id: 'question_admission@4',
+    solver2: null,
+  });
+  const voidInput = FrozenAdmissionInput.parse({
+    ...legacyInput,
+    admission_generation: legacyInput.admission_generation + 1,
+  });
+  const voidIdentity = computePaidEffectIdentity({
+    family: ADMISSION_FAMILY,
+    entityId: seed.groupId,
+    entityRevision: seed.digest,
+    unit: DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+    input: voidInput,
+  });
+  const cancelledInput = FrozenAdmissionInput.parse({
+    ...legacyInput,
+    admission_generation: legacyInput.admission_generation + 2,
+  });
+  const cancelledIdentity = computePaidEffectIdentity({
+    family: ADMISSION_FAMILY,
+    entityId: seed.groupId,
+    entityRevision: seed.digest,
+    unit: DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+    input: cancelledInput,
+  });
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    const admitted = await admitPaidEffectIntent(tx, {
+      family: ADMISSION_FAMILY,
+      entityId: seed.groupId,
+      entityRevision: seed.digest,
+      unit: DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+      input: cancelledInput,
+    });
+    if (admitted.kind !== 'admitted')
+      throw new Error('separate cancelled legacy intent was not new');
+    await cancelPaidEffectUnsentIntent(tx, cancelledIdentity, {
+      expectedFence: 0,
+      cancellation: {
+        requestId: 'legacy-sealed-cancel',
+        reason: 'sealed legacy history',
+        operator: 'fixture',
+        basis: 'legacy policy compatibility fixture',
+      },
+    });
+  });
+  await db.insert(paid_effect).values({
+    family: ADMISSION_FAMILY,
+    entity_id: seed.groupId,
+    entity_revision: seed.digest,
+    unit: DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+    input_digest: voidIdentity.inputDigest,
+    input_json: voidInput,
+    state: 'unknown',
+    fence: 1,
+    delivery_id: unknownDeliveryId,
+    delivery_backend: 'pg-boss',
+    unresolved_reason: 'legacy unknown',
+    created_at: now,
+    updated_at: now,
+  });
+  await db.transaction(async (tx) => {
+    await voidPaidEffectWithSuccessor(tx, voidIdentity, {
+      expectedFence: 1,
+      authorization: {
+        authorizationId: 'legacy-auth',
+        reason: 'legacy policy successor',
+        operator: 'fixture',
+        basis: 'legacy policy compatibility fixture',
+        successorInput: {
+          family: ADMISSION_FAMILY,
+          entityId: seed.groupId,
+          entityRevision: seed.digest,
+          unit: DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
+          input: legacyInput,
+        },
+        successorDelivery: { backend: 'pg-boss', deliveryId: successorDeliveryId },
+      },
+    });
+  });
+}
+
+/** Reserve the exact @4 adjudication fence the superseded plan would have frozen. */
+async function reserveLegacyPlaceholderAdjudication(seed: Seeded) {
+  const contract = norm.normalizeQuestionRowToContract({
+    ...(JSON.parse(RAW) as norm.NormalizableQuestionRow),
+    reference_md: null,
+    judge_kind_override: 'exact',
+  });
+  const currentDefinition = definitionFromContract(contract);
+  const historicalDefinition = {
+    ...currentDefinition,
+    units: currentDefinition.units.map((unit) => ({
+      ...unit,
+      printed_rule_md: unit.rule_statement_md,
+    })),
+  };
+  const parts = await solverParts(testDb(), historicalDefinition);
+  const units = solverUnits(historicalDefinition, { exposePrinted: true });
+  if (!('printed_rule_md' in units[0])) throw new Error('historical placeholder was not printed');
+  const payload = {
+    parts,
+    units,
+    figure_state: 'none_referenced' as const,
+    markings: [],
+    solves: [
+      solveOutput(seed.unitId, seed.correctItemId),
+      solveOutput(seed.unitId, seed.wrongItemId),
+    ],
+    author_evidence: currentDefinition.original_units,
+    source_answers: currentDefinition.source_answers,
+  };
+  const input = {
+    kind: ADJUDICATION_TASK_KIND,
+    call_index: 2,
+    attempt: 0,
+    payload_digest: canonicalHash(payload),
+    payload,
+    configuration: {
+      task: {
+        provider: 'custom:opendesign',
+        model: 'deepseek-v4.1-flash',
+        override_global_pin: true,
+      },
+      override: null,
+    },
+    recovery_confirmation: null,
+  };
+  const identity = computePaidEffectIdentity({
+    family: 'question_admission_stage',
+    entityId: seed.groupId,
+    entityRevision: seed.digest,
+    unit: 'call:2:attempt:0',
+    input,
+  });
+  const reservation = await reservePaidEffect(
+    testDb(),
+    {
+      family: 'question_admission_stage',
+      entityId: seed.groupId,
+      entityRevision: seed.digest,
+      unit: 'call:2:attempt:0',
+      input,
+    },
+    {
+      backend: 'pg-boss',
+      deliveryId: 'legacy-v4-adjudication',
+      generation: 0,
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+    },
+  );
+  if (reservation.kind !== 'winner') throw new Error('historical adjudication reservation lost');
+  await testDb().transaction(async (tx) => {
+    await recordPaidEffectResult(
+      tx,
+      identity,
+      'legacy-v4-adjudication',
+      {
+        kind: 'waiting',
+        recovery: {
+          reason: 'provider',
+          retry_at: '2020-01-01T00:00:00.000Z',
+          evidence_ref: 'legacy-adjudication',
+        },
+      },
+      { fence: reservation.fence },
+    );
+    await recordPaidEffectApplication(tx, identity, { kind: 'recorded' });
+  });
+  return { inputDigest: identity.inputDigest, payloadDigest: input.payload_digest };
 }
 
 async function deniedEvents(groupId: string) {
@@ -385,6 +821,7 @@ describe('question admission provider recovery', () => {
     process.env.ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS = '0';
     await resetDb();
     bossSends.length = 0;
+    bossSendError = undefined;
     return () => {
       delete process.env.ADMISSION_PROVIDER_RETRY_MAX_RETRIES;
       delete process.env.ADMISSION_PROVIDER_RETRY_BASE_DELAY_MS;
@@ -639,6 +1076,821 @@ describe('question admission provider recovery', () => {
     const retryAtMs = Date.parse(tailReceipt?.recovery?.retry_at ?? '');
     expect(retryAtMs - Date.now()).toBeGreaterThan(3 * 60 * 60_000);
     expect((await servingAdmission(seed.groupId))?.status).toBe('pending');
+  });
+
+  // @invariant grading: one blind solve, then the frozen gate decides — only an author key
+  // that accepts the blind answer settles a unit without the adjudicator; no author key, a
+  // disagreeing author key, free units, a cited missing figure, a printed rubric and a
+  // printed answer that did not parse all adjudicate, a failed or repairing adjudication
+  // never admits, the evidence names who adjudicated, and only a blind key that is the
+  // published key may seed a difficulty anchor
+  // @fails-if a question costs more than one blind solve, a key-less unit admits without
+  // adjudication, a placeholder reaches the adjudicator as a printed rule, an adjudicator
+  // error admits, or an overridden blind solve writes a difficulty anchor
+  it.each([
+    {
+      name: 'author key accepts the blind answer',
+      row: {},
+      adjudications: 0,
+      status: 'admitted',
+      keyStatus: 'matched',
+    },
+    {
+      name: 'author accepts the blind answer, then adjudication replaces the key',
+      row: { prompt_md: '如图，哪项是受控变量？' },
+      adjudication: 'pass',
+      adjudicationWrongKey: true,
+      adjudications: 1,
+      status: 'admitted',
+      keyStatus: 'overridden',
+    },
+    {
+      name: 'author key rejects the blind answer',
+      row: {},
+      wrongAnswer: true,
+      adjudication: 'pass',
+      adjudications: 1,
+      status: 'admitted',
+      keyStatus: 'overridden',
+    },
+    {
+      name: 'no author key (placeholder), adjudicator confirms the blind key',
+      row: { reference_md: null },
+      adjudication: 'pass',
+      adjudications: 1,
+      printed: false,
+      status: 'admitted',
+      keyStatus: 'matched',
+    },
+    {
+      name: 'no author key (placeholder), adjudicator returns for repair',
+      row: { reference_md: null },
+      adjudications: 1,
+      printed: false,
+      status: 'withheld',
+    },
+    {
+      name: 'no author key (placeholder), adjudicator fails',
+      row: { reference_md: null },
+      adjudication: 'fail',
+      adjudications: 1,
+      printed: false,
+      status: 'withheld',
+    },
+    {
+      name: 'placeholder free unit',
+      row: { kind: 'short_answer', reference_md: null, choices_md: null },
+      free: true,
+      adjudication: 'pass',
+      adjudications: 1,
+      printed: false,
+      status: 'withheld',
+    },
+    {
+      name: 'printed rubric free unit',
+      row: {
+        kind: 'short_answer',
+        reference_md: null,
+        choices_md: null,
+        rubric_json: { criteria: [{ id: 'c1', description: '指出控制变量', points: 2 }] },
+      },
+      free: true,
+      adjudications: 1,
+      printed: true,
+      status: 'withheld',
+    },
+    {
+      name: 'printed answer that is not an option letter',
+      row: { reference_md: '答案见课本第 12 页' },
+      adjudications: 1,
+      printed: true,
+      status: 'withheld',
+    },
+    {
+      name: 'author key agrees but the prompt cites a missing figure',
+      row: { prompt_md: '如图，哪项是受控变量？' },
+      adjudication: 'pass',
+      adjudications: 1,
+      status: 'admitted',
+      keyStatus: 'matched',
+    },
+  ])('single blind solve gate: $name', async (c) => {
+    setTestConfig({
+      [`task.${ADJUDICATION_TASK_KIND}.provider`]: 'custom:opendesign',
+      [`task.${ADJUDICATION_TASK_KIND}.model`]: 'deepseek-v4.1-flash',
+      [`task.${ADJUDICATION_TASK_KIND}.override_global_pin`]: true,
+    });
+    try {
+      const seed = await seedAdmission({ row: c.row as Partial<norm.NormalizableQuestionRow> });
+      const d1 = admissionJobId(seed.groupId, seed.revisionId, seed.digest, 0);
+      const data = jobData(seed);
+      await insertDelivery(seed, d1, data);
+      const { task, calls } = fakeTaskFactory(seed, {
+        free: c.free,
+        adjudication: c.adjudication as 'pass' | 'fail' | undefined,
+        adjudicationWrongKey: c.adjudicationWrongKey,
+        successAnswers: c.wrongAnswer ? new Map([[0, seed.wrongItemId]]) : undefined,
+      });
+      const result = await run(testDb(), data, { id: d1, jobData: data }, { runTask: task });
+      expect(calls.filter((call) => call.kind === 'QuestionAdmissionSolveTask')).toHaveLength(1);
+      const adjudications = calls.filter((call) => call.kind === ADJUDICATION_TASK_KIND);
+      expect(adjudications).toHaveLength(c.adjudications);
+      for (const call of adjudications) {
+        const payload = call.payload as {
+          units: Record<string, unknown>[];
+          solve: { units: Record<string, unknown>[] };
+        };
+        if (c.printed !== undefined) expect('printed_rule_md' in payload.units[0]).toBe(c.printed);
+        expect(payload.solve.units.every((unit) => !('prior' in unit))).toBe(true);
+      }
+      expect(result.status).toBe(c.status);
+      const [batch] = (await testDb().$client.unsafe(
+        `select result_json from paid_effect where family = 'question_admission_run'`,
+      )) as {
+        result_json: {
+          result: {
+            verification: { evidence: Record<string, unknown> };
+            resolved?: {
+              scoring_basis: {
+                units: { scoring_unit_id: string; criterion: Record<string, unknown> }[];
+              };
+            };
+            solution_prior?: unknown;
+          };
+        };
+      }[];
+      const receiptResult = batch.result_json.result;
+      const evidence = receiptResult.verification.evidence;
+      if (c.adjudicationWrongKey) {
+        const finalUnit = receiptResult.resolved?.scoring_basis.units.find(
+          (unit) => unit.scoring_unit_id === seed.unitId,
+        );
+        expect(finalUnit?.criterion).toMatchObject({
+          kind: 'select_key',
+          accepted_item_ids: [seed.wrongItemId],
+        });
+        expect(receiptResult.solution_prior).toBeDefined();
+      }
+      if (c.adjudications > 0 && c.adjudication !== 'fail') {
+        expect(evidence.adjudicator_context).toBe('same_model_as_solver');
+        expect(evidence.route_role).toBe('fallback');
+      } else expect(evidence.adjudicator_context).toBeUndefined();
+      const prior = evidence.solution_prior as { solver_key_status?: string } | undefined;
+      expect(prior?.solver_key_status).toBe(c.keyStatus);
+      const anchors = (await testDb().$client.unsafe(
+        `select 1 from item_calibration where question_id = '${seed.groupId}'`,
+      )) as unknown[];
+      expect(anchors).toHaveLength(c.keyStatus === 'matched' ? 1 : 0);
+    } finally {
+      resetTestConfig();
+    }
+  });
+
+  // @invariant concurrency: moving to the single-solve contract never re-pays an unknown
+  // send and never replays dual-solve history — a dual-solve wait is closed and its
+  // publication re-enqueued under @5 (one fresh blind solve), a dual-solve delivery that
+  // never started is re-enqueued the same way, an unknown dual-solve batch or a wait with
+  // an unknown stage send holds without any send, and replaying the @5 delivery pays nothing
+  // @fails-if a @4 wait resumes into the @5 call plan, a @5 run replays or rewrites @4
+  // stage receipts, an unknown @4 send is followed by any provider call, or a replay pays twice
+  it.each([
+    { name: '@4 wait is closed and re-enqueued', fixture: 'waiting', requeued: true },
+    { name: '@4 delivery that never started is re-enqueued', fixture: 'queued', requeued: true },
+    { name: '@4 batch outcome unknown', fixture: 'unknown', requeued: false },
+    { name: '@4 wait with an unknown stage send', fixture: 'stage_unknown', requeued: false },
+  ])('dual-solve to single-solve: $name', async ({ fixture, requeued }) => {
+    const db = testDb();
+    const seed =
+      fixture === 'waiting'
+        ? await seedAdmission({ row: { reference_md: null, judge_kind_override: 'exact' } })
+        : await seedAdmission();
+    const v4 = { ...jobData(seed), admission_version: 4 as const };
+    const { task, calls } = fakeTaskFactory(seed, {
+      failures: new Map([
+        [0, { kind: 'bound', status: 500 }],
+        [1, { kind: 'bound', status: 500 }],
+      ]),
+    });
+    let legacy: Awaited<ReturnType<typeof reserveLegacyPlaceholderAdjudication>> | null = null;
+    let v4Before: Awaited<ReturnType<typeof frozenV4Rows>> = [];
+    if (fixture === 'queued') {
+      const d1 = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:v4`, 0);
+      await insertDelivery(seed, d1, v4);
+      expect((await run(db, v4, { id: d1, jobData: v4 }, { runTask: task })).status).toBe('stale');
+    } else {
+      // A real waiting run, rewritten into the dual-solve rows it stands for. Its delivery
+      // id is not the @5 publication job id, as the @4 job id never was.
+      const d1 = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:v4`, 0);
+      const data = jobData(seed);
+      await insertDelivery(seed, d1, data);
+      expect((await run(db, data, { id: d1, jobData: data }, { runTask: task })).status).toBe(
+        'waiting',
+      );
+      await downgradeToDualSolveWait(
+        fixture === 'unknown' ? 'unknown' : 'waiting',
+        fixture === 'stage_unknown',
+      );
+      if (fixture === 'waiting') {
+        legacy = await reserveLegacyPlaceholderAdjudication(seed);
+        v4Before = await frozenV4Rows();
+      }
+      bossSends.length = 0;
+      const wakeId = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:wake`, 0);
+      const wake = { ...v4, recovery_confirmed: false };
+      await insertDelivery(seed, wakeId, wake, { binding: false });
+      await testDb().$client.unsafe(
+        `update paid_effect set result_json = jsonb_set(result_json, '{recovery,retry_at}', '"2020-01-01T00:00:00.000Z"')
+         where family = 'question_admission_stage' and result_json->>'kind' = 'waiting'`,
+      );
+      const sendsBefore = calls.length;
+      const woke = await run(db, wake, { id: wakeId, jobData: wake }, { runTask: task });
+      expect(woke.status).toBe(requeued ? 'stale' : 'pending');
+      expect(calls.length).toBe(sendsBefore);
+      if (legacy != null) {
+        expect(await frozenV4Rows()).toEqual(v4Before);
+      }
+    }
+    const successor = bossSends.find(
+      (send) => (send.data as { admission_version?: number }).admission_version === 5,
+    );
+    if (!requeued) {
+      expect(successor).toBeUndefined();
+      // A fresh @5 publication delivery for the same base still holds.
+      const fresh = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:fresh`, 0);
+      const data = jobData(seed);
+      await insertDelivery(seed, fresh, data);
+      const sendsBefore = calls.length;
+      expect((await run(db, data, { id: fresh, jobData: data }, { runTask: task })).status).toBe(
+        'pending',
+      );
+      expect(calls.length).toBe(sendsBefore);
+      return;
+    }
+    if (!successor) throw new Error('no @5 successor delivery was enqueued');
+    if (legacy != null) {
+      expect(successor.data).toMatchObject({
+        source_event_id: seed.publishEventId,
+        admission_version: 5,
+      });
+    }
+    const successorId = String(successor.opts.id);
+    const successorData = successor.data as ReturnType<typeof jobData>;
+    await insertDelivery(seed, successorId, successorData, { binding: false });
+    const { task: fresh, calls: freshCalls } = fakeTaskFactory(
+      seed,
+      legacy != null ? { adjudication: 'pass' } : {},
+    );
+    const successorRun = await run(
+      db,
+      successorData,
+      { id: successorId, jobData: successorData },
+      { runTask: fresh },
+    );
+    expect(successorRun.status).toBe(legacy == null ? 'admitted' : 'withheld');
+    if (legacy != null) {
+      expect(successorRun.per_unit).toEqual([
+        {
+          scoring_unit_id: seed.unitId,
+          status: 'withheld',
+          reason: 'admission_provider_query_not_started',
+        },
+      ]);
+    }
+    expect(freshCalls.map((call) => call.kind)).toEqual(['QuestionAdmissionSolveTask']);
+    const current = (await stageRows()).filter(
+      (row) =>
+        (row.input as { kind?: string; policy_id?: string }).kind ===
+          'QuestionAdmissionSolveTask' &&
+        (row.input as { policy_id?: string }).policy_id === 'question_admission@5',
+    );
+    expect(current.map((row) => row.unit)).toEqual(['call:0:attempt:0']);
+    if (legacy != null) {
+      const oldCall2 = (await stageRows()).filter(
+        (row) => (row.input as { call_index?: number }).call_index === 2,
+      );
+      expect(oldCall2).toHaveLength(1);
+      const historicalCall = oldCall2[0];
+      if (!historicalCall) throw new Error('historical @4 adjudication fence disappeared');
+      expect(historicalCall.input_digest).toBe(legacy.inputDigest);
+      expect((historicalCall.input as { payload_digest?: string }).payload_digest).toBe(
+        legacy.payloadDigest,
+      );
+      expect(await frozenV4Rows()).toEqual(v4Before);
+    }
+    expect(
+      (await stageRows()).filter(
+        (row) =>
+          (row.input as { kind?: string; policy_id?: string }).kind ===
+            'QuestionAdmissionSolveTask' &&
+          (row.input as { policy_id?: string }).policy_id === 'question_admission@5',
+      ),
+    ).toHaveLength(1);
+    const replay = await run(
+      db,
+      successorData,
+      { id: successorId, jobData: successorData },
+      { runTask: fresh },
+    );
+    expect(replay.status).toBe('already_verified');
+    expect(freshCalls.filter((call) => call.kind === 'QuestionAdmissionSolveTask')).toHaveLength(1);
+  });
+
+  // @invariant concurrency: safe @4 history is closed exactly once — an old or wake
+  // delivery repairs a lost successor enqueue, while the canonical @5 delivery closes
+  // history in-transaction and itself reaches the paid claim
+  // @fails-if an applied-stale @4 wait permanently blocks rediscovery, canonical @5
+  // re-enqueues itself, or any @4/@5 replay issues another provider call
+  it.each([
+    { name: 'version 4 recovery delivery', version: 4, canonicalFirst: false },
+    { name: 'version 5 wake recovery delivery', version: 5, canonicalFirst: false },
+    { name: 'canonical version 5 first encounter', version: 5, canonicalFirst: true },
+  ])(
+    'closes dual-solve history before the current claim: $name',
+    async ({ version, canonicalFirst }) => {
+      const db = testDb();
+      const seed = await seedAdmission();
+      const sourceId = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:source`, 0);
+      const sourceData = jobData(seed);
+      await insertDelivery(seed, sourceId, sourceData);
+      const { task, calls } = fakeTaskFactory(seed, {
+        failures: new Map([
+          [0, { kind: 'bound', status: 500 }],
+          [1, { kind: 'bound', status: 500 }],
+        ]),
+      });
+      expect(
+        (await run(db, sourceData, { id: sourceId, jobData: sourceData }, { runTask: task }))
+          .status,
+      ).toBe('waiting');
+      await downgradeToDualSolveWait('waiting');
+      const stageBefore = await stageRows();
+
+      bossSends.length = 0;
+      const wakeId = canonicalFirst
+        ? admissionJobId(seed.groupId, seed.revisionId, seed.digest, 0)
+        : admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:lost-enqueue`, 0);
+      const wake = {
+        ...jobData(seed),
+        admission_version: version as 4 | 5,
+        recovery_confirmed: false,
+      };
+      await insertDelivery(seed, wakeId, wake, canonicalFirst ? {} : { binding: false });
+      const callsAfterWait = calls.length;
+      if (canonicalFirst) {
+        const firstRun = await run(db, wake, { id: wakeId, jobData: wake }, { runTask: task });
+        expect(firstRun.status).toBe('admitted');
+        expect(calls.length).toBe(callsAfterWait + 1);
+        expect(bossSends).toHaveLength(0);
+        const stagesAfter = await stageRows();
+        expect(stagesAfter).toHaveLength(stageBefore.length + 1);
+        const replay = await run(db, wake, { id: wakeId, jobData: wake }, { runTask: task });
+        expect(replay.status).toBe('already_verified');
+        expect(calls.length).toBe(callsAfterWait + 1);
+        return;
+      }
+      bossSendError = new Error('successor enqueue lost');
+      await expect(run(db, wake, { id: wakeId, jobData: wake }, { runTask: task })).rejects.toThrow(
+        'successor enqueue lost',
+      );
+      expect(calls.length).toBe(callsAfterWait);
+      const [supersededRow] = await db
+        .select({ state: paid_effect.state, application: paid_effect.application_json })
+        .from(paid_effect)
+        .where(eq(paid_effect.unit, 'admission@4'));
+      expect(supersededRow?.state).toBe('applied');
+      expect(supersededRow?.application).toEqual({
+        status: 'stale',
+        group_id: seed.groupId,
+        superseded_by_policy: 'question_admission@5',
+      });
+
+      bossSendError = undefined;
+      const rediscovered = await run(db, wake, { id: wakeId, jobData: wake }, { runTask: task });
+      expect(rediscovered.status).toBe('stale');
+      expect(calls.length).toBe(callsAfterWait);
+      const successors = bossSends.filter(
+        (send) => (send.data as { admission_version?: number }).admission_version === 5,
+      );
+      expect(successors).toHaveLength(1);
+      const successorId = String(successors[0]?.opts.id);
+      const successorData = successors[0]?.data as ReturnType<typeof jobData>;
+      await insertDelivery(seed, successorId, successorData, { binding: false });
+      const { task: fresh, calls: freshCalls } = fakeTaskFactory(seed);
+      const admitted = await run(
+        db,
+        successorData,
+        { id: successorId, jobData: successorData },
+        { runTask: fresh },
+      );
+      expect(admitted.status).toBe('admitted');
+      expect(freshCalls.map((call) => call.kind)).toEqual(['QuestionAdmissionSolveTask']);
+      const stageBeforeDigests = new Set(stageBefore.map((row) => row.input_digest));
+      const stagesAfter = await stageRows();
+      expect(stagesAfter.filter((row) => stageBeforeDigests.has(row.input_digest))).toHaveLength(
+        stageBefore.length,
+      );
+      expect(stagesAfter).toHaveLength(stageBefore.length + 1);
+
+      const replay = await run(
+        db,
+        successorData,
+        { id: successorId, jobData: successorData },
+        { runTask: fresh },
+      );
+      expect(replay.status).toBe('already_verified');
+      expect(freshCalls).toHaveLength(1);
+      expect(
+        (await stageRows()).filter(
+          (row) => (row.input as { policy_id?: string }).policy_id === 'question_admission@5',
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
+  // @invariant concurrency: an original pending @4 authorization translates once to
+  // its exact canonical @5 delivery; the mapped effect governs retries and later revisions
+  // @fails-if input/source/delivery drift or an unknown send escapes the fence, retries
+  // repurchase, old paid evidence changes, or a settled mapping blocks a later revision
+  it.each([
+    { name: 'exact mapped input claims', allowed: true, drift: 'none' },
+    { name: 'mapped wait recovers without repurchase', allowed: true, drift: 'retry' },
+    { name: 'subject drift holds', allowed: false, drift: 'subject' },
+    { name: 'arbitrary delivery holds', allowed: false, drift: 'delivery' },
+    { name: 'different publication holds', allowed: false, drift: 'publication' },
+    { name: 'original unknown send holds', allowed: false, drift: 'unknown' },
+    { name: 'original sending holds', allowed: false, drift: 'sending' },
+    { name: 'purged original delivery holds', allowed: false, drift: 'missing' },
+  ])('legacy dual-solve authorization: $name', async ({ allowed, drift }) => {
+    const db = testDb();
+    const seed = await seedAdmission();
+    const boundId = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:legacy-bound`, 0);
+    await seedCancelledLegacyAuthorization(seed, boundId);
+    if (drift === 'subject') {
+      const now = new Date();
+      await db
+        .insert(knowledge)
+        .values({
+          id: 'k-drift',
+          name: 'Node',
+          domain: 'math',
+          created_at: now,
+          updated_at: now,
+        })
+        .onConflictDoNothing();
+      await db
+        .update(question)
+        .set({ knowledge_ids: ['k-drift'] })
+        .where(eq(question.id, seed.groupId));
+    }
+
+    bossSends.length = 0;
+    const boundData = { ...jobData(seed), admission_version: 4 as const };
+    if (drift === 'publication') {
+      const [publication] = await db.select().from(event).where(eq(event.id, seed.publishEventId));
+      if (!publication) throw new Error('original publication missing');
+      const alternateId = `pub-${createId()}`;
+      await db.insert(event).values({
+        id: alternateId,
+        actor_kind: publication.actor_kind,
+        actor_ref: publication.actor_ref,
+        action: publication.action,
+        subject_kind: publication.subject_kind,
+        subject_id: publication.subject_id,
+        outcome: publication.outcome,
+        payload: publication.payload,
+        ingest_at: new Date(),
+      });
+      await enqueuePublishedQuestionAdmission(db, {
+        subscriberId: 'practice.question-admission-successor',
+        subscriberVersion: 5,
+        deliverySeq: '0',
+        sourceEventId: alternateId,
+      });
+    } else {
+      const oldRun = await run(db, boundData, { id: boundId, jobData: boundData });
+      expect(oldRun.status).toBe('stale');
+    }
+    const successors = bossSends.filter(
+      (send) => (send.data as { admission_version?: number }).admission_version === 5,
+    );
+    expect(successors).toHaveLength(1);
+    const successorId =
+      drift === 'delivery'
+        ? admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:unbound`, 0)
+        : String(successors[0]?.opts.id);
+    expect(successorId).not.toBe(boundId);
+    const [authorization] = await db
+      .select({ boundDeliveryId: paid_effect_authorization.successor_delivery_id })
+      .from(paid_effect_authorization);
+    expect(authorization?.boundDeliveryId).toBe(boundId);
+    const successorData = successors[0]?.data as ReturnType<typeof jobData>;
+    await insertDelivery(seed, successorId, successorData, { binding: drift === 'delivery' });
+    if (drift === 'missing') await fixtureBoss?.deleteJob(ADMISSION_FAMILY, boundId);
+    if (drift === 'unknown' || drift === 'sending') {
+      const [row] = await db
+        .select()
+        .from(paid_effect)
+        .where(
+          and(
+            eq(paid_effect.unit, DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT),
+            eq(paid_effect.state, 'pending'),
+          ),
+        );
+      if (!row) throw new Error('original authorized successor missing');
+      const identity = computePaidEffectIdentity({
+        family: row.family,
+        entityId: row.entity_id,
+        entityRevision: row.entity_revision,
+        unit: row.unit,
+        input: row.input_json,
+      });
+      await db.transaction(async (tx) => {
+        const claim = await claimPaidEffectSend(tx, identity, {
+          backend: 'pg-boss',
+          deliveryId: boundId,
+          generation: 0,
+          leaseExpiresAt: new Date(Date.now() + 60_000),
+        });
+        if (claim.kind !== 'claimed') throw new Error('original authorized send did not claim');
+        if (drift === 'unknown')
+          await markPaidEffectUnknown(tx, identity, boundId, 'unresolved original send', {
+            fence: claim.fence,
+          });
+      });
+    }
+    const oldRows = () =>
+      db
+        .select()
+        .from(paid_effect)
+        .where(eq(paid_effect.unit, DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT));
+    const oldBefore = await oldRows();
+    const authBefore = await db.select().from(paid_effect_authorization);
+    const { task, calls } = fakeTaskFactory(
+      seed,
+      drift === 'retry'
+        ? {
+            failures: new Map([
+              [0, { kind: 'bound', status: 500 }],
+              [1, { kind: 'bound', status: 500 }],
+            ]),
+          }
+        : {},
+    );
+    const claimed = await run(
+      db,
+      successorData,
+      { id: successorId, jobData: successorData },
+      { runTask: task },
+    );
+    expect(claimed.status).toBe(allowed ? (drift === 'retry' ? 'waiting' : 'admitted') : 'pending');
+    if (drift === 'retry') {
+      expect((await deliverWake(seed, successorData, task)).status).toBe('admitted');
+    }
+    const expectedCalls = drift === 'retry' ? 3 : 1;
+    expect(calls).toHaveLength(allowed ? expectedCalls : 0);
+    const current = await db
+      .select({ unit: paid_effect.unit })
+      .from(paid_effect)
+      .where(eq(paid_effect.unit, QUESTION_ADMISSION_PAID_UNIT));
+    expect(current).toHaveLength(allowed ? 1 : 0);
+    const mappings = () =>
+      db
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:paid_question_admission_policy_successor_v1'));
+    expect(await mappings()).toHaveLength(allowed ? 1 : 0);
+    expect(await oldRows()).toEqual(oldBefore);
+    expect(await db.select().from(paid_effect_authorization)).toEqual(authBefore);
+    if (!allowed) return;
+
+    const replay = await run(
+      db,
+      successorData,
+      { id: successorId, jobData: successorData },
+      { runTask: task },
+    );
+    expect(replay.status).toBe('already_verified');
+    expect(calls).toHaveLength(expectedCalls);
+    const settledMappings = await mappings();
+    const [settled] = await db
+      .select()
+      .from(paid_effect)
+      .where(eq(paid_effect.unit, QUESTION_ADMISSION_PAID_UNIT));
+    expect(settled?.state).toBe('applied');
+    const original = oldBefore.find((row) => row.state === 'pending');
+    if (!original) throw new Error('original pending authorization missing');
+    const retiredClaim = await db.transaction((tx) =>
+      claimPaidEffectSend(
+        tx,
+        {
+          family: original.family,
+          entityId: original.entity_id,
+          entityRevision: original.entity_revision,
+          unit: original.unit,
+          inputDigest: original.input_digest,
+        },
+        {
+          backend: 'pg-boss',
+          deliveryId: boundId,
+          generation: 0,
+          leaseExpiresAt: new Date(Date.now() + 60_000),
+        },
+      ),
+    );
+    expect(retiredClaim.kind).toBe('refused');
+
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, seed.groupId));
+    if (!lifecycle?.current_revision_id) throw new Error('settled lifecycle missing');
+    const [revision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, lifecycle.current_revision_id));
+    if (!revision) throw new Error('settled revision missing');
+    const structure = structuredClone(revision.structure);
+    structure.parts[0].prompt_md += '\n改变坡度后再判断受控变量。';
+    const layers = {
+      structure,
+      response_spec: revision.response_spec,
+      scoring_basis: revision.scoring_basis,
+      execution_plan: revision.execution_plan,
+      ...(revision.presentation ? { presentation: revision.presentation } : {}),
+    };
+    const published = await publishQuestionGroup(db, {
+      group_id: seed.groupId,
+      contract: { ...layers, integrity_digest: norm.publishedContractSeal(layers).canonical },
+      expectedCurrentRevision: revision.revision_id,
+      expectedAdmissionGeneration: lifecycle.scoring_admission_generation,
+      availability: 'general_pool',
+      admission: { state: 'withheld', reason: 'unverified_rules' },
+      actorRef: 'quiz_gen:persist',
+      now: new Date(),
+    });
+    if (published.status !== 'published') throw new Error(`later revision was ${published.status}`);
+    const laterSeed = {
+      ...seed,
+      revisionId: published.revision_id,
+      digest: published.revision_digest,
+      publishEventId: published.event_id,
+    };
+    const laterId = admissionJobId(
+      seed.groupId,
+      laterSeed.revisionId,
+      laterSeed.digest,
+      published.admission_generation,
+    );
+    const laterData = jobData(laterSeed, {
+      expected_admission_generation: published.admission_generation,
+    });
+    await insertDelivery(laterSeed, laterId, laterData);
+    expect(
+      (await run(db, laterData, { id: laterId, jobData: laterData }, { runTask: task })).status,
+    ).toBe('admitted');
+    expect(calls).toHaveLength(expectedCalls + 1);
+    expect(await oldRows()).toEqual(oldBefore);
+    expect(await db.select().from(paid_effect_authorization)).toEqual(authBefore);
+    expect(await mappings()).toEqual(settledMappings);
+  });
+});
+
+describe('question admission blind solve through the real runner', () => {
+  const requests: Record<string, unknown>[] = [];
+  let stopServer: (() => Promise<void>) | undefined;
+  beforeEach(async () => {
+    await resetDb();
+    requests.length = 0;
+    vi.stubEnv('OPENCODE_API_KEY', 'offline-invalid-key');
+    setTestConfig({
+      CLAUDE_CODE_MAX_RETRIES: 0,
+      'lane.global.provider': 'opencode-go',
+      'lane.global.model': 'deepseek-v4.1-flash',
+    });
+  });
+  afterEach(async () => {
+    await stopServer?.();
+    for (const job of ownedJobs.splice(0)) await fixtureBoss?.deleteJob(job.name, job.id);
+    resetTestConfig();
+    __setPiAdapterForTests(undefined);
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+  afterAll(async () => {
+    await fixtureBoss?.stop();
+    fixtureBoss = undefined;
+  });
+
+  // @invariant grading: the one blind solve the provider actually receives carries no
+  // answer and no knowledge candidates, its submit tool declares the prior, and the prior
+  // it returns is parsed and frozen on the published revision with step-to-prerequisite
+  // links and names only — undeclared fields inside the prior are accepted by the real
+  // submit tool and stripped, so they cost no extra turn
+  // @fails-if the wire input leaks knowledge candidates or printed answers, the submit tool
+  // hides the prior, a second solve request is sent, an undeclared prior field is refused
+  // or stored, or the returned prior is lost
+  it.each([
+    { name: 'declared prior', prior: PRIOR },
+    {
+      name: 'prior with undeclared fields',
+      prior: {
+        ...PRIOR,
+        methods_note: 'extra',
+        methods: [
+          { ...PRIOR.methods[0], steps: [{ ...PRIOR.methods[0].steps[0], step_note: 'extra' }] },
+        ],
+      },
+    },
+  ])('sends one blind solve and freezes the prior it returns: $name', async ({ prior }) => {
+    const seed = await seedAdmission();
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>;
+      requests.push(body);
+      const tools = body.tools as { function: { name: string } }[];
+      const args = JSON.stringify({
+        scoring_unit_id: seed.unitId,
+        status: 'solved',
+        answer: { kind: 'select', item_ids: [seed.correctItemId] },
+        equivalent_forms: [],
+        typical_wrong: [],
+        prior,
+      });
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      const chunk = (delta: unknown, finish: string | null) =>
+        response.write(
+          `data: ${JSON.stringify({
+            id: 'offline',
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta, finish_reason: finish }],
+            ...(finish
+              ? { usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 } }
+              : {}),
+          })}\n\n`,
+        );
+      chunk(
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              index: 0,
+              id: 'submit',
+              type: 'function',
+              function: { name: tools[0].function.name, arguments: args },
+            },
+          ],
+        },
+        null,
+      );
+      chunk({}, 'tool_calls');
+      response.end('data: [DONE]\n\n');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    stopServer = () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('missing fixture address');
+    const models = await createLoomPiModels();
+    const model = models.getModel('opencode-go', 'deepseek-v4.1-flash');
+    if (!model) throw new Error('offline protocol model unavailable');
+    vi.spyOn(models, 'getModel').mockReturnValue({
+      ...model,
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    });
+    __setPiAdapterForTests(new PiAgentAdapter({ models, agentLoop }));
+
+    const d1 = admissionJobId(seed.groupId, seed.revisionId, seed.digest, 0);
+    const data = jobData(seed);
+    await insertDelivery(seed, d1, data);
+    const result = await run(testDb(), data, { id: d1, jobData: data });
+
+    expect(result.status).toBe('admitted');
+    expect(requests).toHaveLength(1);
+    const user = (requests[0].messages as { role: string; content: unknown }[]).find(
+      (message) => message.role === 'user',
+    );
+    const wire = JSON.parse(String(user?.content)) as Record<string, unknown>;
+    expect(wire.mode).toBe('solve');
+    expect(Object.keys(wire).sort()).toEqual(['mode', 'parts', 'units']);
+    expect(JSON.stringify(wire)).not.toContain('printed_rule_md');
+    const submit = (
+      requests[0].tools as { function: { parameters: { properties: Record<string, unknown> } } }[]
+    )[0].function.parameters;
+    expect(Object.keys(submit.properties)).toContain('prior');
+    const stored = await testDb()
+      .select({ prior: question_solution_prior.prior })
+      .from(question_solution_prior)
+      .where(eq(question_solution_prior.revision_id, result.revision_id ?? ''));
+    expect(stored).toHaveLength(1);
+    expect(stored[0].prior).toMatchObject({
+      methods: [{ steps_md: ['列出每组实验改变的量'], step_prerequisites: [0] }],
+      prerequisites: [{ name_md: '控制变量法', knowledge_id: null }],
+    });
+    expect(JSON.stringify(stored[0].prior)).not.toMatch(/methods_note|step_note/);
   });
 });
 

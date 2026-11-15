@@ -86,6 +86,13 @@ export const advisoryLockRegistry = {
     encoding: 'hashtext',
     key: 'learning-state:write',
   },
+  paidEffectEntityGate: {
+    family: 'paid-effect-gate',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'paid-effect:gate:v1:',
+    suffixFields: ['family', 'entityId'],
+  },
   providerAttempt: {
     family: 'provider-attempt',
     encoding: 'hashtextextended',

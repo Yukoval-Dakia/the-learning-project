@@ -5,6 +5,7 @@ import {
   lockPaidEffectControlFamily,
   readPaidEffectControl,
 } from '@/core/paid-work/server/paid-effect-control';
+import { questionAdmissionV5DeliveryId } from '@/core/paid-work/server/question-admission-policy-successor-v1';
 import { QUESTION_ADMISSION_CONTRACT_VERSION } from '@/core/question-admission-policy';
 import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answer-compare';
 import type { Db, Tx } from '@/db/client';
@@ -29,8 +30,10 @@ import { placementAuthority } from '../../../supply/public';
 
 export const ADMISSION_FAMILY = 'question_admission_run';
 export const AdmissionJobData = z.object({
-  /** Absent on old queued deliveries: they may reconcile old units but never initiate @3. */
-  admission_version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
+  /** Absent on old queued deliveries: they may reconcile old units but never initiate. */
+  admission_version: z
+    .union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)])
+    .optional(),
   recovery_confirmed: z.boolean().optional(),
   login_probe_route: z.object({ provider: z.string().min(1), model: z.string().min(1) }).optional(),
   question_id: z.string().min(1).optional(),
@@ -55,7 +58,7 @@ const AdmissionPurposeBinding = z
     derivation_policy: z.literal('answer_only'),
   })
   .strict();
-const purposeBindingId = (jobId: string) => `question-admission-purpose:${jobId}`;
+export const purposeBindingId = (jobId: string) => `question-admission-purpose:${jobId}`;
 
 // System writers that publish pipeline content. `submit_question:*` is deliberately absent:
 // that is how a person or an agent edits a question, and the edit may hold learner material
@@ -253,20 +256,13 @@ export function admissionJobId(
   digest: string,
   generation: number,
 ): string {
-  const hex = createHash('sha256')
-    .update(
-      JSON.stringify([
-        ADMISSION_FAMILY,
-        QUESTION_ADMISSION_CONTRACT_VERSION,
-        groupId,
-        revisionId,
-        digest,
-        generation,
-      ]),
-    )
-    .digest('hex');
-  const value = `${hex.slice(0, 12)}8${hex.slice(13, 16)}${((Number.parseInt(hex[16], 16) & 3) | 8).toString(16)}${hex.slice(17, 32)}`;
-  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+  return questionAdmissionV5DeliveryId(
+    groupId,
+    revisionId,
+    digest,
+    generation,
+    QUESTION_ADMISSION_CONTRACT_VERSION,
+  );
 }
 
 /**
@@ -310,7 +306,7 @@ export async function enqueuePublishedQuestionAdmission(
     if (!revision || revision.group_id !== root.id)
       throw new Error('Admission revision binding missing');
     // （第 2 片）：声明 answer_shape 的题由共享比较核心判定支持后
-    // 才可进入付费双解 —— 未实现 notation、未知/坏声明仍在入队前被拦（宽
+    // 才可进入付费盲解 —— 未实现 notation、未知/坏声明仍在入队前被拦（宽
     // 松存在性扫描 + declaredShapesAllSupported：未知版本也算已声明并判
     // 未支持）。命中即 skip 不入队，不给后续 claim/maySend 留第一入口。
     const declaredSupport = declaredShapesAllSupported(revision.response_spec);
