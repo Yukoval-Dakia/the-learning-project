@@ -374,6 +374,9 @@ async function readAttemptWindows(
   const out = new Map<string, CandidateAttemptWindow>();
   const ids = [...new Set(questionIds)];
   if (ids.length === 0) return out;
+  // Purpose gate BEFORE the window cap: only derivation-eligible attempt rows
+  // count toward recent_attempts. A restricted newer event must not push an
+  // allowed older one out of the six-row window.
   const rows = await db.execute<AttemptRow>(sql`
     select id, action, subject_id, subject_kind, outcome, created_at from (
       select e.id, e.action, e.subject_id, e.subject_kind, e.outcome, e.created_at,
@@ -388,9 +391,6 @@ async function readAttemptWindows(
           sql`, `,
         )})
         and e.action in ('attempt', 'experimental:assessment_attempt')
-        // Purpose gate BEFORE the window cap: only derivation-eligible attempt rows
-        // count toward recent_attempts. A restricted newer event must not push an
-        // allowed older one out of the six-row window.
         and ${sourceAllowsDerivationSql({ kind: 'event', id: sql.raw('e.id') })}
     ) ranked
     where rn <= ${ATTEMPT_WINDOW}

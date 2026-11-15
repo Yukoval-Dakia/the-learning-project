@@ -301,13 +301,22 @@ describe('read_practice_candidates authorization boundary', () => {
     const knowledgeId = await seedKnowledge(db);
     const now = Date.now();
 
-    // Question A: two allowed attempts plus a NEWER answer_only attempt that must not
-    // count and must not hide the allowed history behind the cap.
+    // Question A: two allowed attempts plus SEVEN newer restricted attempts — enough
+    // to fill the whole six-row window if the gate ran after the cap, which would
+    // displace both allowed rows. With the gate BEFORE the cap all seven restricted
+    // rows are excluded first, so the two allowed rows survive.
     const mixedId = await seedAdmittedQuestion(db, knowledgeId, SECRET_ADMITTED);
     await seedDueCard(db, mixedId);
-    await seedAttempt(db, mixedId, 'failure', 'allow', new Date(now - 3_000));
-    await seedAttempt(db, mixedId, 'success', 'allow', new Date(now - 2_000));
-    await seedAttempt(db, mixedId, 'success', 'answer_only', new Date(now - 1_000));
+    await seedAttempt(db, mixedId, 'failure', 'allow', new Date(now - 10_000));
+    await seedAttempt(db, mixedId, 'success', 'allow', new Date(now - 9_000));
+    // Newer restricted rows, strictly more recent than both allowed attempts.
+    await seedAttempt(db, mixedId, 'success', 'answer_only', new Date(now - 8_000));
+    await seedAttempt(db, mixedId, 'failure', 'answer_only', new Date(now - 7_000));
+    await seedAttempt(db, mixedId, 'success', 'crisis', new Date(now - 6_000));
+    await seedAttempt(db, mixedId, 'failure', 'answer_only', new Date(now - 5_000));
+    await seedAttempt(db, mixedId, 'success', 'answer_only', new Date(now - 4_000));
+    await seedAttempt(db, mixedId, 'failure', 'crisis', new Date(now - 3_000));
+    await seedAttempt(db, mixedId, 'success', 'answer_only', new Date(now - 2_000));
 
     // Question B: every attempt is restricted — the visible window must stay unknown.
     const restrictedId = await seedAdmittedQuestion(db, knowledgeId, 'REF-B');
@@ -322,13 +331,17 @@ describe('read_practice_candidates authorization boundary', () => {
 
     const mixed = result.candidates.find((row) => row.ref_id === mixedId);
     expect(mixed).toBeTruthy();
-    // Two allowed attempts are visible; the newer answer_only row is excluded BEFORE
-    // the cap, so it neither counts nor displaces the allowed rows.
+    // The two allowed attempts survive: seven newer restricted rows were excluded
+    // before the cap, so they neither count nor displace the allowed history.
     expect(mixed?.recent_attempts.count.known).toBe(true);
     expect(mixed?.recent_attempts.count.value).toBe(2);
     expect(mixed?.recent_attempts.outcomes).toEqual({ success: 1, partial: 0, failure: 1 });
-    // The latest VISIBLE outcome is the allowed success, not the restricted newest row.
+    // The latest VISIBLE outcome is the allowed success — every newer restricted row
+    // is invisible, so last_outcome can never be a restricted one.
     expect(mixed?.recent_attempts.last_outcome).toBe('success');
+    // The visible window is complete: only 2 eligible rows, far under the six cap —
+    // proof the restricted rows never consumed window slots.
+    expect(mixed?.recent_attempts.window_complete).toBe(true);
 
     const restricted = result.candidates.find((row) => row.ref_id === restrictedId);
     expect(restricted).toBeTruthy();
