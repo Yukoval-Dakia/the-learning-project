@@ -22,7 +22,13 @@ import { useAssetUrl } from '@/ui/lib/assets';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 
 import { isExportNotFound } from './worksheet-api';
-import { COLUMN_MM, PANEL_INSET_MM, SHEET_MM, type SheetOrientation } from './worksheet-geometry';
+import {
+  BODY_SAFETY_MM,
+  COLUMN_MM,
+  PANEL_INSET_MM,
+  SHEET_MM,
+  type SheetOrientation,
+} from './worksheet-geometry';
 import { type WorksheetRegionMapDraft, measureRegionMap } from './worksheet-measure';
 import {
   type FlowInput,
@@ -273,6 +279,53 @@ function PassageColumn({ item }: { item: PlanItem }) {
   );
 }
 
+/**
+ * One page's left column for a long passage: the whole column renders inside a fixed window
+ * clipped to this page's slice (negative top shift on an inner wrapper), so the same text lays
+ * out identically to the measured column. Slice heights come from the paginator's legal cuts —
+ * the printed pages tile the whole passage with no repeat and no drop.
+ */
+function PassageSlice({
+  item,
+  slice,
+}: {
+  item: PlanItem;
+  slice: { offsetMm: number; heightMm: number; continues?: boolean };
+}) {
+  return (
+    <>
+      {slice.offsetMm > 0 ? <p className="ws-passage-hint">（接上页）</p> : null}
+      <div className="ws-passage-window" style={{ height: `${slice.heightMm}mm` }}>
+        <div className="ws-passage-inner" style={{ marginTop: `${-slice.offsetMm}mm` }}>
+          <PassageColumn item={item} />
+        </div>
+      </div>
+      {slice.continues ? <p className="ws-passage-hint">（材料未完，下页续）</p> : null}
+    </>
+  );
+}
+
+/** The question head lives inside the measured passage column, so slice offsets include it. */
+function PassageSide({
+  item,
+  passage,
+  firstPage,
+}: {
+  item: PlanItem;
+  passage: LaidOutPage['passage'];
+  firstPage: number;
+}) {
+  if (!passage || passage.kind === 'repeat') {
+    return <PassageColumn item={item} />;
+  }
+  if (passage.kind === 'seeEarlier') {
+    return (
+      <p className="ws-passage-hint">{`（阅读材料见第 ${firstPage} 页起的横版页，题目在右栏继续）`}</p>
+    );
+  }
+  return <PassageSlice item={item} slice={passage} />;
+}
+
 // ---------- flows ----------
 
 interface Flow {
@@ -442,6 +495,52 @@ const isPositive = (value: number | undefined): value is number =>
 const rectOk = (rect: { x: number; y: number; w: number; h: number }) =>
   [rect.x, rect.y].every(Number.isFinite) && isPositive(rect.w) && isPositive(rect.h);
 
+/**
+ * Legal cut positions inside a passage column, in mm from its top, ending at the column's
+ * height. Boundaries are real rendered lines: every block-level child's top, plus every text
+ * line's top inside a block too tall for one column. Figures, KaTeX and other indivisible
+ * boxes contribute only their top — if one is taller than a whole column the paginator sees a
+ * gap it cannot span and reports layout_overflow (never clipped, never shrunk).
+ */
+function passageCutOffsets(column: HTMLElement, scale: number, columnMm: number): number[] {
+  const cuts = new Set<number>([0]);
+  const columnTop = column.getBoundingClientRect().top;
+  const toMm = (px: number) => px * scale;
+  const addLineCuts = (root: Element) => {
+    const range = document.createRange();
+    for (const node of root.querySelectorAll(
+      'p, li, h1, h2, h3, h4, h5, h6, blockquote, pre, dd, dt',
+    )) {
+      if (node.querySelector('img, svg, table, .katex-display')) continue;
+      const iter = document.createNodeIterator(node, NodeFilter.SHOW_TEXT);
+      let text = iter.nextNode();
+      while (text) {
+        range.selectNodeContents(text);
+        let lineTop: number | null = null;
+        for (const rect of range.getClientRects()) {
+          const top = toMm(rect.top - columnTop);
+          if (lineTop === null || Math.abs(rect.top - lineTop) > 1) {
+            lineTop = rect.top;
+            if (top > 0) cuts.add(top);
+          }
+        }
+        text = iter.nextNode();
+      }
+    }
+    range.detach();
+  };
+  for (const child of column.children) {
+    const box = child.getBoundingClientRect();
+    const top = toMm(box.top - columnTop);
+    const childMm = toMm(box.height);
+    if (top > 0) cuts.add(top);
+    if (childMm > columnMm) addLineCuts(child);
+  }
+  const heightMm = toMm(column.getBoundingClientRect().height);
+  cuts.add(heightMm);
+  return [...cuts].sort((a, b) => a - b);
+}
+
 /** Never report ready with a page or region the archive would reject as empty or NaN. */
 function regionMapProblem(map: WorksheetRegionMapDraft): string | null {
   if (map.pages.length === 0) return 'no pages measured';
@@ -515,12 +614,18 @@ function measureFlows(
       });
     });
     const passageKey = flow.passageItem?.passage?.key;
+    const passageHeight = passageKey ? (measuredByKey.get(passageKey) ?? 0) : 0;
+    let cutOffsetsMm: number[] | undefined;
+    if (passageKey && passageHeight > bodyMm.landscape - BODY_SAFETY_MM) {
+      const column = stage.querySelector<HTMLElement>(`[data-measure="${passageKey}"]`);
+      if (column) {
+        cutOffsetsMm = passageCutOffsets(column, scale, bodyMm.landscape - BODY_SAFETY_MM);
+      }
+    }
     return {
       key: flow.key,
       orientation: flow.orientation,
-      passage: passageKey
-        ? { key: passageKey, heightMm: measuredByKey.get(passageKey) ?? 0 }
-        : null,
+      passage: passageKey ? { key: passageKey, heightMm: passageHeight, cutOffsetsMm } : null,
       blocks,
     };
   });
@@ -715,6 +820,7 @@ function Sheets({ plan, overlay }: { plan: WorksheetPlan; overlay: boolean }) {
             const passageItem = page.passageKey
               ? plan.items.find((item) => item.passage?.key === page.passageKey)
               : undefined;
+            const firstPage = pages.findIndex((p) => p.flowKey === page.flowKey) + 1;
             const blocks = page.placements.map((placement) => {
               const entry = index.get(placement.key);
               // Unreachable: unresolvedPlacement() fails the layout before pages are set.
@@ -743,7 +849,11 @@ function Sheets({ plan, overlay }: { plan: WorksheetPlan; overlay: boolean }) {
                 {passageItem ? (
                   <div className="ws-split">
                     <article className="ws-passage">
-                      <PassageColumn item={passageItem} />
+                      <PassageSide
+                        item={passageItem}
+                        passage={page.passage}
+                        firstPage={firstPage}
+                      />
                     </article>
                     <section className="ws-qs">{blocks}</section>
                   </div>
