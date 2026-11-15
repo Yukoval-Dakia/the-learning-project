@@ -41655,6 +41655,12 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    draft_focus?: {
+                        issuance_id: string;
+                        question_id: string;
+                        revision_id: string;
+                        save_epoch: number;
+                    };
                     hint_index?: number;
                     issuance_id?: string;
                     question_id: string;
