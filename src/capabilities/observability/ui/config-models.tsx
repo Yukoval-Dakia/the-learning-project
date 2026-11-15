@@ -31,6 +31,7 @@ import {
   matchesSearch,
   modelEditable,
   modelLimitsLine,
+  modelPairLine,
   ruleWord,
   taskWords,
   thinkingChoiceWord,
@@ -137,11 +138,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
     notice: string | null;
     changes: Parameters<SaveConfig>[0];
   } | null>(null);
-  const currentPair = current?.provider
-    ? current.model
-      ? `${current.provider} / ${current.model}`
-      : current.provider
-    : null;
+  const currentPair = current?.provider ? modelPairLine(current.provider, current.model) : null;
   const pairChanged =
     !pinned &&
     (pick.provider !== (current?.provider ?? '') || pick.model !== (current?.model ?? ''));
@@ -168,7 +165,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
           changes.some((change) => change.action === 'clear')
             ? '已清除全局默认。'
             : after?.provider
-              ? `现在生效：${after.provider} / ${after.model}`
+              ? `现在生效：${modelPairLine(after.provider, after.model)}`
               : null,
           after?.reasoning?.level ? `思考强度 ${thinkingWord(after.reasoning.level)}。` : null,
         ]
@@ -190,7 +187,9 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
     : globalSliceNotice(data.tasks, pairChanged, thinkingChanged);
   const askToSave = () => {
     const parts = [
-      pairChanged ? `全局默认：${currentPair ?? '没有'} → ${pick.provider} / ${pick.model}` : null,
+      pairChanged
+        ? `全局默认：${currentPair ?? '没有'} → ${modelPairLine(pick.provider, pick.model)}`
+        : null,
       thinkingChanged
         ? `思考强度：${stored ? thinkingWord(stored) : '没有'} → ${thinkingChoiceWord(pickedModel, thinking)}`
         : null,
@@ -268,7 +267,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       ) : null}
       {pinned ? (
         <p className="adm-warn-line">
-          紧急开关开着（部署环境变量），它压过这里的模型，这里只能改思考强度。勾了「不跟全局默认」的任务不受影响。
+          模型组合受部署环境变量影响，当前编辑入口只提供思考强度。勾了「不跟全局默认」的任务不受影响。
           {current?.model && current.source !== current.model_source
             ? ` Provider 来自${current?.source === 'env' ? '环境变量' : '这里的设置'}，模型来自${current?.model_source === 'env' ? '环境变量' : '这里的设置'}。`
             : ''}
@@ -296,11 +295,13 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
             <select
               id={`${id}-thinking`}
               className="adm-input"
-              value={levels.includes(thinking) ? thinking : ''}
+              value={thinking}
               onChange={(e) => setThinking(e.target.value)}
             >
               {levels.includes(thinking) ? null : (
-                <option value="">{thinking ? thinkingWord(thinking) : '没有'}</option>
+                <option value={thinking} disabled>
+                  {thinking ? thinkingWord(thinking) : '未设置'} · 当前值（不在可选档位中）
+                </option>
               )}
               {levels.map((level) => (
                 <option key={level} value={level}>
