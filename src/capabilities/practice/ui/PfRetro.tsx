@@ -25,6 +25,8 @@ import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { Button, Chip } from '@/ui-next/public';
+
+import type { PaperTaskRef } from '../session/public';
 import { PaperRetroResponse } from './PaperRetroResponse';
 import type { PaperSlot } from './practice-api';
 import { usePracticeClient } from './practice-client';
@@ -210,12 +212,20 @@ export function PfrQRow({
 const SUMMARY_POLL_MS = 4000;
 const SUMMARY_POLL_WINDOW_MS = 120_000;
 
-export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: () => void }) {
+export function PfRetro({
+  artifactId,
+  taskRef,
+  onBack,
+}: {
+  artifactId: string;
+  taskRef?: PaperTaskRef;
+  onBack: () => void;
+}) {
   const { getPaperDetail } = usePracticeClient();
   const openedAt = useRef(Date.now());
   const detailQ = useQuery({
-    queryKey: ['paper', artifactId, 'retro'],
-    queryFn: () => getPaperDetail(artifactId),
+    queryKey: ['paper', artifactId, taskRef?.session_id, taskRef?.occurrence_ref, 'retro'],
+    queryFn: () => getPaperDetail(artifactId, taskRef),
     // The summary job runs after hand-in. Look for it for two minutes from opening this page, then
     // stop, whether reads succeed or fail: an older paper may never have one, and the system summary
     // below stands on its own.

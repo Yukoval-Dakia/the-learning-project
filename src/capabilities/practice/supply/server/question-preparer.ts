@@ -76,6 +76,9 @@ function stripVolatile(value: unknown): unknown {
   );
 }
 
+/** Reads whose arguments leave the box; intercepted only by copied learner text. */
+const EXTERNAL_FETCH_TOOLS = new Set(['web_fetch_candidates', 'jyeoo_fetch_candidates']);
+
 /** One admitted segment, with durable continuations on repair and interrupted delivery. */
 export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, retryCount = 0) {
   let data = QuestionPreparerJobData.parse(raw);
@@ -478,6 +481,10 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                   return undefined;
                 },
                 interceptInput(tool, args) {
+                  if (EXTERNAL_FETCH_TOOLS.has(tool.name)) {
+                    const refusal = learnerGuard.externalReadRefusal(args);
+                    if (refusal) return { args, softStop: refusal };
+                  }
                   if (tool.effect !== 'read') {
                     const refusal = learnerGuard.refusal(args);
                     if (refusal) return { args, softStop: refusal };

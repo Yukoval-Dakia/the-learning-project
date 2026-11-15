@@ -208,6 +208,8 @@ export const learning_session = pgTable('learning_session', {
   deletion_requested_at: timestamp('deletion_requested_at', { withTimezone: true }),
   deleted_at: timestamp('deleted_at', { withTimezone: true }),
   summary_md: text('summary_md'),
+  // Session owner records navigation independently of draft epochs and submitted counts.
+  paper_continuation: jsonb('paper_continuation').$type<unknown>(),
   // YUK-936 — Agent SDK session id for foreground inline Copilot resume (ADR-0054).
   // Product session_id stays learning_session.id; this is server-owned SDK transcript
   // continuity. NULL when cold-starting or after resume-fail clear. Write path =

@@ -66,7 +66,9 @@ export function useAttemptCauseEdit(
               ? {
                   questionId,
                   attemptEventId,
-                  current: response.current,
+                  current: response.current
+                    ? { ...response.current, note: response.current.note }
+                    : null,
                   state: { status: 'ready', options: response.options },
                 }
               : previous,

@@ -35,11 +35,13 @@ export const readStartProposalInbox = async (input: unknown) => {
 
 export const readStartWorkbenchSummary = () =>
   withStartDb(async (db) => {
-    const [{ loadWorkbenchSummary }, { queryReviewDue }] = await Promise.all([
-      import('@/capabilities/shell/public'),
-      import('@/capabilities/practice/scheduling/public'),
-    ]);
-    return loadWorkbenchSummary(db, { queryReviewDue });
+    const [{ loadWorkbenchSummary }, { queryReviewDue }, { readReviewSessionRefs }] =
+      await Promise.all([
+        import('@/capabilities/shell/public'),
+        import('@/capabilities/practice/scheduling/public'),
+        import('@/capabilities/practice/session/public'),
+      ]);
+    return loadWorkbenchSummary(db, { queryReviewDue, readReviewSessionRefs });
   });
 export const readStartOvernightDigest = () =>
   withStartDb(async (db) => {

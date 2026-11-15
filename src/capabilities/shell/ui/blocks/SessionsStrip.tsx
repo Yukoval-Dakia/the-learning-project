@@ -1,12 +1,4 @@
 // M4-T6 (YUK-319)：进行中会话条（设计稿 screen-today.jsx SessionsStrip）。
-// 偏差：真 wire（workbench summary active_sessions）无 subject / dist 字段，
-// strip-title 用「已复习 N 题」形态；status 三态 badge（started 进行中 /
-// completed 已完成 / 其它(paused/abandoned) 已中断）——wire 透传
-// learning_session.status，状态机是 started|paused|completed|abandoned
-// （codex 验证轮 P2：曾误判 'in_progress'，live 永不为真）。
-// YUK-1713 — M3E presentation (today-m3e.css .td-card / .td-row); data, labels and the
-// /practice target are unchanged.
-
 import { ArrowRight, Clock, RotateCcw, Undo2 } from 'lucide-react';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Button } from '@/ui-next/public';
@@ -52,7 +44,16 @@ export function SessionsStrip({
       ) : (
         <div className="td-rows">
           {sessions.map((s) => {
-            const live = s.status === 'started';
+            const live = s.status === 'started' || s.status === 'paused';
+            const exact =
+              s.paper_id && s.task_ref
+                ? new URLSearchParams({
+                    paper: s.paper_id,
+                    session: s.task_ref.session_id,
+                    occurrence: s.task_ref.occurrence_ref,
+                  })
+                : null;
+            if (exact && s.status === 'completed') exact.set('paper_view', 'retro');
             const statusLabel = statusLabelOf(live, s.status);
             const LeadIcon = live ? RotateCcw : Undo2;
             return (
@@ -72,9 +73,18 @@ export function SessionsStrip({
                   <Button
                     size="sm"
                     variant={live ? 'primary' : 'secondary'}
-                    onClick={() => navigate('/practice')}
+                    disabled={!exact}
+                    onClick={() => {
+                      if (exact) navigate(`/practice?${exact}`);
+                    }}
                   >
-                    {live ? '继续' : '恢复'}
+                    {!exact
+                      ? '暂不可恢复此会话'
+                      : s.status === 'completed'
+                        ? '复盘'
+                        : live
+                          ? '继续'
+                          : '查看'}
                     <ArrowRight size={16} aria-hidden="true" />
                   </Button>
                 </div>

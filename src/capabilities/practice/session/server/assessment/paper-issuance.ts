@@ -342,5 +342,17 @@ export async function issuePaperAssessment(tx: Tx, sessionId: string, paperId: s
     created_at: session.started_at,
     ingest_at: session.started_at,
   });
+  await tx
+    .update(learning_session)
+    .set({
+      paper_continuation: {
+        format: 1,
+        occurrence_ref: paperBindingId(sessionId, session.started_at),
+        step_issuance_id: binding.slots[0]?.issuance_id ?? null,
+        revision: 0,
+        last_command: null,
+      },
+    })
+    .where(eq(learning_session.id, sessionId));
   return binding;
 }

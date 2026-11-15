@@ -1,0 +1,1 @@
+ALTER TABLE "learning_session" ADD COLUMN "paper_continuation" jsonb;

@@ -8,7 +8,7 @@ import {
   apiOperationJson,
 } from '@/ui/lib/api';
 
-// ── 树快照（loadTreeSnapshot wire：knowledge 行 + mastery_state 投影 + 事件脊活动时钟） ──
+// ── Learner tree: snapshot rows + canonical evidence freshness ──
 type KnowledgeTreeWire = ApiOperationJsonResponse<'getKnowledgeTreeSnapshot'>['rows'][number];
 export type KnowledgeTreeNode = Pick<
   KnowledgeTreeWire,
@@ -16,12 +16,14 @@ export type KnowledgeTreeNode = Pick<
   | 'name'
   | 'domain'
   | 'parent_id'
+  | 'role'
   | 'effective_domain'
   | 'mastery'
   | 'mastery_lo'
   | 'mastery_hi'
   | 'low_confidence'
   | 'evidence_count'
+  | 'review_timing'
 >;
 
 export const getTreeForSubject = (subject?: string) =>

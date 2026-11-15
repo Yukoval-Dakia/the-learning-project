@@ -26,7 +26,7 @@ import { startStudyReferenceClient } from '../study-reference-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const Page = lazy(() => loadPracticeFacePage().then((defaultPage) => ({ default: defaultPage })));
-const practiceClient: PracticeClient = {
+const practiceClient: Partial<PracticeClient> = {
   revealStudyReference: startStudyReferenceClient,
   solveStart: startSolveClient,
   solveHint: startHintClient,

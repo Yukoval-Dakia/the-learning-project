@@ -13,6 +13,7 @@ import {
   getInternalToken,
 } from '@/ui/lib/api';
 import type { SessionTransitionRequestOptions } from '@/ui/lib/session-transition';
+import type { PaperContinuation, PaperTaskRef } from '../session/public';
 
 // ── 流 ──────────────────────────────────────────────────────────
 // 'frontier'（YUK-551）= B3 learnable_frontier 尾（前置全掌握、自身未掌握的可学前沿 KC）。
@@ -544,6 +545,7 @@ export interface PaperListItem {
   session: {
     id: string;
     status: string;
+    task_ref: PaperTaskRef | null;
     pos: number;
     /** Includes partly correct answers; subtract `partial` for the fully correct count. */
     right: number;
@@ -624,6 +626,7 @@ export interface PaperSlot {
 }
 
 export interface PaperDetail {
+  continuation?: PaperContinuation;
   artifact_id: string;
   title: string;
   generation_status: string;
@@ -640,10 +643,51 @@ export interface PaperDetail {
   sections: Array<{ section_index: number; knowledge_focus_names: string[]; slots: PaperSlot[] }>;
 }
 
-export const getPaperDetail = (artifactId: string): Promise<PaperDetail> =>
-  apiOperationJson('getPaper', {
-    url: `/api/papers/${encodeURIComponent(artifactId)}`,
-    method: 'GET',
+export const getPaperDetail = async (
+  artifactId: string,
+  taskRef?: PaperTaskRef,
+): Promise<PaperDetail> => {
+  const detail = taskRef
+    ? await apiOperationJson('readPaperTaskContinuation', {
+        url: `/api/review-sessions/${encodeURIComponent(taskRef.session_id)}/continuation?occurrence_ref=${encodeURIComponent(taskRef.occurrence_ref)}`,
+        method: 'GET',
+      })
+    : await apiOperationJson('getPaper', {
+        url: `/api/papers/${encodeURIComponent(artifactId)}`,
+        method: 'GET',
+      });
+  if (detail.artifact_id !== artifactId)
+    throw new ApiError('指定会话不属于这份卷', 409, 'coordinate_mismatch');
+  return detail;
+};
+
+export const resumePaperTask = (
+  body: import('@/ui/lib/api').ApiOperationRequestBody<'transitionPaperTask'>,
+): Promise<PaperDetail> =>
+  apiOperationJson('transitionPaperTask', {
+    url: `/api/review-sessions/${encodeURIComponent(body.task_ref.session_id)}/continuation`,
+    method: 'POST',
+    body: { ...body, action: 'resume' },
+  });
+
+export const pausePaperTask = (
+  body: import('@/ui/lib/api').ApiOperationRequestBody<'transitionPaperTask'>,
+  keepalive = false,
+): Promise<PaperDetail> =>
+  apiOperationJson('transitionPaperTask', {
+    url: `/api/review-sessions/${encodeURIComponent(body.task_ref.session_id)}/continuation`,
+    method: 'POST',
+    body: { ...body, action: 'pause' },
+    init: keepalive ? { keepalive: true } : undefined,
+  });
+
+export const recordPaperCurrentStep = (
+  body: import('@/ui/lib/api').ApiOperationRequestBody<'recordPaperCurrentStep'>,
+): Promise<PaperDetail> =>
+  apiOperationJson('recordPaperCurrentStep', {
+    url: `/api/review-sessions/${encodeURIComponent(body.task_ref.session_id)}/continuation`,
+    method: 'PATCH',
+    body,
   });
 
 type PaperWriteInput = {

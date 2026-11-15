@@ -64,6 +64,7 @@ import {
   ASSESSMENT_EVALUATION_GROUP_LOCK_NAMESPACE,
   lockAssessmentEvaluationGroup,
 } from '@/kernel/locks/assessment-evaluation-group-lock';
+import { loadAcceptedProcesses } from '@/kernel/records/assessment-accepted-process';
 import { checkRateLimit } from '@/kernel/request-rate-limit';
 import { authorizeConfirmationCorrection } from '../../../settlement/public';
 import { bindAppealExecution, reservedEvaluationAttempt } from '../assessment/appeal-execution';
@@ -494,10 +495,11 @@ export async function evaluateSubmission(
               memberRows.map((row) => row.issuance_id),
             ),
           );
+        const acceptedProcesses = await loadAcceptedProcesses(tx, ids);
         const members = memberRows.map((row) => {
           const issuance = issuances.find((item) => item.issuance_id === row.issuance_id);
           if (!issuance) throw new EvaluateSubmissionError('issuance_not_found', row.issuance_id);
-          return evaluationMemberFromRows(row, issuance);
+          return evaluationMemberFromRows(row, issuance, acceptedProcesses.get(row.submission_id));
         });
         const [issuanceRow] = await tx
           .select()

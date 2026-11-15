@@ -32,6 +32,7 @@ export const AttemptCauseOptionsResponseSchema = z.object({
       source: z.enum(['user', 'agent']),
       primary_category: z.string(),
       label: z.string(),
+      note: z.string().nullable(),
     })
     .nullable(),
 });

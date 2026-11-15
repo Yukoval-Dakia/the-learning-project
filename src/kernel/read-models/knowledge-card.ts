@@ -1,17 +1,18 @@
-// Knowledge-point card by id: name, mastery band, last practice. Not the node page —
-// no tree load, no neighbors, no evidence counts on the wire.
+// Knowledge-point card by id: name, canonical judgment, band and last practice.
+// Not the node page — no tree load, no neighbors, no raw ability readings on the wire.
 //
 // Visibility is existence + not archived + not learner-hidden. `knowledge` has no
 // owner column in the single-tenant schema; re-review this read when tenancy lands.
 
 import { and, eq, isNull } from 'drizzle-orm';
 
-import { type MasteryBandIdx, masteryBandIdx } from '@/core/mastery-band';
+import { type MasteryBandIdx, masteryBandView } from '@/core/mastery-band';
+import type { LearnerJudgment, LearnerJudgmentBatch } from '@/core/schema/learner-judgment';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { type AnswerOutcome, loadLastKnowledgePractice } from './learner-activity';
+import { readLearnerJudgments } from './learner-judgment';
 import { isLearnerVisibleKnowledgeId } from './learner-knowledge-visibility';
-import { getMasteryProjection } from './mastery-projection';
 
 type DbLike = Db | Tx;
 
@@ -21,6 +22,14 @@ export interface KnowledgeCardPractice {
   outcome: 'correct' | 'partial' | 'wrong' | null;
 }
 
+type KnowledgeCardJudgment = Pick<LearnerJudgment, 'ability_claim' | 'judgement'> & {
+  uncertainty: Pick<LearnerJudgment['uncertainty'], 'evidence_age'>;
+  batch: {
+    calibration: LearnerJudgmentBatch['calibration'];
+    as_of: string;
+  };
+};
+
 export type KnowledgeEntityCard =
   | {
       entity_kind: 'knowledge';
@@ -28,6 +37,7 @@ export type KnowledgeEntityCard =
       state: 'ok';
       name: string;
       mastery_band: MasteryBandIdx | null;
+      judgment: KnowledgeCardJudgment | null;
       last_practice: KnowledgeCardPractice | null;
     }
   | { entity_kind: 'knowledge'; entity_id: string; state: 'gone' };
@@ -59,21 +69,32 @@ export async function readKnowledgeEntityCard(
   const node = await loadKnowledgeCardNode(db, id);
   if (!node) return { entity_kind: 'knowledge', entity_id: id, state: 'gone' };
 
-  const [projection, practice] = await Promise.all([
-    getMasteryProjection(db, [id]),
+  const [batch, practice] = await Promise.all([
+    readLearnerJudgments(db, { knowledge_ids: [id], context: 'any', as_of: new Date() }),
     loadLastKnowledgePractice(db, id),
   ]);
-  const reading = projection.get(id);
-  // Cold start projects a point estimate but no evidence: that is unknown, not 萌芽.
-  const masteryBand =
-    reading && reading.evidence_count > 0 ? masteryBandIdx(reading.mastery) : null;
+  const judgment = batch.items.find((item) => item.knowledge_id === id);
+  const reading =
+    judgment?.ability.kind === 'available' &&
+    (judgment.ability_claim.kind === 'observed' || judgment.ability_claim.kind === 'low_observed')
+      ? judgment.ability.reading
+      : null;
+  const band = reading ? masteryBandView(reading) : null;
 
   return {
     entity_kind: 'knowledge',
     entity_id: id,
     state: 'ok',
     name: node.name,
-    mastery_band: masteryBand,
+    mastery_band: band && !band.unknown ? band.band : null,
+    judgment: judgment
+      ? {
+          ability_claim: judgment.ability_claim,
+          uncertainty: { evidence_age: judgment.uncertainty.evidence_age },
+          judgement: judgment.judgement,
+          batch: { calibration: batch.calibration, as_of: batch.as_of.toISOString() },
+        }
+      : null,
     last_practice: practice ? { at: practice.at, outcome: cardOutcome(practice.outcome) } : null,
   };
 }

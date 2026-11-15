@@ -48,6 +48,21 @@ export function createLearnerMaterialGuard(db: Db) {
   const learnerText = new Set<string>();
   const missedPrompts = new Set<string>();
   let readLearnerCauses = false;
+
+  /** Whether any argument string reproduces a window of observed learner text. */
+  const copiedWindow = (args: unknown): string | null => {
+    const fields: string[] = [];
+    strings(args, undefined, (text) => fields.push(squash(text)));
+    // NUL is not whitespace, so no window spans two separate fields.
+    const haystack = fields.join('\u0000');
+    for (const text of learnerText)
+      for (let start = 0; start + LEARNER_COPY_WINDOW <= text.length; start++) {
+        const window = text.slice(start, start + LEARNER_COPY_WINDOW);
+        if (haystack.includes(window)) return window;
+      }
+    return null;
+  };
+
   return {
     /** Records what one successful read showed about the learner. */
     async observe(toolName: string, output: unknown): Promise<void> {
@@ -69,22 +84,15 @@ export function createLearnerMaterialGuard(db: Db) {
     },
     /** A refusal for the model when a write's arguments break one of the rules, else null. */
     refusal(args: unknown): string | null {
-      const fields: string[] = [];
       const prompts: string[] = [];
       const explanations: string[] = [];
       strings(args, undefined, (text, key) => {
-        fields.push(squash(text));
         if (key === 'prompt_md' || key === 'stem_md') prompts.push(text);
         if (key === 'explanation_md' || key === 'reference_md') explanations.push(text);
       });
-      // NUL is not whitespace, so no window spans two separate fields.
-      const haystack = fields.join('\u0000');
-      for (const text of learnerText)
-        for (let start = 0; start + LEARNER_COPY_WINDOW <= text.length; start++) {
-          const window = text.slice(start, start + LEARNER_COPY_WINDOW);
-          if (haystack.includes(window))
-            return `learner_text_copied: 草稿原样含有学习者错题材料「${window}」。错题、笔记和错因分析只用来定方法和要防的错因类别，题面、选项、解答要自己写；改写后再保存。`;
-        }
+      const copied = copiedWindow(args);
+      if (copied !== null)
+        return `learner_text_copied: 草稿原样含有学习者错题材料「${copied}」。错题、笔记和错因分析只用来定方法和要防的错因类别，题面、选项、解答要自己写；改写后再保存。`;
       const candidates = prompts.length > 1 ? [...prompts, prompts.join('')] : prompts;
       if (candidates.some((prompt) => missedPrompts.has(normalizePrompt(prompt))))
         return 'learner_question_reused: 这是学习者做错的原题，换参数或换区间重出。';
@@ -95,6 +103,16 @@ export function createLearnerMaterialGuard(db: Db) {
       )
         return 'source_label_mismatch: 本次读到了该学习者的错因，草稿却只标了「常见错因」。用到学习者错因的部分写「来源：你近期的错因」，确实没用学习者数据的部分才写「常见错因」。改正后再保存。';
       return null;
+    },
+    /**
+     * Refusal for the two external-fetch reads whose arguments leave the box (provider
+     * request, billing, staged assets). Generic on purpose: the tool result is itself
+     * persisted to run logs, so it must not quote the matched learner window.
+     */
+    externalReadRefusal(args: unknown): string | null {
+      return copiedWindow(args) !== null
+        ? 'learner_external_egress_refused: 请求参数原样含有本次读到的学习者错题材料。外部拉取只按知识点、题型和难度取题，不携带学习者原文；去掉学习者文本重写参数后再试。'
+        : null;
     },
   };
 }
