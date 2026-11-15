@@ -32,7 +32,9 @@ export function NoteKnownIssues({ summary }: { summary: NotePage['verification_s
             className="nt-issue"
           >
             <span className="nt-issue-kind">
-              {CATEGORY_WORDS[issue.category] ?? issue.category}
+              {Object.hasOwn(CATEGORY_WORDS, issue.category)
+                ? CATEGORY_WORDS[issue.category]
+                : '其他问题'}
             </span>
             <MathMarkdown className="nt-issue-text">{issue.message}</MathMarkdown>
             {issue.suggested_fix_md ? (
