@@ -4,7 +4,7 @@
 // unknown with its reason — it is never rendered as a zero / low-mastery claim.
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { knowledge, question } from '@/db/schema';
+import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -170,6 +170,62 @@ async function seedDraftQuestion(
   return questionId;
 }
 
+/** A past-due FSRS card puts the question on the real `due` candidate source. */
+async function seedDueCard(db: ReturnType<typeof testDb>, questionId: string): Promise<void> {
+  const now = new Date();
+  await db.insert(material_fsrs_state).values({
+    id: createId(),
+    subject_kind: 'question',
+    subject_id: questionId,
+    state: {
+      due: now,
+      stability: 1,
+      difficulty: 5,
+      scheduled_days: 1,
+      learning_steps: 0,
+      reps: 1,
+      lapses: 0,
+      state: 'review' as const,
+      last_review: now,
+    },
+    due_at: new Date(now.getTime() - 3600_000),
+    last_review_event_id: null,
+    updated_at: now,
+  });
+}
+
+/**
+ * One raw attempt event. `derivationPolicy` stamps the payload's explicit purpose;
+ * anything other than 'allow' removes the row from the derivation-eligible window
+ * the candidate read is allowed to sample.
+ */
+async function seedAttempt(
+  db: ReturnType<typeof testDb>,
+  questionId: string,
+  outcome: 'success' | 'failure',
+  derivationPolicy: 'allow' | 'answer_only' | 'crisis',
+  createdAt: Date,
+): Promise<void> {
+  await db.insert(event).values({
+    id: createId(),
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: questionId,
+    outcome,
+    payload:
+      derivationPolicy === 'allow'
+        ? { answer_md: '作答', derivation_policy: 'allow' }
+        : { answer_md: '作答', derivation_policy: derivationPolicy },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: createdAt,
+  });
+}
+
 beforeEach(async () => {
   await resetDb();
 });
@@ -231,5 +287,69 @@ describe('read_practice_candidates authorization boundary', () => {
     expect(result.candidates).toEqual([]);
     expect(result.counts.returned).toBe(0);
     expect(result.gaps.map((gap) => gap.reason)).toEqual(['scope_unresolved']);
+  });
+
+  // @invariant security: the recent-attempts window only samples derivation-eligible
+  // rows — an answer_only/crisis attempt never counts, never leaks its outcome, and a
+  // restricted newer row cannot hide an allowed older one behind the six-row cap. An
+  // all-restricted window is unknown, not a fabricated lifetime zero.
+  // @fails-if the window counts a restricted attempt, exposes its outcome, lets a
+  // capped set of restricted rows push out eligible history, or reports an
+  // all-restricted pool as count=0 instead of unknown.
+  it('samples only derivation-eligible attempts and never fabricates a zero window', async () => {
+    const db = testDb();
+    const knowledgeId = await seedKnowledge(db);
+    const now = Date.now();
+
+    // Question A: two allowed attempts plus SEVEN newer restricted attempts — enough
+    // to fill the whole six-row window if the gate ran after the cap, which would
+    // displace both allowed rows. With the gate BEFORE the cap all seven restricted
+    // rows are excluded first, so the two allowed rows survive.
+    const mixedId = await seedAdmittedQuestion(db, knowledgeId, SECRET_ADMITTED);
+    await seedDueCard(db, mixedId);
+    await seedAttempt(db, mixedId, 'failure', 'allow', new Date(now - 10_000));
+    await seedAttempt(db, mixedId, 'success', 'allow', new Date(now - 9_000));
+    // Newer restricted rows, strictly more recent than both allowed attempts.
+    await seedAttempt(db, mixedId, 'success', 'answer_only', new Date(now - 8_000));
+    await seedAttempt(db, mixedId, 'failure', 'answer_only', new Date(now - 7_000));
+    await seedAttempt(db, mixedId, 'success', 'crisis', new Date(now - 6_000));
+    await seedAttempt(db, mixedId, 'failure', 'answer_only', new Date(now - 5_000));
+    await seedAttempt(db, mixedId, 'success', 'answer_only', new Date(now - 4_000));
+    await seedAttempt(db, mixedId, 'failure', 'crisis', new Date(now - 3_000));
+    await seedAttempt(db, mixedId, 'success', 'answer_only', new Date(now - 2_000));
+
+    // Question B: every attempt is restricted — the visible window must stay unknown.
+    const restrictedId = await seedAdmittedQuestion(db, knowledgeId, 'REF-B');
+    await seedDueCard(db, restrictedId);
+    await seedAttempt(db, restrictedId, 'failure', 'answer_only', new Date(now - 2_000));
+    await seedAttempt(db, restrictedId, 'failure', 'crisis', new Date(now - 1_000));
+
+    const result = await readPracticeCandidates(db, {
+      scope: { kind: 'knowledge', knowledgeIds: [knowledgeId] },
+    });
+    expect(result.status).toBe('ok');
+
+    const mixed = result.candidates.find((row) => row.ref_id === mixedId);
+    expect(mixed).toBeTruthy();
+    // The two allowed attempts survive: seven newer restricted rows were excluded
+    // before the cap, so they neither count nor displace the allowed history.
+    expect(mixed?.recent_attempts.count.known).toBe(true);
+    expect(mixed?.recent_attempts.count.value).toBe(2);
+    expect(mixed?.recent_attempts.outcomes).toEqual({ success: 1, partial: 0, failure: 1 });
+    // The latest VISIBLE outcome is the allowed success — every newer restricted row
+    // is invisible, so last_outcome can never be a restricted one.
+    expect(mixed?.recent_attempts.last_outcome).toBe('success');
+    // The visible window is complete: only 2 eligible rows, far under the six cap —
+    // proof the restricted rows never consumed window slots.
+    expect(mixed?.recent_attempts.window_complete).toBe(true);
+
+    const restricted = result.candidates.find((row) => row.ref_id === restrictedId);
+    expect(restricted).toBeTruthy();
+    // No eligible row → unknown, never a fabricated "never attempted" zero.
+    expect(restricted?.recent_attempts.count.known).toBe(false);
+    expect(restricted?.recent_attempts.count.value).toBeNull();
+    expect(restricted?.recent_attempts.count.missingReason).toBeTruthy();
+    expect(restricted?.recent_attempts.last_outcome).toBeNull();
+    expect(restricted?.recent_attempts.outcomes).toEqual({ success: 0, partial: 0, failure: 0 });
   });
 });
