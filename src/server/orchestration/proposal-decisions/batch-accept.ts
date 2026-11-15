@@ -409,8 +409,28 @@ export async function batchAcceptProposals(db: Db, input: unknown): Promise<Batc
   }
   const { acceptedIds: recordedAccepted } = await loadBatchAnchors(db, batchId);
 
+  // YUK-2220 diagnostic (named, not a product fix): a batch that closes with no
+  // accepted member reports batch_id=null. typeof null === 'object', so the
+  // downstream "expects string, got object" failure is exactly this case — emit
+  // the desensitized shape (nullness, typeof, per-item status/code, counts) so
+  // the next CI run reveals which failure mode emptied the accepted set. No
+  // student payload, reason text, SQL params, or error bodies. DTO unchanged.
+  const resolvedBatchId = recordedAccepted.size > 0 ? batchId : null;
+  if (resolvedBatchId === null) {
+    console.warn('[proposal-batch-accept] batch closed without accepted members', {
+      batch_id: resolvedBatchId,
+      batch_id_typeof: typeof resolvedBatchId,
+      requested: ids.length,
+      items: items.map((entry) => ({
+        proposal_id: entry.proposal_id,
+        status: entry.status,
+        code: entry.code,
+      })),
+    });
+  }
+
   return {
-    batch_id: recordedAccepted.size > 0 ? batchId : null,
+    batch_id: resolvedBatchId,
     items,
     summary: {
       requested: ids.length,
