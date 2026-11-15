@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GET as genericAssetContentGET } from '@/capabilities/ingestion/api/asset-content';
-import { saveSubmission } from '@/capabilities/practice/grading/public';
+import { saveResponseDraft, saveSubmission } from '@/capabilities/practice/grading/public';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import { taskInputHash } from '@/core/task-input-hash';
@@ -194,6 +194,7 @@ async function seedStemDrawing(
   prompt = '一个物块静止在粗糙斜面上。',
   scoringOnly = false,
   userMessage = '画一下题设',
+  draftGroupRef?: string,
 ) {
   const documentId = `doc_${newId()}`;
   await db.insert(source_document).values({
@@ -256,12 +257,13 @@ async function seedStemDrawing(
     payload: { revision_id: revisionId, study_sources: sources },
     created_at: new Date(),
   });
-  await db.insert(assessment_response_draft).values({
+  const draft = await saveResponseDraft(db, {
     issuance_id: issuanceId,
     response_set: { entries: [] },
-    save_epoch: 1,
-    updated_at: new Date(),
+    evaluation_group_ref: draftGroupRef,
   });
+  if (draft.status !== 'saved' || draft.save_epoch !== 1)
+    throw new Error('study fixture must have an accepted current draft');
   const session = sessionId();
   const askId = `evt_${newId()}`;
   await db.insert(event).values({
@@ -716,7 +718,7 @@ describe('drawing service invariants', () => {
 
   // @invariant concurrency: drawing exposure and submission share the issuance lock;
   // only one open coordinate records, and the sealed receipt includes every prior exposure.
-  // @fails-if ambiguity fabricates exposure, or either submit ordering writes late help or seals independence after help.
+  // @fails-if help moves to another issuance, ambiguity fabricates exposure, or either submit ordering seals the wrong receipt.
   it('serializes unique drawing exposure with submission and skips closed or ambiguous coordinates', async () => {
     const exposureRows = (issuanceId: string) =>
       db
@@ -739,22 +741,55 @@ describe('drawing service invariants', () => {
       'none',
       'multiple',
       'all_submitted',
+      'closed_focus_other_open',
       'submit_first',
       'drawing_first',
     ] as const) {
-      const fixture = await seedStemDrawing();
+      const draftGroupRef = mode === 'closed_focus_other_open' ? `eg_${newId()}` : undefined;
+      const fixture = await seedStemDrawing(undefined, undefined, false, undefined, draftGroupRef);
       const input = {
         issuanceId: mode === 'none' ? `iss_${newId()}` : fixture.issuanceId,
         questionId: fixture.questionId,
         actorRef: 'test',
         contentDigest: `sha256:${'a'.repeat(64)}`,
       };
-      if (mode === 'multiple') {
+      const otherIssuanceId = `iss_${newId()}`;
+      if (mode === 'multiple' || mode === 'closed_focus_other_open') {
         const [issued] = await db
           .select()
           .from(assessment_issuance)
           .where(eq(assessment_issuance.issuance_id, fixture.issuanceId));
-        await db.insert(assessment_issuance).values({ ...issued, issuance_id: `iss_${newId()}` });
+        await db.insert(assessment_issuance).values({ ...issued, issuance_id: otherIssuanceId });
+      }
+      if (mode === 'closed_focus_other_open') {
+        expect((await saveSubmission(db, fixture.submission)).status).toBe('saved');
+        const [retained] = await db
+          .select()
+          .from(assessment_response_draft)
+          .where(eq(assessment_response_draft.issuance_id, fixture.issuanceId));
+        expect(retained).toMatchObject({ evaluation_group_ref: draftGroupRef, save_epoch: 1 });
+        const outcome = await requestDrawing(fixture.ctx, fixture.input, {
+          boss: async () => stubBoss([]),
+        });
+        expect(outcome.status).toBe('ready');
+        expect(
+          await db.select().from(drawing).where(eq(drawing.session_id, fixture.ctx.sessionId)),
+        ).toHaveLength(1);
+        expect(await exposureRows(fixture.issuanceId)).toHaveLength(0);
+        expect(await exposureRows(otherIssuanceId)).toHaveLength(0);
+        const otherGroupId = `eg_${newId()}`;
+        expect(
+          (
+            await saveSubmission(db, {
+              ...fixture.submission,
+              issuance_id: otherIssuanceId,
+              evaluation_group_id: otherGroupId,
+              idempotency_key: newId(),
+            })
+          ).status,
+        ).toBe('saved');
+        expect(await receipt(otherGroupId)).toMatchObject({ status: 'independent', event_ids: [] });
+        continue;
       }
       if (mode === 'unique' || mode === 'multiple') {
         const sends: string[] = [];

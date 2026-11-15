@@ -355,7 +355,7 @@ export async function recordDrawingStudyAssistanceExposure(
       );
     const closed = new Set(submitted.map((row) => row.issuance_id));
     const open = issuances.filter((row) => !closed.has(row.issuance_id));
-    if (open.length !== 1) return undefined;
+    if (open.length !== 1 || open[0].issuance_id !== input.issuanceId) return undefined;
     const selected = await loadIssuanceStudyCoordinate(tx, open[0].issuance_id, input.questionId);
     if (selected.status !== 'assistable') return undefined;
     return recordStudyAssistanceExposure(tx, {
