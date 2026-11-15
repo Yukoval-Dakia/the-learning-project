@@ -53,7 +53,7 @@ const statuses = [
   'pending',
 ] as const;
 const liveSubscriberIdentities = [
-  ['agency.curator-activity', 1],
+  ['agency.curator-activity', 2],
   ['agency.intervention-diagnostic-review-settlement', 4],
   ['agency.probe-evidence-intervention-prepare', 1],
   ['agency.probe-publication-serve', 1],
@@ -63,7 +63,7 @@ const liveSubscriberIdentities = [
   ['notes.mastery-progress-note-refine', 1],
   ['practice.failure-learning-attempt', 3],
   ['practice.learner-profile-refresh', 1],
-  ['practice.learner-return-wake', 1],
+  ['practice.learner-return-wake', 2],
   ['practice.question-admission-enqueue', 1],
   ['practice.serving-recheck', 1],
   ['practice.upload-ready', 1],

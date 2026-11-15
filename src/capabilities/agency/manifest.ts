@@ -59,7 +59,7 @@ export const agencyCapability = defineCapability({
     handlers: [
       {
         id: 'agency.curator-activity',
-        version: 1,
+        version: 2,
         actions: [...LEARNING_ACTIVITY_ACTIONS],
         load: () => import('./context/activity').then((m) => m.buildCuratorActivitySubscriber),
       },

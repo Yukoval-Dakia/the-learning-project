@@ -2,10 +2,12 @@ import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { event, event_subscription_checkpoint, event_subscription_delivery } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { loadEventSubscriptionRegistry } from './registry';
 import {
   bootstrapSubscription,
   claimNextSubscriptionDelivery,
@@ -37,6 +39,24 @@ function registry(subscription = SUBSCRIBER): LoadedEventSubscriptionRegistry {
       return id === subscription.id && version === subscription.version ? subscription : undefined;
     },
   };
+}
+
+async function activityRegistry(subscriberId: string, legacyActions?: readonly string[]) {
+  return loadEventSubscriptionRegistry(
+    capabilities.map((capability) => ({
+      ...capability,
+      subscriptions: {
+        handlers: (capability.subscriptions?.handlers ?? [])
+          .filter((subscription) => subscription.id === subscriberId)
+          .map((subscription) => ({
+            ...subscription,
+            ...(legacyActions ? { version: 1, actions: legacyActions } : {}),
+            load: async () => () => async () => ({ status: 'succeeded' as const }),
+          })),
+      },
+    })),
+    {},
+  );
 }
 
 async function insertEvent(id: string, action = 'test:handled') {
@@ -490,30 +510,50 @@ describe('YUK-751 durable event subscription runtime', () => {
     );
   });
 
-  // ── YUK-1055 — version-bump translation（grounding §15 + YUK-766）──
-  // 旧版本 outstanding delivery 不许盲标 bootstrap_skipped：stable source_event_id
-  // 下把 pending/claimed/retry_wait 翻译进新版本（保序、保重试预算），其余终态化。
-
-  it('translates outstanding deliveries into the bumped version instead of blindly skipping them (YUK-1055)', async () => {
-    const V1 = SUBSCRIBER; // actions ['test:handled']
-    const V2: LoadedEventSubscription = {
-      ...SUBSCRIBER,
-      version: 2,
-      actions: ['test:handled'],
-      declarationHash: 'subscriber-declaration-hash-v2',
-      handler: async () => ({ status: 'succeeded' }),
-    };
+  // @invariant concurrency: activity upgrades preserve outstanding work and fence superseded claims without replaying history
+  // @fails-if either declaration stays v1, retry state is reset, an old claim completes, or historical activity becomes runnable
+  it.each([
+    {
+      id: 'agency.curator-activity',
+      actions: [
+        'attempt',
+        'review',
+        'experimental:assessment_attempt',
+        'experimental:record_capture',
+        'experimental:copilot_user_ask',
+        'experimental:copilot_chip_trigger',
+      ],
+    },
+    {
+      id: 'practice.learner-return-wake',
+      actions: [
+        'attempt',
+        'review',
+        'experimental:assessment_attempt',
+        'experimental:record_capture',
+      ],
+    },
+  ])('upgrades $id without replay or duplicate delivery', async ({ id, actions }) => {
+    // These v1 declarations are persisted history, independent of the current action array.
+    const v1Registry = await activityRegistry(id, actions);
+    const v2Registry = await activityRegistry(id);
+    const V1 = v1Registry.get(id, 1);
+    const V2 = v2Registry.subscriptions.find((subscription) => subscription.id === id);
+    if (!V1 || !V2) throw new Error('expected activity declarations');
+    const removedAction = V1.actions.find((action) => !V2.actions.includes(action));
 
     // v1 已在跑：bootstrap（空历史）→ 事件到达 → discover 出 pending。
-    await bootstrapSubscription(testDb(), registry(V1), V1);
-    await insertEvent('m1'); // v1 已终态化（succeeded）
-    await insertEvent('m2'); // v1 已终态化（dead_letter）
-    await insertEvent('t1'); // v1 retry_wait —— 被翻译
-    await insertEvent('t2'); // v1 claimed（in-flight）—— 被翻译、清 claim
-    await insertEvent('p1'); // v1 pending —— 被翻译
-    const v1Lease = await claimSubscriptionLease(testDb(), registry(V1), V1, 'worker-a');
+    await bootstrapSubscription(testDb(), v1Registry, V1);
+    await insertEvent('m1', 'attempt'); // v1 已终态化（succeeded）
+    await insertEvent('m2', 'attempt'); // v1 已终态化（dead_letter）
+    await insertEvent('t1', 'attempt'); // v1 retry_wait —— 被翻译
+    await insertEvent('t2', 'attempt'); // v1 claimed（in-flight）—— 被翻译、清 claim
+    await insertEvent('p1', 'attempt'); // v1 pending —— 被翻译
+    if (removedAction) await insertEvent('removed', removedAction);
+    await insertEvent('historical-hint', 'experimental:hint_request');
+    const v1Lease = await claimSubscriptionLease(testDb(), v1Registry, V1, 'worker-a');
     if (!v1Lease) throw new Error('expected v1 lease');
-    await discoverSubscriptionDeliveries(testDb(), registry(V1), V1, v1Lease);
+    await discoverSubscriptionDeliveries(testDb(), v1Registry, V1, v1Lease);
 
     // 精确塑造五种 v1 存量：terminal×2 + outstanding×3。
     await testDb().execute(sql`
@@ -531,7 +571,7 @@ describe('YUK-751 durable event subscription runtime', () => {
     `);
     await testDb().execute(sql`
       update event_subscription_delivery
-      set status = 'retry_wait', attempt_count = 2,
+      set status = 'retry_wait', attempt_count = 2, redrive_count = 1,
           next_attempt_at = clock_timestamp() + interval '30 minutes',
           last_error = 'flaky handler', updated_at = clock_timestamp()
       where source_event_id = 't1'
@@ -545,9 +585,34 @@ describe('YUK-751 durable event subscription runtime', () => {
       where source_event_id = 't2'
     `);
 
+    const oldClaim = {
+      ...v1Lease,
+      sourceEventId: 't2',
+      deliverySeq: 4n,
+      claimToken: '22222222-2222-4222-8222-222222222222',
+      checkpointClaimOwner: v1Lease.claimOwner,
+      checkpointClaimToken: v1Lease.claimToken,
+    };
+    const [oldCheckpoint] = await testDb()
+      .select()
+      .from(event_subscription_checkpoint)
+      .where(sql`subscriber_id = ${id} and subscriber_version = 1`);
+    const [oldRetry] = await testDb()
+      .select({ nextAttemptAt: event_subscription_delivery.next_attempt_at })
+      .from(event_subscription_delivery)
+      .where(sql`source_event_id = 't1' and subscriber_version = 1`);
+
     // 版本 bump：v2 bootstrap 必须先翻译 outstanding，再标记历史。
-    const result = await bootstrapSubscription(testDb(), registry(V2), V2);
-    expect(result).toEqual({ translated: 3, superseded: 3 });
+    const result = await bootstrapSubscription(testDb(), v2Registry, V2);
+    expect(result).toEqual({ translated: 3, superseded: removedAction ? 4 : 3 });
+    const [retainedCheckpoint] = await testDb()
+      .select()
+      .from(event_subscription_checkpoint)
+      .where(sql`subscriber_id = ${id} and subscriber_version = 1`);
+    expect(retainedCheckpoint).toEqual(oldCheckpoint);
+    await expect(
+      completeSubscriptionDelivery(testDb(), oldClaim, { status: 'succeeded' }),
+    ).resolves.toBe(false);
 
     // 旧版本 outstanding 终态化（'skipped' + 显式 last_error），terminal 行不动。
     const v1Rows = await testDb()
@@ -566,6 +631,16 @@ describe('YUK-751 durable event subscription runtime', () => {
       { sourceEventId: 't1', status: 'skipped', lastError: 'translated_to_v2', attemptCount: 2 },
       { sourceEventId: 't2', status: 'skipped', lastError: 'translated_to_v2', attemptCount: 0 },
       { sourceEventId: 'p1', status: 'skipped', lastError: 'translated_to_v2', attemptCount: 0 },
+      ...(removedAction
+        ? [
+            {
+              sourceEventId: 'removed',
+              status: 'skipped',
+              lastError: 'superseded_by_version_bootstrap',
+              attemptCount: 0,
+            },
+          ]
+        : []),
     ]);
 
     // 新版本行：翻译行按 source_dispatch_seq 占 delivery_seq 1..3（老工作先交付），
@@ -577,6 +652,7 @@ describe('YUK-751 durable event subscription runtime', () => {
         deliverySeq: event_subscription_delivery.delivery_seq,
         status: event_subscription_delivery.status,
         attemptCount: event_subscription_delivery.attempt_count,
+        redriveCount: event_subscription_delivery.redrive_count,
         lastError: event_subscription_delivery.last_error,
         nextAttemptAt: event_subscription_delivery.next_attempt_at,
         claimOwner: event_subscription_delivery.claim_owner,
@@ -590,9 +666,15 @@ describe('YUK-751 durable event subscription runtime', () => {
       ['p1', 3, 'pending'],
       ['m1', 4, 'bootstrap_skipped'],
       ['m2', 5, 'bootstrap_skipped'],
+      ['historical-hint', 9, 'bootstrap_skipped'],
     ]);
     expect(v2Rows[0]).toEqual(
-      expect.objectContaining({ attemptCount: 2, lastError: 'flaky handler' }),
+      expect.objectContaining({
+        attemptCount: 2,
+        redriveCount: 1,
+        lastError: 'flaky handler',
+        nextAttemptAt: oldRetry?.nextAttemptAt,
+      }),
     );
     const t1NextAttempt = v2Rows[0]?.nextAttemptAt;
     expect(t1NextAttempt).not.toBeNull();
@@ -600,8 +682,7 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(t1NextAttempt.getTime()).toBeGreaterThan(Date.now());
     expect(v2Rows[1]).toEqual(expect.objectContaining({ claimOwner: null, attemptCount: 0 }));
 
-    // next_delivery_seq = max(delivery_seq)+1 = 6（冲突丢弃历史行留洞时必须用 max，
-    // 不能 count+1——本用例 count=5 恰好等于 max，但含 supersede 的用例会散开）。
+    // Translated rows consume the prefix; conflict-dropped history leaves sequence gaps.
     const [cp] = await testDb()
       .select({ nextDeliverySeq: event_subscription_checkpoint.next_delivery_seq })
       .from(event_subscription_checkpoint)
@@ -609,18 +690,18 @@ describe('YUK-751 durable event subscription runtime', () => {
         sql`${event_subscription_checkpoint.subscriber_id} = ${V2.id}
           and ${event_subscription_checkpoint.subscriber_version} = 2`,
       );
-    expect(cp?.nextDeliverySeq).toBe(6);
+    expect(cp?.nextDeliverySeq).toBe(10);
 
     // 旧版本再无 outstanding：v1 lease 下 claim 返回 null（不再交付旧版本工作）。
     await expect(
-      claimNextSubscriptionDelivery(testDb(), registry(V1), V1, v1Lease),
+      claimNextSubscriptionDelivery(testDb(), v1Registry, V1, v1Lease),
     ).resolves.toBeNull();
 
     // 新版本依序交付：t1 retry_wait 未到期 → 挡住后续 claim（per-subscriber 顺序语义）。
-    const v2Lease = await claimSubscriptionLease(testDb(), registry(V2), V2, 'worker-b');
+    const v2Lease = await claimSubscriptionLease(testDb(), v2Registry, V2, 'worker-b');
     if (!v2Lease) throw new Error('expected v2 lease');
     await expect(
-      claimNextSubscriptionDelivery(testDb(), registry(V2), V2, v2Lease),
+      claimNextSubscriptionDelivery(testDb(), v2Registry, V2, v2Lease),
     ).resolves.toBeNull();
 
     await testDb().execute(sql`
@@ -628,21 +709,33 @@ describe('YUK-751 durable event subscription runtime', () => {
       set next_attempt_at = clock_timestamp() - interval '1 second'
       where source_event_id = 't1' and subscriber_version = 2
     `);
-    const claimedT1 = await claimNextSubscriptionDelivery(testDb(), registry(V2), V2, v2Lease);
+    const claimedT1 = await claimNextSubscriptionDelivery(testDb(), v2Registry, V2, v2Lease);
     expect(claimedT1?.sourceEventId).toBe('t1');
     if (!claimedT1) throw new Error('expected t1 claim');
     await completeSubscriptionDelivery(testDb(), claimedT1, { status: 'succeeded' });
-    const claimedT2 = await claimNextSubscriptionDelivery(testDb(), registry(V2), V2, v2Lease);
+    await expect(
+      completeSubscriptionDelivery(testDb(), claimedT1, { status: 'succeeded' }),
+    ).resolves.toBe(false);
+    const claimedT2 = await claimNextSubscriptionDelivery(testDb(), v2Registry, V2, v2Lease);
     expect(claimedT2?.sourceEventId).toBe('t2');
+    if (!claimedT2) throw new Error('expected t2 claim');
+    await completeSubscriptionDelivery(testDb(), claimedT2, { status: 'succeeded' });
+    const claimedP1 = await claimNextSubscriptionDelivery(testDb(), v2Registry, V2, v2Lease);
+    expect(claimedP1?.sourceEventId).toBe('p1');
+    if (!claimedP1) throw new Error('expected p1 claim');
+    await completeSubscriptionDelivery(testDb(), claimedP1, { status: 'succeeded' });
+    await expect(
+      claimNextSubscriptionDelivery(testDb(), v2Registry, V2, v2Lease),
+    ).resolves.toBeNull();
 
     // 幂等：再 bootstrap 一次 v2（同 hash）不重复翻译、不增行。
-    const again = await bootstrapSubscription(testDb(), registry(V2), V2);
+    const again = await bootstrapSubscription(testDb(), v2Registry, V2);
     expect(again).toEqual({ translated: 0, superseded: 0 });
     const [count] = await testDb()
       .select({ n: sql<number>`count(*)::int` })
       .from(event_subscription_delivery)
       .where(sql`${event_subscription_delivery.subscriber_version} = 2`);
-    expect(count?.n).toBe(5);
+    expect(count?.n).toBe(6);
   });
 
   it('supersedes old-version deliveries for events the bumped version no longer subscribes to', async () => {
