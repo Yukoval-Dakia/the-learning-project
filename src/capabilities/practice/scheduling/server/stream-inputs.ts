@@ -60,7 +60,7 @@ import {
   attachPaperQuestionKnowledge,
   rankPendingPapers,
 } from './paper-rank';
-import { readQuestionPace } from './question-pace';
+import { readQuestionPacesForQuestions } from './question-pace';
 import {
   type DailyPracticePace,
   dailyPracticeBudgetMinutes,
@@ -276,6 +276,25 @@ export async function resolveDailyPracticeBudget(
   return { pace, minutes: dailyPracticeBudgetMinutes(pace) };
 }
 
+/** A scoped stream keeps its item cap within the learner's existing minute budget. */
+export async function resolveScopedPracticeBudget(
+  db: DbLike,
+  rows: readonly { item_kind: 'question' | 'paper'; ref_id: string }[],
+  questionLimit: number,
+): Promise<{ pace: DailyPracticePace; minutes: number }> {
+  const [budget, paces] = await Promise.all([
+    resolveDailyPracticeBudget(db),
+    readQuestionPacesForQuestions(
+      db,
+      rows.filter((row) => row.item_kind === 'question').map((row) => row.ref_id),
+    ),
+  ]);
+  return {
+    pace: budget.pace,
+    minutes: Math.min(budget.minutes, questionLimit * paces.overall.minutes),
+  };
+}
+
 interface QuestionMixMetadata {
   knowledgeId?: string;
   questionKind?: string;
@@ -424,9 +443,8 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   // （NULL≡active / 'active' 留池，仅排字面 'draft'）。new_check + frontier 共用
   // notDraftPredicate（@/db/predicates，三值逻辑安全的单一定义）。
 
-  const [dailyBudget, questionPace, deferredKnowledgeIds] = await Promise.all([
+  const [dailyBudget, deferredKnowledgeIds] = await Promise.all([
     resolveDailyPracticeBudget(db),
-    readQuestionPace(db),
     loadSteeringDeferredKnowledgeIds(db, new Date()),
   ]);
   const steeringKeeps = (knowledgeIds: readonly string[]): boolean =>
@@ -609,6 +627,8 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     ...frontierPairs.map((pair) => pair.questionId),
   ]);
 
+  const questionPaces = await readQuestionPacesForQuestions(db, [...mixMetadataByQuestion.keys()]);
+
   // 标签批量解析（reasoning 模板用）。
   const labelMap = await knowledgeLabels(db, [
     ...dueRows.flatMap((r) => r.knowledge_ids ?? []).slice(0, 50),
@@ -619,7 +639,10 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   return {
     date,
     dailyBudgetMinutes: dailyBudget.minutes,
-    questionMinutes: questionPace.minutes,
+    questionMinutes: questionPaces.unscoped.minutes,
+    questionMinutesByQuestion: Object.fromEntries(
+      [...questionPaces.byQuestion].map(([id, pace]) => [id, pace.minutes]),
+    ),
     dueItems: orderComposerDueItems(dueRows, mixMetadataByQuestion, labelMap),
     variantItems: variantRows
       .filter((v): v is { variant_question_id: string; parent_question_id: string } =>

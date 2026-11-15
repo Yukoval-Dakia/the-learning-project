@@ -1,10 +1,11 @@
-import { estimateStreamItemMinutes, fitStreamToTimeBudget } from './stream-budget';
+import { fitStreamToTimeBudget, pricedStreamItemMinutes } from './stream-budget';
 import { isUploadPracticeRow } from './upload-ready';
 
 interface StoredStreamBudgetRow {
   readonly id: string;
   readonly item_kind: 'question' | 'paper';
   readonly questionCount?: number;
+  readonly estimatedMinutes?: number;
 }
 
 interface StoredStreamBudgetInput {
@@ -32,11 +33,7 @@ export function storedStreamExceedsBudget({
   return (
     rows
       .filter((row) => !recoveryRowIds.has(row.id))
-      .reduce(
-        (sum, row) =>
-          sum + estimateStreamItemMinutes(row.item_kind, questionMinutes, row.questionCount),
-        0,
-      ) > budgetMinutes
+      .reduce((sum, row) => sum + pricedStreamItemMinutes(row, questionMinutes), 0) > budgetMinutes
   );
 }
 
@@ -53,8 +50,7 @@ export function planStoredStreamBudgetTrim({
   // never consuming the minutes that decide other rows' fate.
   const frozen = eligible.filter((row) => row.status !== 'pending' && !recoveryRowIds.has(row.id));
   const frozenMinutes = frozen.reduce(
-    (sum, row) =>
-      sum + estimateStreamItemMinutes(row.item_kind, questionMinutes, row.questionCount),
+    (sum, row) => sum + pricedStreamItemMinutes(row, questionMinutes),
     0,
   );
   const pending = eligible.filter((row) => row.status === 'pending' && !recoveryRowIds.has(row.id));
@@ -69,8 +65,7 @@ export function planStoredStreamBudgetTrim({
     (row) => row.source !== 'intervention' && !isUploadPracticeRow(row),
   );
   const protectedMinutes = protectedPending.reduce(
-    (sum, row) =>
-      sum + estimateStreamItemMinutes(row.item_kind, questionMinutes, row.questionCount),
+    (sum, row) => sum + pricedStreamItemMinutes(row, questionMinutes),
     0,
   );
   const remaining = Math.max(0, budgetMinutes - frozenMinutes - protectedMinutes);
