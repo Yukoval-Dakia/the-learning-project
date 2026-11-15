@@ -20,7 +20,13 @@ export function CauseEditor({ editor }: { editor: CauseEditorModel }) {
   const name = useId();
   const disabled = editor.mode !== 'editable';
   return (
-    <details className="un-cause" onToggle={(event) => editor.onToggle?.(event.currentTarget.open)}>
+    <details
+      className="un-cause"
+      open={
+        editor.notice && (editor.mode === 'busy' || editor.mode === 'disabled') ? true : undefined
+      }
+      onToggle={(event) => editor.onToggle?.(event.currentTarget.open)}
+    >
       <summary>
         <ChevronDown size={18} aria-hidden="true" />
         <span>我觉得是因为……</span>
