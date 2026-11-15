@@ -988,10 +988,24 @@ export async function submitSolveAttempt(
     const score = committed.candidate.result;
     const belowMastery =
       !submission.self_report && score.score !== null && score.score < SOLVE_MASTERY_THRESHOLD;
-    const revealed =
-      committed.status === 'effective'
-        ? await revealFrozenStudyReference(db, issuanceId)
-        : { reference_md: null };
+    let revealedSolution: string | null = null;
+    if (committed.status === 'effective') {
+      try {
+        revealedSolution = (await revealFrozenStudyReference(db, issuanceId)).reference_md;
+      } catch (error) {
+        // A denied optional disclosure cannot undo the committed grade or its replay.
+        if (
+          !(error instanceof ApiError) ||
+          ![
+            'study_source_unknown',
+            'study_source_restricted',
+            'study_restricted',
+            'reveal_unavailable',
+          ].includes(error.code)
+        )
+          throw error;
+      }
+    }
     return {
       status: committed.status,
       attempt_event_id: committed.attempt_id,
@@ -1010,7 +1024,7 @@ export async function submitSolveAttempt(
         reason_md: score.feedback_md,
         evidence_json: score.evidence_json,
       },
-      revealed_solution_md: revealed.reference_md,
+      revealed_solution_md: revealedSolution,
       ...(committed.status === 'effective' && belowMastery ? { mistake_id: mistakeId } : {}),
     };
   }

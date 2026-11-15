@@ -1,12 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
 import { AgentNoteClientProvider } from '@/capabilities/agency/ui-public';
-import {
-  CopilotClientProvider,
-  readCopilotFailedTurnPracticeTarget,
-} from '@/capabilities/copilot/ui-public';
+import { CopilotClientProvider } from '@/capabilities/copilot/ui-public';
 import { WorkbenchClientProvider } from '@/capabilities/shell/ui-public';
 import { SubjectClientProvider } from '@/ui/hooks/subject-client';
+import { apiOperationJson } from '@/ui/lib/api';
 import { startIssuanceCreateClient } from './issuance-create-client';
 import { startIssuanceStateClient } from './issuance-state-client';
 import { startResponseDraftClient } from './response-draft-client';
@@ -30,7 +28,12 @@ const confirmationClient = {
 };
 
 const failedTurnReferenceClient = {
-  readTarget: readCopilotFailedTurnPracticeTarget,
+  readTarget: (runId: string, sessionId: string) =>
+    apiOperationJson('getCopilotFailedTurnPracticeTarget', {
+      url: `/api/copilot/runs/${encodeURIComponent(runId)}/practice-target?session_id=${encodeURIComponent(sessionId)}`,
+      method: 'GET',
+      init: { cache: 'no-store' },
+    }),
   revealReference: startStudyReferenceClient,
   restoreHints: startHintHistoryClient,
 };

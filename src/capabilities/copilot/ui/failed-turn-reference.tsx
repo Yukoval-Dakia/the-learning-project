@@ -1,5 +1,5 @@
 import { type ComponentType, useCallback, useRef, useState } from 'react';
-import { ApiError, type ApiOperationJsonResponse, apiJson } from '@/ui/lib/api';
+import { ApiError, type ApiOperationJsonResponse } from '@/ui/lib/api';
 import { Button } from '@/ui-next/public';
 import {
   FailedTurnPracticeTarget,
@@ -22,18 +22,6 @@ export interface FailedTurnReferenceClient {
     questionId: string,
     issuanceId: string,
   ): Promise<ApiOperationJsonResponse<'restoreHintHistory'>>;
-}
-
-export async function readCopilotFailedTurnPracticeTarget(
-  runId: string,
-  sessionId: string,
-): Promise<FailedTurnPracticeTargetT> {
-  return FailedTurnPracticeTarget.parse(
-    await apiJson<unknown>(
-      `/api/copilot/runs/${encodeURIComponent(runId)}/practice-target?session_id=${encodeURIComponent(sessionId)}`,
-      { cache: 'no-store' },
-    ),
-  );
 }
 
 type ReferenceView =
@@ -96,7 +84,7 @@ export function FailedTurnReference({
     if (material === 'hints') setHintView({ status: 'loading' });
     else setView({ status: 'loading' });
     try {
-      const target = await client.readTarget(runId, sessionId);
+      const target = FailedTurnPracticeTarget.parse(await client.readTarget(runId, sessionId));
       // Leaving this message during its GET must not start a later disclosure/restoration POST.
       if (lifetime.current !== activeLifetime) return;
       if (target.status === 'unavailable') {

@@ -1,19 +1,23 @@
 import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import type { ConfirmationAssessmentRenderer } from '../confirmation';
-import type { FailedTurnReferenceRenderer } from '../failed-turn-reference';
+import {
+  FailedTurnReference,
+  type FailedTurnReferenceClient,
+  type FailedTurnReferenceProps,
+} from '../failed-turn-reference';
 import type { QuestionCardRenderer } from '../question-card';
 // The shell's one companion instance. Always mounted (closed it renders nothing visible): it restores
 // unconfirmed sends from the browser once, claims open requests published by pages, polls nudges
 // for the shell's badge, and shows the panel while `open`. Unmounting only detaches streams.
 
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { subscribeCopilotOpenRequests } from '@/ui/lib/use-copilot-dwell';
 import { useCopilotNudges } from '../useCopilotNudges';
 import { type CompanionLayout, CompanionPanel } from './CompanionPanel';
 import { useCompanionController, useTurnPolling } from './use-companion';
 
 export interface CompanionMountProps {
-  failedTurnReferenceRenderer?: FailedTurnReferenceRenderer;
+  failedTurnReferenceClient?: FailedTurnReferenceClient;
   confirmationRenderer?: ConfirmationAssessmentRenderer;
   questionCardRenderer?: QuestionCardRenderer;
   readNotePage: NotePageClient;
@@ -37,10 +41,16 @@ export function CompanionMount({
   navigate,
   presentation,
   confirmationRenderer,
-  failedTurnReferenceRenderer,
+  failedTurnReferenceClient,
   questionCardRenderer,
   readNotePage,
 }: CompanionMountProps) {
+  const failedTurnReferenceRenderer = useMemo(() => {
+    if (!failedTurnReferenceClient) return undefined;
+    return function ReferenceRenderer(props: FailedTurnReferenceProps) {
+      return <FailedTurnReference {...props} client={failedTurnReferenceClient} />;
+    };
+  }, [failedTurnReferenceClient]);
   const controller = useCompanionController();
   const nudges = useCopilotNudges();
   useTurnPolling(controller);
