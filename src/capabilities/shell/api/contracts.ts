@@ -153,6 +153,19 @@ const ProposalPresentationResponseSchema = z.object({
   // Read-time names of the nodes a knowledge_mutation acts on; the stored payload
   // keeps its ids only.
   knowledge_mutation: ProposalKnowledgeMutationResponseSchema.optional(),
+  // YUK-2124 — goal_scope ordered knowledge-point path, names resolved at read
+  // time. Absent on legacy goal_scope rows with no ordered_scope.
+  goal_scope: z
+    .object({
+      ordered_points: z.array(
+        z.object({
+          knowledge_id: z.string(),
+          label: z.string(),
+          order: z.number().int(),
+        }),
+      ),
+    })
+    .optional(),
   block_merge: z
     .object({
       primary: ProposalBlockPreviewResponseSchema.nullable(),

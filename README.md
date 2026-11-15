@@ -316,7 +316,7 @@ API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，�
 必填项、compose 与本机 dev 的取值、逐键默认值及 DB 配置层见
 [configuration.md](/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/configuration.md)。
 
-常用检查 / PR 前门禁：
+常用命令 / 手动诊断入口：
 
 ```bash
 pnpm typecheck        # tsrs --noEmit（root + server/start/tsconfig.json）
@@ -324,14 +324,14 @@ pnpm lint             # biome check .
 pnpm hooks:install    # 幂等安装仓库 pre-commit，只对暂存内容跑 biome check
 pnpm hooks:uninstall  # 只删除带本仓库标记的 hook
 pnpm lint:ratchet     # warning/info 总数不得高于 PR 分叉点实测数（merge-base 用 head 的 Biome 重测）；低于不失败，无台账文件；取不到 base 时 fail closed（CI 必须给 LINT_BASE_SHA/--base）
-pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 AGENTS.md 与 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/development-workflow.md`）；本机按 AGENTS.md 只跑 scoped tests
+pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 AGENTS.md 与 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/development-workflow.md`）；本机按 AGENTS.md 只跑具名复现或 CI 未覆盖的 bounded 验证
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
 pnpm audit:task-census # task registry 的 static caller / compatibility 分类与 wiring、run-log 契约
 pnpm build            # TanStack Start（js/css 另写 .br/.gz）+ 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
 ```
 
-`pnpm hooks:install` 把 hook 写进该仓库的 `.git/hooks/pre-commit`，不改全局或本地 `core.hooksPath`；这项配置已经存在时拒绝安装。hook 不写工作区，也不 `git add`。部分暂存时只检查索引里的内容，路径里的空格和未暂存修改留在原地。全仓 typecheck 不进提交或推送 hook：它读的是工作区，不是暂存区。本机 root `tsrs --noEmit` 检查 6542 个文件的 check time 是 1.4 秒；`pnpm typecheck` 仍是显式 preflight，CI Gate 是最终检查。
+`pnpm hooks:install` 把 hook 写进该仓库的 `.git/hooks/pre-commit`，不改全局或本地 `core.hooksPath`；这项配置已经存在时拒绝安装。hook 不写工作区，也不 `git add`。部分暂存时只检查索引里的内容，路径里的空格和未暂存修改留在原地。全仓 typecheck 不进提交或推送 hook：它读的是工作区，不是暂存区。本机 root `tsrs --noEmit` 检查 6542 个文件的 check time 是 1.4 秒；`pnpm typecheck` 可用于手动诊断。CI Gate 承担 PR 的完整验证。
 
 快速迭代用 watch 模式：`pnpm test:unit:watch`（无 DB，覆盖 UI / core / schema / parser）、
 `pnpm test:db:watch`（DB / API，需 Docker）。

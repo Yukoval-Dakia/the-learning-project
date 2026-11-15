@@ -67,7 +67,9 @@ export interface ConjectureApplierOpts {
   user_note?: string;
   // EDIT path: the owner-rewritten conjecture payload. Presence ⇒ corrected_by_owner=true;
   // the rate-event outbox projects the rewrite to mem0 CORE asynchronously (no direct write).
-  corrected_payload?: { claim_md: string };
+  // Typed as the shared kernel union: a goal_scope edit may transit the same opts
+  // bag, but this owner only ever reads claim_md.
+  corrected_payload?: import('@/kernel/proposals').ProposalCorrectedPayload;
 }
 
 export interface ConjectureAcceptResult {
@@ -89,6 +91,17 @@ export async function acceptConjectureProposal(
   opts: ConjectureApplierOpts = {},
 ): Promise<ConjectureAcceptResult> {
   ensureAcceptOnly('conjecture', opts);
+  // Owner-specific fail-closed: a corrected_payload that reaches the conjecture
+  // owner without a claim_md variant is a foreign-owner edit smuggled into this
+  // accept — reject rather than silently accept an uncorrected claim (the
+  // schema's exactly-one refine guards the wire; this guards internal callers).
+  if (opts.corrected_payload !== undefined && opts.corrected_payload.claim_md === undefined) {
+    throw new ApiError(
+      'validation_error',
+      `conjecture accept requires corrected_payload.claim_md`,
+      400,
+    );
+  }
   const change = asPlainRecord(proposal.payload.proposed_change);
   // The conjecture's stable identity is the proposal event id (no separate row).
   const conjectureId = proposalId;

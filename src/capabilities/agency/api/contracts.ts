@@ -75,6 +75,28 @@ export const LearningIntentProposalResponseSchema = z.object({
   longs: z.array(LearningIntentLongSchema),
 });
 
+// YUK-2124 — the create endpoint's wire response, discriminated on `kind`.
+// The atomic lane returns the learning-item plan with kind 'learning_item';
+// the goal lane returns the goal_scope proposal identity with kind
+// 'goal_scope' so the composer can route the learner to the inbox. `kind` is
+// added at the wire only — the stored learning_item proposed_change carries
+// no kind field, so replay keeps parsing the inner schema unchanged.
+export const LearningItemIntentResponseSchema = LearningIntentProposalResponseSchema.extend({
+  kind: z.literal('learning_item'),
+});
+
+export const GoalScopeIntentResponseSchema = z.object({
+  kind: z.literal('goal_scope'),
+  proposal_id: z.string().min(1),
+  goal_id: z.string().min(1),
+  scope_count: z.number().int().nonnegative(),
+});
+
+export const CreateLearningIntentResponseSchema = z.discriminatedUnion('kind', [
+  GoalScopeIntentResponseSchema,
+  LearningItemIntentResponseSchema,
+]);
+
 export const AgentNotesQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).optional(),
 });

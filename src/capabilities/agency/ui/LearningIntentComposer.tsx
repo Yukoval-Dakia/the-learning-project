@@ -8,8 +8,13 @@
 import { useMutation } from '@tanstack/react-query';
 import { ArrowRight, RefreshCw, Sparkles, Target } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
+import { ApiError } from '@/ui/lib/api';
 import { Button, Chip } from '@/ui-next/public';
-import { createLearningIntentProposal } from './learning-intent-api';
+import {
+  type CreateLearningIntentWire,
+  createLearningIntentProposal,
+  isGoalScopeIntentWire,
+} from './learning-intent-api';
 import './learning-intent.css';
 
 export interface LearningIntentComposerProps {
@@ -17,7 +22,7 @@ export interface LearningIntentComposerProps {
   pendingCount?: number;
   /** Proposals apply by themselves right now. Unknown reads as off: it never promises too much. */
   autoApplyEnabled?: boolean;
-  createProposal?: typeof createLearningIntentProposal;
+  createProposal?: (topic: string) => Promise<CreateLearningIntentWire>;
   navigate: (to: string) => void;
 }
 
@@ -40,8 +45,12 @@ export function LearningIntentComposer({
     mutation.mutate(normalized);
   };
 
-  const plan = mutation.data;
+  const response = mutation.data;
+  const isGoal = response ? isGoalScopeIntentWire(response) : false;
+  const plan = response && !isGoalScopeIntentWire(response) ? response : null;
   const appliesItself = autoApplyEnabled && plan?.plan_case === '3c_existing_graph';
+  // Any live response (atomic plan or goal proposal) locks the form and pending gate.
+  const settled = response != null;
 
   return (
     <section className="li-intent un-m3e-bridge">
@@ -61,7 +70,7 @@ export function LearningIntentComposer({
           </div>
         </div>
 
-        {pendingCount > 0 && !plan ? (
+        {pendingCount > 0 && !settled ? (
           <div className="li-intent-existing">
             <p>已有 {pendingCount} 条学习路径等待你确认。先处理现有提议，再生成下一条主线。</p>
             <Button variant="secondary" onClick={() => navigate('/inbox')}>
@@ -80,7 +89,7 @@ export function LearningIntentComposer({
               value={topic}
               maxLength={120}
               placeholder="例如：系统掌握概率论"
-              disabled={mutation.isPending || Boolean(plan)}
+              disabled={mutation.isPending || settled}
               onChange={(event) => {
                 setTopic(event.target.value);
                 if (mutation.isError) mutation.reset();
@@ -89,7 +98,7 @@ export function LearningIntentComposer({
             <Button
               type="submit"
               variant="secondary"
-              disabled={!topic.trim() || mutation.isPending || Boolean(plan)}
+              disabled={!topic.trim() || mutation.isPending || settled}
             >
               {mutation.isPending ? (
                 <RefreshCw size={16} aria-hidden="true" />
@@ -103,8 +112,31 @@ export function LearningIntentComposer({
 
         {mutation.isError && (
           <p className="li-intent-error" role="alert">
-            学习路径暂时没有生成，请稍后重试。你的现有目标和学习数据没有变化。
+            {mutation.error instanceof ApiError && mutation.error.code === 'clarify_goal_subject'
+              ? mutation.error.message
+              : '学习路径暂时没有生成，请稍后重试。你的现有目标和学习数据没有变化。'}
           </p>
+        )}
+
+        {isGoal && response && isGoalScopeIntentWire(response) && (
+          <div className="li-intent-preview" aria-live="polite">
+            <div className="li-intent-preview-head">
+              <div>
+                <p className="li-intent-kicker">待你确认的目标</p>
+                <p className="li-intent-hub">{topic}</p>
+              </div>
+              <Chip tone="positive">已生成目标提议</Chip>
+            </div>
+            <div className="li-intent-actions">
+              <p className="li-intent-help">
+                已生成覆盖 {response.scope_count} 个知识点的学习路径提议，确认前不会创建目标。
+              </p>
+              <Button variant="primary" onClick={() => navigate('/inbox')}>
+                去收件箱确认
+                <ArrowRight size={16} aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
         )}
 
         {plan && (

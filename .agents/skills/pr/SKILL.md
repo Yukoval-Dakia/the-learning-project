@@ -4,12 +4,12 @@ description: PR workflow for this repo — opening PRs and resolving code-review
 ---
 
 # PR Workflow
-1. Follow the local scoped-validation boundary in `AGENTS.md`; never run the full `pnpm test` locally
+1. Follow the bounded local verification rules in `AGENTS.md`; CI owns the complete validation matrix, diff-touched invariant tests are not a default local gate, and `pnpm test` stays off the local machine
 2. Organize changes into logical commits (squash WIP)
 3. Push branch and open or update the PR with summary + test plan
 4. Run one independent review pass
 5. Fix validated P0/P1 findings and run at most one verification review pass
-6. Require the exact-head GitHub `CI Gate` to execute the full test gate; then close out or merge according to repository policy
+6. Require the exact-head GitHub `CI Gate` to execute the complete validation matrix; then close out or merge according to repository policy
 
 ## Review budget and stop policy
 

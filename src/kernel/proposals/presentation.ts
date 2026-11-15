@@ -12,20 +12,24 @@ import {
   question_block,
   source_document,
 } from '@/db/schema';
-import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
 import { resolveKnownSubjectId } from '@/subjects/profile';
+import { enrichGoalScopePresentation } from './goal-scope-presentation';
+import {
+  type KnowledgeMutationNodeRow,
+  knowledgeMutationNodeIds,
+  knowledgeMutationPresentation,
+  loadKnowledgeMutationNodeRows,
+  loadMergedAwayKnowledgeIds,
+  mutationNodeLabel,
+} from './knowledge-mutation-presentation';
 import { proposalReasonPlainText } from './reason-text';
 
 type DbLike = Db | Tx;
 type QuestionEditChange = Extract<AiProposalPayloadT, { kind: 'question_edit' }>['proposed_change'];
-type KnowledgeMutationChange = Extract<
-  AiProposalPayloadT,
-  { kind: 'knowledge_mutation' }
->['proposed_change'];
 
 const TITLE_DETAIL_CAP = 48;
 const BLOCK_EXCERPT_CAP = 120;
@@ -107,7 +111,7 @@ export type ProposalKnowledgeMutationBlock =
   | 'node_retired'
   | 'version_changed';
 
-type KnowledgeMutationTargets =
+export type KnowledgeMutationTargets =
   | {
       mutation: 'merge';
       /** Nodes folded away, in payload order. */
@@ -140,6 +144,12 @@ export interface ProposalPresentation {
   evidence_labels: Record<string, string>;
   knowledge_edge?: { from_label: string; to_label: string };
   knowledge_mutation?: ProposalKnowledgeMutationPresentation;
+  /**
+   * YUK-2124 — goal_scope ordered knowledge-point path. Ordered by the
+   * proposal's ordered_scope (accept materializes the same order); absent on
+   * legacy goal_scope payloads with no ordered_scope.
+   */
+  goal_scope?: { ordered_points: { knowledge_id: string; label: string; order: number }[] };
   block_merge: {
     primary: ProposalBlockPreview | null;
     merged: ProposalBlockPreview[];
@@ -153,7 +163,7 @@ export interface ProposalPresentation {
   } | null;
 }
 
-interface ProposalPresentationInput {
+export interface ProposalPresentationInput {
   id: string;
   payload: AiProposalPayloadT;
 }
@@ -758,7 +768,9 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem(
           '范围',
           Array.isArray(change?.scope_knowledge_ids)
-            ? `${change.scope_knowledge_ids.length} 个知识点`
+            ? Array.isArray(change?.ordered_scope) && change.ordered_scope.length > 0
+              ? `${change.ordered_scope.length} 个知识点（已按学习顺序排列）`
+              : `${change.scope_knowledge_ids.length} 个知识点`
             : null,
         ),
         reasonSummaryItem('判断依据', change?.reasoning),
@@ -1077,7 +1089,7 @@ async function loadEdgeKnowledgeNames(
   ids: readonly string[],
 ): Promise<Map<string, string>> {
   const names = new Map<string, string>();
-  for (const chunk of chunksOf(ids.filter(isLearnerVisibleKnowledgeId))) {
+  for (const chunk of chunksOf(ids)) {
     const rows = await db
       .select({ id: knowledge.id, name: knowledge.name })
       .from(knowledge)
@@ -1085,175 +1097,6 @@ async function loadEdgeKnowledgeNames(
     for (const row of rows) names.set(row.id, row.name);
   }
   return names;
-}
-
-interface KnowledgeMutationNodeRow {
-  id: string;
-  name: string;
-  archived_at: Date | null;
-  version: number;
-}
-
-/** Names, archive state and versions of every node a page's mutation cards name, batched. */
-async function loadKnowledgeMutationNodeRows(
-  db: DbLike,
-  ids: readonly string[],
-): Promise<Map<string, KnowledgeMutationNodeRow>> {
-  const rows = new Map<string, KnowledgeMutationNodeRow>();
-  for (const chunk of chunksOf(ids.filter(isLearnerVisibleKnowledgeId))) {
-    const found = await db
-      .select({
-        id: knowledge.id,
-        name: knowledge.name,
-        archived_at: knowledge.archived_at,
-        version: knowledge.version,
-      })
-      .from(knowledge)
-      .where(inArray(knowledge.id, chunk));
-    for (const row of found) rows.set(row.id, row);
-  }
-  return rows;
-}
-
-/**
- * Which of these archived nodes were absorbed by a merge. `merged_from` lives on the
- * absorber, so archive state alone cannot tell a merge from a plain archive.
- */
-async function loadMergedAwayKnowledgeIds(
-  db: DbLike,
-  ids: readonly string[],
-): Promise<Set<string>> {
-  const merged = new Set<string>();
-  const visible = ids.filter(isLearnerVisibleKnowledgeId);
-  if (visible.length === 0) return merged;
-  const visibleSet = new Set(visible);
-  for (const chunk of chunksOf(visible)) {
-    const list = sql.join(
-      chunk.map((id) => sql`${id}`),
-      sql`, `,
-    );
-    const rows = await db
-      .select({ merged_from: knowledge.merged_from })
-      .from(knowledge)
-      .where(sql`${knowledge.merged_from} ?| array[${list}]`);
-    for (const row of rows) {
-      for (const id of row.merged_from) {
-        if (visibleSet.has(id)) merged.add(id);
-      }
-    }
-  }
-  return merged;
-}
-
-function knowledgeMutationNodeIds(change: KnowledgeMutationChange): string[] {
-  switch (change.mutation) {
-    case 'merge':
-      return [...change.from_ids, change.into_id];
-    case 'reparent':
-      return change.new_parent_id === null
-        ? [change.node_id]
-        : [change.node_id, change.new_parent_id];
-    case 'split':
-      return [
-        change.from_id,
-        ...change.into.flatMap((entry) => (entry.parent_id === null ? [] : [entry.parent_id])),
-      ];
-  }
-}
-
-function mutationNodeLabel(
-  id: string,
-  rows: ReadonlyMap<string, KnowledgeMutationNodeRow>,
-  mergedAway: ReadonlySet<string>,
-): ProposalKnowledgeNodeLabel {
-  const row = rows.get(id);
-  // A gone (or learner-hidden) row contributes no name and no id.
-  if (!row) return { label: null, state: 'missing' };
-  if (mergedAway.has(id)) return { label: row.name, state: 'merged' };
-  if (row.archived_at !== null) return { label: row.name, state: 'archived' };
-  return { label: row.name, state: 'live' };
-}
-
-/** The nodes whose versions the appliers check, against what the proposal expects of them. */
-function knowledgeMutationVersionChanged(
-  change: KnowledgeMutationChange,
-  rows: ReadonlyMap<string, KnowledgeMutationNodeRow>,
-): boolean {
-  const differs = (id: string, expected: number | undefined) => {
-    const row = rows.get(id);
-    return row !== undefined && row.version !== expected;
-  };
-  switch (change.mutation) {
-    case 'merge':
-      return change.from_ids.some((id) => differs(id, change.expected_versions[id]));
-    case 'reparent':
-      return differs(change.node_id, change.expected_version);
-    case 'split':
-      return differs(change.from_id, change.expected_version);
-  }
-}
-
-function knowledgeMutationBlock(
-  targets: KnowledgeMutationTargets,
-  versionChanged: boolean,
-): ProposalKnowledgeMutationBlock | null {
-  const parents =
-    targets.mutation === 'reparent'
-      ? [targets.parent]
-      : targets.mutation === 'split'
-        ? targets.into.map((piece) => piece.parent)
-        : [];
-  if (parents.includes(null)) return 'to_top';
-  const nodes = [
-    ...parents.filter((parent) => parent !== null),
-    ...(targets.mutation === 'merge' ? [...targets.from, targets.into] : []),
-    ...(targets.mutation === 'reparent' ? [targets.node] : []),
-    ...(targets.mutation === 'split' ? [targets.from] : []),
-  ];
-  if (nodes.some((node) => node.state === 'missing')) return 'node_unreadable';
-  if (nodes.some((node) => node.state !== 'live')) return 'node_retired';
-  return versionChanged ? 'version_changed' : null;
-}
-
-function knowledgeMutationPresentation(
-  change: KnowledgeMutationChange,
-  labelOf: (id: string) => ProposalKnowledgeNodeLabel,
-  rows: ReadonlyMap<string, KnowledgeMutationNodeRow>,
-): ProposalKnowledgeMutationPresentation {
-  const targets = knowledgeMutationTargets(change, labelOf);
-  return {
-    ...targets,
-    blocked: knowledgeMutationBlock(targets, knowledgeMutationVersionChanged(change, rows)),
-  };
-}
-
-function knowledgeMutationTargets(
-  change: KnowledgeMutationChange,
-  labelOf: (id: string) => ProposalKnowledgeNodeLabel,
-): KnowledgeMutationTargets {
-  switch (change.mutation) {
-    case 'merge':
-      return {
-        mutation: 'merge',
-        from: change.from_ids.map(labelOf),
-        into: labelOf(change.into_id),
-      };
-    case 'reparent':
-      return {
-        mutation: 'reparent',
-        node: labelOf(change.node_id),
-        parent: change.new_parent_id === null ? null : labelOf(change.new_parent_id),
-      };
-    case 'split':
-      return {
-        mutation: 'split',
-        from: labelOf(change.from_id),
-        into: change.into.map((entry) => ({
-          name: entry.name,
-          parent: entry.parent_id === null ? null : labelOf(entry.parent_id),
-        })),
-      };
-  }
 }
 
 /**
@@ -1310,6 +1153,7 @@ export async function loadProposalPresentations(
   const blockMergeSessionIds = new Set<string>();
   const edgeKnowledgeIds = new Set<string>();
   const mutationKnowledgeIds = new Set<string>();
+  const goalScopeKnowledgeIds = new Set<string>();
   for (const proposal of proposals) {
     presentations.set(proposal.id, {
       title: proposalDisplayTitle(proposal.payload),
@@ -1334,6 +1178,11 @@ export async function loadProposalPresentations(
         mutationKnowledgeIds.add(id);
       }
     }
+    if (proposal.payload.kind === 'goal_scope') {
+      for (const point of proposal.payload.proposed_change.ordered_scope ?? []) {
+        goalScopeKnowledgeIds.add(point.knowledge_id);
+      }
+    }
     if (proposal.payload.kind !== 'block_merge') continue;
     blockMergeSessionIds.add(proposal.payload.proposed_change.ingestion_session_id);
     blockIds.add(proposal.payload.proposed_change.primary_block_id);
@@ -1356,6 +1205,22 @@ export async function loadProposalPresentations(
         from_label: names.get(change.from_knowledge_id) ?? change.from_knowledge_id.slice(0, 8),
         to_label: names.get(change.to_knowledge_id) ?? change.to_knowledge_id.slice(0, 8),
       };
+    }
+  }
+
+  if (goalScopeKnowledgeIds.size > 0) {
+    const names = await readPresentationDataOptional(
+      db,
+      'goal scope knowledge names',
+      new Map<string, string>(),
+      (tx) => loadEdgeKnowledgeNames(tx, [...goalScopeKnowledgeIds]),
+    );
+    for (const proposal of proposals) {
+      await enrichGoalScopePresentation(
+        proposal,
+        presentations.get(proposal.id),
+        async () => names,
+      );
     }
   }
 

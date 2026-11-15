@@ -5,7 +5,7 @@
 ## Owner rules
 
 - **测试默认不写，写了不等批准。** 只为五类不变量写测试——①数据不可逆（迁移/备份恢复/删除合并不丢数据）；②判分与结算确定性（同输入同结果，含数值核心与 TS↔Rust parity）；③并发与锁（advisory lock、CAS/版本冲突、回滚与幂等）；④安全边界（`/api/*` 鉴权、浏览器不持 provider key、授权与第三方信息不外泄）；⑤危机转介（YUK-1398）。经最近真实边界测（route、job、真实 PG 事务、结算/判分链、agent 工具契约、模块公开入口），一个不变量一条 case，表驱动算一条；同一行为只在最近的真实边界测一次，unit 与 DB 两层不各写一遍，已有 DB 证明就删 unit 版本；新增前先找能合并或删除的旧 case，改行为时同 PR 更新或删除过时测试。禁止内部 helper 单测、参数排列、mock 交互断言、复述实现的浅层断言、常量/字面量/schema 形状、快照与 typecheck 已能保证的类型检查；mock 只替外部依赖。新 case 的文本方案写进 PR，由 CI 把关，不等 Owner 或协调线批准（Owner 2026-11-07：「做题和判分我批准测试。下次测试不要堵塞，直接过。」）；既有测试文件的机械更新（计数增减、fixture 快照同步、随改名的标识符更新）直接改。测试不阻塞开发，如实记录未验证范围；case 准入由 CI `pnpm audit:test-policy` 强制（`@invariant`/`@fails-if`）；新增测试行（含 fixture）约为新增产品代码行的 10%，超过须在 PR 逐不变量说明，说明不了的删掉；测试名与注释写行为，不写票号、review 轮次或「UNRUN/prepared」之类状态。
-- **禁止在本机运行完整 `pnpm test`。** 完整 test gate 只由 push 后 exact-head GitHub `CI Gate` 执行。
+- **exact-head GitHub `CI Gate` owns the heavy validation matrix.** 本机 workflow 不要求为 merge 重跑 typecheck、workspace lint/audits、unit/DB/migration/parity tests 或 verification build；CI failure 仍阻塞 merge。完整 `pnpm test` 仍不在本机运行。
 - **React `useEffect` 存量清零，禁止新增**（含 `React.useEffect` 与别名调用；逐处保留行为）。
 - **新功能交付展示真实运行与验证结果**（截图/录屏/对照表），不另建演示入口。
 
@@ -40,9 +40,8 @@
 ## Development and verification
 
 - 使用 pnpm，不引入 npm/yarn lockfile。dev 唯一入口 `pnpm dev:local`（重置本 worktree 库 `pnpm dev:reset`；独立 worker `pnpm worker:dev`）。常用：`pnpm vitest run --config vitest.unit.config.ts <file>`、`pnpm vitest run --config vitest.db.config.ts <file>`、`pnpm test:migration`、`pnpm typecheck`、`pnpm lint`、`pnpm build`。
-- 本机只跑改动触及的不变量测试（若有）+ typecheck/lint/build；`pnpm build` 是 pre-PR gate。watch loop 只用于 scoped file（`pnpm test:unit:watch` / `pnpm test:db:watch`）。
-- 本机 Pre-PR gate：先跑 diff 触及的不变量测试，再跑 `pnpm typecheck`、`pnpm lint`、`pnpm audit:schema`、`pnpm audit:partition`、`pnpm audit:api-client`、`pnpm audit:capability-boundaries`、`pnpm audit:provider-lanes`、`pnpm audit:profile`、`pnpm audit:task-census`、`pnpm audit:draft-status`、`pnpm build`；audit 机制见 `audits-reference` skill。
-- exact-head GitHub `CI Gate` 是权威：static/audit/unit/DB/migration/build/parity 分 lane；planner 输出缺失按跑全量，失败即 lane 失败，只有已验证 docs-only 可跳过。
+- 本机只跑必要的有界验证：artifact generation/installation、运行 app 所需的 build、具名最窄故障复现、以及 CI 未覆盖的真实 browser/process/recovery/provider acceptance。diff 触及的不变量测试只在具名复现或 CI 未覆盖真实边界确有需要时运行，不作为每 PR 默认；CI 已覆盖的测试不在本机重复。manual diagnosis 可用同一组命令，但其结果不替代或重建 merge gate。
+- exact-head GitHub `CI Gate` 是唯一的 merge verification matrix：static/audit/unit/DB/migration/build/parity 分 lane；planner 输出缺失按跑全量，失败即 lane 失败，只有已验证 docs-only 可跳过。
 - 涉及 agent/model 实际输出或学习效果的验收，用真实 provider actual-output 或学习者结果对账，封存 exact revision、输入/输出 digest、task-run ID、provider/model/cost。
 - 文件权限尊重 umask，不硬编码 mode bits。
 
@@ -59,7 +58,7 @@
 - authoring 与独立 review 分离，review agent 必须能读真实 diff。
 - **Review 分级。** Tier A：diff 触及 `src/core/`、schema/migration、鉴权、`src/server/ai/`、quota/付费、worker job，或 >500 行——走完整多 lane 独立审。Tier B（其余默认）：一轮独立初审 + exact-head CI Gate。两个 Tier 都是每 PR 最多初审一轮 + P0/P1 修复后验证审一轮，不启第三轮（owner 明确要求除外）。
 - 只修经验证的 P0/P1（security、data loss、correctness failure、release blocker）；P2/minor/nit/hygiene/refactor/performance 不阻塞，回复 skip rationale 后 resolve；实质可执行 follow-up 去重后进 Linear，不一条 nit 开一票。
-- **无合并等待窗。** 本地现行验证、独立 review、exact-head `CI Gate` 全绿且已出现的 P0/P1 全部裁决后，即可按固定 head 合并；不等待、不重跑 pending/failed/cancelled 的 advisory review check，不创建等待窗计时任务。
+- **无合并等待窗。** 独立 review、exact-head `CI Gate` 全绿且已出现的 P0/P1 全部裁决后，即可按固定 head 合并；不等待、不重跑 pending/failed/cancelled 的 advisory review check，不创建等待窗计时任务。
 - **PR 栈深 ≤3。** 第 3 轮 rebase 仍不可合并即弃栈，从最新 `origin/main` 重切；追 main 用 `gh pr update-branch` 一条命令完成，不委派 agent 任务。
 - 修完 review 后先 commit + push 再回复/resolve 对应 threads；全绿后可自主 merge 并按 owner 已授权流程部署（owner 可随时指定人工合并）。
 - 危险 git guard 触发时停下查原因，不绕过；禁止 force push、force-delete branch、`git worktree remove --force`。

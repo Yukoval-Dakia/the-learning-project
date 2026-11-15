@@ -1,18 +1,18 @@
 ---
 name: launch-phase
-description: 启动 phase 多 lane 实施 —— 把 phase spec 拆成独立 lane，每条 lane 在隔离 worktree 里跑 superpowers 完整 loop（impl → spec review → fix → quality review），pre-merge gate 通过后按依赖顺序逐 lane 走 PR + exact-head CI Gate 合并并报告 lane state 表。Use when user says "launch phase", "启动 phase", "跑 phase X", "/launch-phase", or hands a phase spec to execute.
+description: 启动 phase 多 lane 实施 —— 把 phase spec 拆成独立 lane，每条 lane 在隔离 worktree 里完成 impl → spec review → fix → quality review，准备好就开 PR；exact-head CI Gate 负责完整验证与合并。Use when user says "launch phase", "启动 phase", "跑 phase X", "/launch-phase", or hands a phase spec to execute.
 ---
 
 # Launch Phase
 
-把一个 phase spec 拆成独立 lane，每条 lane 在隔离 worktree 里跑完整 superpowers loop，最后按依赖顺序逐 lane 走 PR + CI Gate 合并到 main。
+把一个 phase spec 拆成独立 lane，每条 lane 在隔离 worktree 里完成实现与审查，准备好就开 PR；exact-head CI Gate 负责完整验证与合并。
 
 **核心原则**：不重复造轮子。所有实际工作 delegate 给 superpowers 既有 skill：
 
 - `superpowers:writing-plans` — 给每条 lane 写 plan
 - `superpowers:using-git-worktrees` — worktree 隔离
 - `superpowers:subagent-driven-development` — per-lane 派 impl/review/fix subagent
-- `superpowers:verification-before-completion` — pre-merge gate
+- `superpowers:verification-before-completion` — bounded local verification only
 - `superpowers:finishing-a-development-branch` — PR/merge 收尾
 
 本 skill 只管 **orchestration 顺序 + lane state 表 + worktree 污染 guard + chain-merge 安全**。底层 git 危险操作由 `.claude/hooks/git-guard.mjs` 兜底。
@@ -48,7 +48,7 @@ orchestration 状态工具按运行 harness 取用，其余内容对两个 harne
 
 **Lane 切分标准**：一条 lane = 一个 PR = 一个 worktree branch；文件不重叠；自带验收标准（真实运行/行为验证为主）。
 
-**Lane status 取值**（单向推进）：`pending` → `implemented`（impl + review loop 完成）→ `local-verified`（pre-PR gate 通过）→ `ci-passed`（exact-head CI Gate 绿）→ `merged`；任一步失败标 `blocked` 并记原因。
+**Lane status 取值**（单向推进）：`pending` → `implemented`（impl + review loop 完成）→ `prepared`（必要的 bounded local verification 与 review 完成）→ `ci-passed`（exact-head CI Gate 绿）→ `merged`；任一步失败标 `blocked` 并记原因。
 
 把每条 lane 建成 orchestration 任务，metadata 写 spec 引用，依赖串成 chain（工具映射见「Harness 适配」）。
 
@@ -59,15 +59,14 @@ orchestration 状态工具按运行 harness 取用，其余内容对两个 harne
 1. **Worktree**：`superpowers:using-git-worktrees` 建独立 worktree。**Guard**：subagent prompt 必须显式约束所有 bash 操作只能在 worktree 路径内（见下方模板）。
 2. **Plan**：`superpowers:writing-plans` 把 lane spec + 验收标准转成可执行 plan。
 3. **Impl**：`superpowers:subagent-driven-development` 跑 impl → 自审 → spec review → fix → quality review → fix。**不并行 dispatch implementation subagent**（superpowers 明确反对，会冲突）。
-4. **Pre-merge gate**：`superpowers:verification-before-completion` 执行 `AGENTS.md`「Development and verification」的 **Pre-PR gate**（完整命令表与 lane 细节在 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/repo-docs/docs/agents/development-workflow.md`）；
-   不在 skill 内复制另一份易漂移的命令。任一失败 → 回 step 3，**不进 step 5**。
-5. 标 lane `local-verified`，**不删 worktree 不删 branch**（merge 成功后统一清理）。
+4. **Bounded verification**：`superpowers:verification-before-completion` 只执行 `AGENTS.md`「Development and verification」允许的本地有界验证（artifact generation/installation、运行 app 所需的 build、具名最窄故障复现、CI 未覆盖的真实 browser/process/recovery/provider acceptance）。diff 触及的不变量测试仅在具名复现或 CI 未覆盖真实边界确有需要时运行，不是每 lane 默认；manual diagnosis 不变成 merge gate。
+5. 标 lane `prepared`，**不删 worktree 不删 branch**（merge 成功后统一清理）。
 
 ### 3. 顺序 chain-merge（PR + CI Gate）
 
 在主 worktree 执行（不在 lane worktree）。**git-guard hook 会拦危险操作；触发即停下找原因，不许绕过**。
 
-**不本地 merge 进 main、不直接 push main、本机不跑完整 `pnpm test`**。按 AGENTS.md 的 Review/merge/delivery 政策：每条 lane 开 PR，完整 gate 由 push 后 exact-head GitHub `CI Gate` 执行，全绿且无未裁决 P0/P1 review finding 才 merge。
+**不本地 merge 进 main、不直接 push main、不本机跑完整 `pnpm test`**。按 AGENTS.md 的 Review/merge/delivery 政策：每条 lane 开 PR，typecheck、lint、audits、unit/DB/migration tests、build、parity 与 workspace checks 由 push 后 exact-head GitHub `CI Gate` 执行；全绿且无未裁决 P0/P1 review finding 才 merge。
 
 对每条 ready lane（按依赖顺序）：
 
@@ -89,7 +88,7 @@ orchestration 状态工具按运行 harness 取用，其余内容对两个 harne
    git branch -d <lane-branch>               # 不许 -D（git-guard 拦）
    ```
 
-main 前进后，已推送的下一条 lane 在其自身 worktree 内 fetch 并 merge `origin/main`，按已批准范围解决冲突，再普通 push；不 rebase 已发布历史、不 force-push。更新后重跑本地 scoped gate，并等待新 head 的 CI Gate，旧 head 的绿色结果不能沿用。冲突涉及未决产品行为时交 owner 决定。
+main 前进后，已推送的下一条 lane 在其自身 worktree 内 fetch 并 merge `origin/main`，按已批准范围解决冲突，再普通 push；不 rebase 已发布历史、不 force-push。更新后等待新 head 的 CI Gate，旧 head 的绿色结果不能沿用。冲突涉及未决产品行为时交 owner 决定。
 
 ### 4. 报告
 
@@ -98,10 +97,10 @@ main 前进后，已推送的下一条 lane 在其自身 worktree 内 fetch 并 
 ```markdown
 # Phase <name> Execution Report
 
-| Lane | Branch | Commits | Local gate | CI | Status | Notes |
-|------|--------|---------|------------|----|--------|-------|
-| 1. <deliverable> | lane/<id> | N | passing | green | merged | - |
-| 2. <deliverable> | lane/<id> | N | passing | red | blocked | <reason> |
+| Lane | Branch | Commits | Local bounded verification | CI | Status | Notes |
+|------|--------|---------|-----------------------------|----|--------|-------|
+| 1. <deliverable> | lane/<id> | N | bounded only | green | merged | - |
+| 2. <deliverable> | lane/<id> | N | blocked | red | blocked | <reason> |
 
 ## Human-decision points
 <列 BLOCKED lane 需要人介入的点>
@@ -132,8 +131,7 @@ git-guard hook 会拦 `git branch -D` / `git push --force` / `git commit on main
 - ❌ 并行 dispatch implementation subagent（会冲突）
 - ❌ lane `merged` 前删 branch / worktree
 - ❌ 用 `git branch -D` / `git worktree remove --force`（git-guard 会拦）
-- ❌ 跳过 pre-PR gate（typecheck / lint / audit / build，以及改动触及的不变量测试）
-- ❌ 本机跑完整 `pnpm test`（完整 gate 只由 push 后 exact-head CI Gate 执行）
+- ❌ 本机跑完整 `pnpm test` 或把 CI 的 typecheck/lint/audit/unit/DB/migration/parity/build/workspace 矩阵重跑成 pre-merge gate（完整 gate 只由 push 后 exact-head CI Gate 执行）
 - ❌ 本地 merge 进 main 或直接 push main（一律 PR + exact-head CI Gate）
 - ❌ CI 未绿就 merge，或 merge 前提前清理 worktree / branch
 - ❌ 绕过 git-guard hook（触发 = 让用户介入，不要 workaround）
