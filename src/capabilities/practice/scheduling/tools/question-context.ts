@@ -49,6 +49,7 @@ import {
   personalHitRate,
   readAttemptFacts,
 } from '@/kernel/read-models/question-activity';
+import { DiscussionLink, listQuestionDiscussions } from '@/kernel/read-models/question-discussion';
 import {
   learnerVisibleImageRefs,
   loadLearnerImagePageIndex,
@@ -178,6 +179,20 @@ const GetQuestionContextOutputSchema = z.object({
   // wrong-cause, the live FSRS card, knowledge name and mastery, both
   // difficulty baselines, and the latest faulty-item inference.
   reading: QuestionIssueReadingSchema,
+  // Prior turns that recorded this question. Omitted when none are derivable.
+  discussions: z
+    .array(
+      z.object({
+        ask_event_id: z.string(),
+        reply_event_id: z.string().nullable(),
+        session_id: z.string().nullable(),
+        created_at: z.string(),
+        user_excerpt: z.string(),
+        reply_excerpt: z.string().nullable(),
+        links: z.array(DiscussionLink),
+      }),
+    )
+    .optional(),
 });
 
 type GetQuestionContextInput = z.infer<typeof GetQuestionContextInputSchema>;
@@ -372,6 +387,8 @@ async function executeGetQuestionContext(
   if (include.has('structure') && q?.structured) {
     output.structure = projectAddressableStructure(q.structured, q.figures ?? [], figureOrigin);
   }
+  const discussions = await listQuestionDiscussions(ctx.db, input.questionId, 8);
+  if (discussions.length > 0) output.discussions = discussions;
   return GetQuestionContextOutputSchema.parse(output);
 }
 
@@ -964,7 +981,7 @@ export async function executeGetReviewDue(
 export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQuestionContextOutput> =
   {
     name: 'get_question_context',
-    description: `One-call learner-state read for one question: issueability; latest score and wrong-cause; live FSRS due; knowledge mastery; item/family difficulty and band; timing median and same-difficulty ratio; hint trajectory; and faulty inference. Missing theta or durations stay unknown and are never filled with 0; hint_dependence and faulty are agent-only. Bank CONTENT reads go through read_bank; do not follow up with get_knowledge_state or get_attempt_context for these fields. lifecycle values with observation_status=not_observed are placeholders, not observed facts. Figures carry contains_learner_handwriting (true/false/unknown): ${LEARNER_HANDWRITING_RULE}.`,
+    description: `One-call learner-state read for one question: issueability; latest score and wrong-cause; live FSRS due; knowledge mastery; item/family difficulty and band; timing median and same-difficulty ratio; hint trajectory; and faulty inference. Missing theta or durations stay unknown and are never filled with 0; hint_dependence and faulty are agent-only. Bank CONTENT reads go through read_bank; do not follow up with get_knowledge_state or get_attempt_context for these fields. lifecycle values with observation_status=not_observed are placeholders, not observed facts. Figures carry contains_learner_handwriting (true/false/unknown): ${LEARNER_HANDWRITING_RULE}. discussions, when present, are earlier turns tied to this question; each link source is page_focus or tool_args and is not a learner confirmation. A missing discussions field is not proof that no restricted turn exists.`,
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,

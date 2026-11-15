@@ -16,6 +16,10 @@ import {
 } from '@/kernel/events/copilot-actions';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { ApiError } from '@/kernel/http';
+import {
+  assembleTurnDiscussion,
+  discussionFromPageFocus,
+} from '@/kernel/read-models/question-discussion';
 import { captureDraftFocus } from '@/kernel/records/current-draft';
 import { captureReviewAnswerBinding } from '@/kernel/records/review-answer-binding';
 import type { ReviewAnswerAttachment } from '@/kernel/tools/review-answer';
@@ -57,6 +61,8 @@ export async function writeCopilotInputEvent(
     reviewAnswer?: ReviewAnswerAttachment;
     draftFocus?: DraftFocusT;
     confirmation?: ConfirmationCommandT;
+    /** Page entity accepted with this turn. Only question and attempt are kept. */
+    focusedEntity?: { kind: string; id: string };
     triggeredBy?: 'chat' | 'chip';
     chipKind?: string;
     now: Date;
@@ -117,6 +123,7 @@ async function persistCopilotInputEvent(
       askId: userAskEventId,
       command: params.confirmation,
     });
+  const discussion = await discussionFromPageFocus(db, params.focusedEntity);
   await write(db, {
     id: userAskEventId,
     session_id: params.sessionId,
@@ -134,6 +141,7 @@ async function persistCopilotInputEvent(
       ...(draftFocus ? { draft_focus: draftFocus } : {}),
       ...(params.confirmation ? { confirmation: params.confirmation } : {}),
       ...(isChip ? { chip_kind: params.chipKind ?? null } : {}),
+      ...(discussion ? { discussion } : {}),
       // Redundant portable copy of the conversation envelope id.
       session_id: params.sessionId,
     },
@@ -302,6 +310,9 @@ export async function writeCopilotReply(
   const thinkingClear =
     streamedForComparison.trim().length > 0 &&
     !replyForComparison.startsWith(streamedForComparison);
+  const discussion = params.userAskEventId
+    ? await assembleTurnDiscussion(db, params.userAskEventId)
+    : undefined;
   await write(db, {
     id: replyEventId,
     session_id: params.sessionId,
@@ -333,6 +344,7 @@ export async function writeCopilotReply(
           }
         : {}),
       ...(params.confirmation ? { confirmation: params.confirmation } : {}),
+      ...(discussion ? { discussion } : {}),
       in_reply_to_event_id: params.userAskEventId ?? null,
     },
     caused_by_event_id: params.userAskEventId ?? null,
