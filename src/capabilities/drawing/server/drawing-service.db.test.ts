@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,13 +7,30 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { GET as genericAssetContentGET } from '@/capabilities/ingestion/api/asset-content';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
+import { taskInputHash } from '@/core/task-input-hash';
 import { db } from '@/db/client';
-import { drawing, event, question, source_document } from '@/db/schema';
+import {
+  ai_task_runs,
+  assessment_issuance,
+  assessment_response_draft,
+  drawing,
+  event,
+  question,
+  question_revision,
+  source_asset,
+  source_document,
+} from '@/db/schema';
 import {
   anyRestrictedLearnerSource,
   sourceAllowsDerivation,
 } from '@/kernel/read-models/usage-policy';
-import { persistImmutableAsset } from '@/kernel/records/asset-store';
+import {
+  contractIntegrityDigest,
+  normalizeQuestionGroupToContract,
+} from '@/kernel/records/assessment-normalization';
+import { deleteImageAsset, persistImmutableAsset } from '@/kernel/records/asset-store';
+import { captureDraftFocus } from '@/kernel/records/current-draft';
+import { captureStudySources } from '@/kernel/records/study-sources';
 import { TurnSourceLedger, recordToolReadSources } from '@/kernel/tools/source-ledger';
 import {
   type ExecutionAdapter,
@@ -27,6 +45,7 @@ import { buildDrawingGenerateHandler } from '../jobs/drawing_generate';
 import {
   type DrawingBoss,
   cancelDrawing,
+  readDrawingAsset,
   readDrawingStatus,
   redrawDrawing,
   requestDrawing,
@@ -508,8 +527,12 @@ const READY_SVG =
 
 describe('drawing_generate handler invariants', () => {
   const adapterStats = { startups: 0, queries: 0 };
+  const providerInputs: unknown[] = [];
   const scriptQueue: Array<{ frames?: unknown[]; error?: unknown }> = [];
-  const adapterHooks: { beforeStartup?: () => Promise<void> } = {};
+  const adapterHooks: {
+    beforeStartup?: () => Promise<void>;
+    beforeReply?: () => Promise<void>;
+  } = {};
 
   const fakeAdapter: ExecutionAdapter = {
     id: 'pi' as const,
@@ -517,11 +540,15 @@ describe('drawing_generate handler invariants', () => {
       adapterStats.startups += 1;
       await adapterHooks.beforeStartup?.();
       const prepared: PreparedExecutionQuery = {
-        query: () =>
+        query: (prompt) =>
           (async function* () {
+            if (typeof prompt !== 'string') {
+              for await (const message of prompt) providerInputs.push(message.message.content);
+            }
             adapterStats.queries += 1;
             const next = scriptQueue.shift() ?? { error: new Error('no scripted attempt') };
             if (next.error) throw next.error;
+            await adapterHooks.beforeReply?.();
             for (const frame of next.frames ?? []) yield frame as never;
           })(),
         close: async () => {},
@@ -574,8 +601,262 @@ describe('drawing_generate handler invariants', () => {
     await resetDb();
     adapterStats.startups = 0;
     adapterStats.queries = 0;
+    providerInputs.length = 0;
     scriptQueue.length = 0;
     adapterHooks.beforeStartup = undefined;
+    adapterHooks.beforeReply = undefined;
+  });
+
+  // @invariant security: only verified public figures from the accepted issued
+  // revision can leave the worker; private and mutable attachments never do.
+  // @fails-if an unbound/corrupt figure is sent, an edited request publishes,
+  // or later answer edits revoke a published figure with unchanged sources.
+  it.each([
+    'verified',
+    'corrupt',
+    'unbound',
+    'edited',
+    'withdrawn_before_send',
+    'corrupted_before_publish',
+  ] as const)('sends only the frozen public figure, refusing %s source changes', async (mode) => {
+    const bytes = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8X8AAAAASUVORK5CYII=',
+      'base64',
+    );
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const asset = { asset_id: `ast_${newId()}`, digest: `sha256:${sha256}` };
+    const assetIds = [asset.asset_id, 'private-answer', 'not-issued'];
+    await db.insert(source_asset).values(
+      assetIds.map((id) => ({
+        id,
+        kind: 'image',
+        storage_key: id,
+        mime_type: 'image/png',
+        byte_size: bytes.length,
+        sha256,
+        created_at: new Date(),
+      })),
+    );
+    r2._store.set(asset.asset_id, mode === 'corrupt' ? Buffer.alloc(bytes.length) : bytes);
+    const documentId = `doc_${newId()}`;
+    await db.insert(source_document).values({
+      id: documentId,
+      source_asset_ids: assetIds,
+      provenance: { usage_epoch: 'frozen-epoch', usage_policy: { derivation_policy: 'allow' } },
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    const qid = await seedQuestion({
+      image_refs: ['mutable-whole-page-answer'],
+      metadata: { source_document_id: documentId },
+    });
+    await seedAttemptAndJudge(qid);
+    const [q] = await db.select().from(question).where(eq(question.id, qid));
+    const contract = normalizeQuestionGroupToContract(q, []);
+    contract.structure.materials = [
+      {
+        material_id: 'figure',
+        kind: 'figure',
+        visibility: 'public',
+        asset,
+        contains_learner_handwriting: true,
+      },
+      {
+        material_id: 'private',
+        kind: 'figure',
+        visibility: 'private',
+        asset: { asset_id: 'private-answer', digest: asset.digest },
+      },
+      {
+        material_id: 'other-part',
+        kind: 'figure',
+        visibility: 'public',
+        asset: { asset_id: 'not-issued', digest: asset.digest },
+      },
+    ];
+    contract.structure.parts[0].material_ids = ['figure', 'private'];
+    contract.structure.parts.push({
+      part_id: 'other',
+      prompt_md: '另一部分',
+      material_ids: ['other-part'],
+    });
+    contract.integrity_digest = contractIntegrityDigest(contract);
+    const revisionId = `rev_${newId()}`;
+    await db.insert(question_revision).values({
+      revision_id: revisionId,
+      group_id: qid,
+      revision_ordinal: 1,
+      integrity_digest: contract.integrity_digest,
+      structure: contract.structure,
+      response_spec: contract.response_spec,
+      scoring_basis: contract.scoring_basis,
+      execution_plan: contract.execution_plan,
+      availability: 'general_pool',
+      published_at: new Date(),
+    });
+    const binding = {
+      revision_id: revisionId,
+      part_ids: [contract.structure.parts[0].part_id],
+      material_bindings: [
+        { material_id: 'figure', asset_digest: asset.digest },
+        { material_id: 'private', asset_digest: asset.digest },
+      ],
+      option_order: [],
+    };
+    const issuanceId = `iss_${newId()}`;
+    await db.insert(assessment_issuance).values({
+      issuance_id: issuanceId,
+      ...binding,
+      claim_policy: 'unbounded',
+      claim_status: 'unclaimed',
+      issued_at: new Date(),
+    });
+    await db.insert(assessment_response_draft).values({
+      issuance_id: issuanceId,
+      response_set: { entries: [] },
+      save_epoch: 1,
+      updated_at: new Date(),
+    });
+    const sealedSources = await db.transaction((tx) =>
+      captureStudySources(
+        tx,
+        qid,
+        contract.structure.parts.map((part) => part.part_id),
+        assetIds,
+      ),
+    );
+    if (!sealedSources) throw new Error('source fixture must be derivable');
+    await db.insert(event).values({
+      id: `evt_${newId()}`,
+      actor_kind: 'system',
+      actor_ref: 'test',
+      action: 'experimental:assessment_publish',
+      subject_kind: 'question',
+      subject_id: qid,
+      payload: { revision_id: revisionId, study_sources: sealedSources },
+      created_at: new Date(),
+    });
+    const session = sessionId();
+    const focus = {
+      question_id: qid,
+      issuance_id: issuanceId,
+      revision_id: revisionId,
+      save_epoch: 1,
+    };
+    const askId = `evt_${newId()}`;
+    await db.insert(event).values({
+      id: askId,
+      session_id: session,
+      actor_kind: 'user',
+      actor_ref: 'user:self',
+      subject_kind: 'query',
+      subject_id: askId,
+      created_at: new Date(),
+      action: 'experimental:copilot_user_ask',
+      payload: {
+        surface: 'copilot',
+        derivation_policy: 'allow',
+        draft_focus: await captureDraftFocus(db, focus),
+      },
+    });
+    const ledger = new TurnSourceLedger();
+    ledger.note({ kind: 'question', id: qid });
+    const outcome = await requestDrawing(
+      {
+        db,
+        sessionId: session,
+        ledger,
+        causedByEventId: askId,
+        taskRunId: `run_${newId()}`,
+        actorRef: 'test',
+      },
+      { brief: '标出辅助线', alt: '题图' },
+      { boss: async () => stubBoss([]) },
+    );
+    if (outcome.status !== 'ready') throw new Error(JSON.stringify(outcome));
+    if (mode === 'unbound') {
+      await db
+        .update(drawing)
+        .set({ source_event_id: null })
+        .where(eq(drawing.id, outcome.drawing_id));
+    }
+    if (mode === 'edited') {
+      adapterHooks.beforeReply = async () => {
+        await db
+          .update(assessment_response_draft)
+          .set({ save_epoch: 2 })
+          .where(eq(assessment_response_draft.issuance_id, issuanceId));
+      };
+    }
+    if (mode === 'withdrawn_before_send') {
+      adapterHooks.beforeStartup = async () => {
+        await deleteImageAsset(db, r2, asset.asset_id);
+      };
+    }
+    if (mode === 'corrupted_before_publish') {
+      adapterHooks.beforeReply = async () => {
+        r2._store.set(asset.asset_id, Buffer.alloc(bytes.length));
+      };
+    }
+    pushSvg();
+    const handler = buildDrawingGenerateHandler(db);
+    await handler([{ data: { drawing_id: outcome.drawing_id } }]);
+    await handler([{ data: { drawing_id: outcome.drawing_id } }]);
+    const [stored] = await db.select().from(drawing).where(eq(drawing.id, outcome.drawing_id));
+    if (mode !== 'verified') {
+      expect(adapterStats.queries).toBe(
+        ['edited', 'corrupted_before_publish'].includes(mode) ? 1 : 0,
+      );
+      expect(stored.last_ready_asset_id).toBeNull();
+      expect(['failed', 'expired']).toContain(stored.status);
+      return;
+    }
+    const text = JSON.stringify({
+      brief: '标出辅助线',
+      alt: '题图',
+      image_manifest: [
+        { ...focus, material_id: 'figure', ...asset, contains_learner_handwriting: true },
+      ],
+    });
+    const data = bytes.toString('base64');
+    expect(providerInputs).toEqual([
+      [
+        { type: 'text', text },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data } },
+      ],
+    ]);
+    expect(adapterStats.queries).toBe(1);
+    expect(stored.status).toBe('ready');
+    if (!stored.sol_task_run_id) throw new Error('ready drawing needs its paid run');
+    const [run] = await db
+      .select()
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.id, stored.sol_task_run_id));
+    expect(run.input_hash).toBe(
+      taskInputHash({ text, images: [{ data, mediaType: 'image/png' }] }),
+    );
+    await db
+      .update(assessment_response_draft)
+      .set({ save_epoch: 2 })
+      .where(eq(assessment_response_draft.issuance_id, issuanceId));
+    expect(await readDrawingStatus(db, stored.id, session)).toMatchObject({ status: 'ready' });
+    expect(await readDrawingAsset(db, stored.id, session)).toMatchObject({
+      asset_id: stored.last_ready_asset_id,
+    });
+    expect(await redrawDrawing(db, stored.id, session)).toMatchObject({ status: 'refused' });
+    await db
+      .delete(assessment_response_draft)
+      .where(eq(assessment_response_draft.issuance_id, issuanceId));
+    expect(await readDrawingStatus(db, stored.id, session)).toMatchObject({ status: 'ready' });
+    expect(await readDrawingAsset(db, stored.id, session)).toMatchObject({
+      asset_id: stored.last_ready_asset_id,
+    });
+    await deleteImageAsset(db, r2, asset.asset_id);
+    expect(await readDrawingStatus(db, stored.id, session)).toMatchObject({
+      status: 'expired',
+      asset: null,
+    });
+    expect(await readDrawingAsset(db, stored.id, session)).toBeNull();
   });
 
   // @invariant concurrency: a running row whose lease predates the task timeout

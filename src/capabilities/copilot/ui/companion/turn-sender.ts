@@ -33,6 +33,7 @@ import {
   selectionValidated,
   supportsAnswerOnly,
 } from './companion-state';
+import type { DraftSend } from './conversation-drafts';
 import {
   ACCEPTANCE_UNKNOWN_COPY,
   ANSWER_ONLY_UNAVAILABLE_COPY,
@@ -77,6 +78,8 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
   /** Automatic replays already spent per message; a learner's own 再发一次 starts over. */
   const autoResends = new Map<string, number>();
   const lastResumeAt = new Map<string, number>();
+  // Replays keep the original in-memory draft version; a reload cannot recover unsent drafts.
+  const draftSends = new Map<string, DraftSend>();
 
   const setPending = (fn: (previous: PendingTurn[]) => PendingTurn[]) =>
     ctx.set({ pendingTurns: fn(ctx.get().pendingTurns) });
@@ -87,6 +90,7 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
   const dropPending = (key: string) => {
     autoResends.delete(key);
     lastResumeAt.delete(key);
+    draftSends.delete(key);
     clearPersistedPendingCopilotTurn(key);
     setPending((previous) => previous.filter((t) => t.idempotencyKey !== key));
   };
@@ -214,6 +218,11 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       return;
     }
     const key = recovery?.idempotencyKey ?? randomId();
+    const draftSend = recovery
+      ? draftSends.get(key)
+      : explicit
+        ? undefined
+        : ctx.drafts.captureSend(sessionId, raw);
     const userMessageId = recovery?.userMessageId ?? nextMessageId();
     const aiMessageId = recovery?.aiMessageId ?? nextMessageId();
     const requestBody =
@@ -257,17 +266,14 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     // A replay may belong to a conversation the learner has left: it still goes out, but the screen
     // and the state of the conversation in front of them stay as they are.
     const showing = () => ctx.get().currentSessionId === sessionId;
-    const s = ctx.get();
     if (!recovery) {
-      // A handed sentence that is sent is the learner's now: if it comes back after a failed
-      // send, the next handoff must add to it, not replace it.
-      internals.handedDraft = null;
-      ctx.set({
-        error: null,
-        refreshFailed: false,
-        correctionTarget: null,
-        ...(!explicit && s.draft === raw ? { draft: '' } : {}),
-      });
+      if (draftSend) {
+        draftSends.set(key, draftSend);
+        draftSend.clear();
+      }
+      if (showing()) {
+        ctx.set({ error: null, refreshFailed: false, correctionTarget: null });
+      }
     } else if (showing()) {
       ctx.set({ error: null, refreshFailed: false });
     }
@@ -349,7 +355,7 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       // Refused words go back to the composer. When they cannot (another conversation, or the
       // learner typed more), the message stays for 再发一次 / 算了, and a reload does not resend it.
       const wordsCanReturn =
-        !explicit && !requestBody.confirmation && showing() && ctx.get().draft === '';
+        !explicit && !requestBody.confirmation && showing() && (draftSend?.restore() ?? false);
       if (!explicit && !requestBody.confirmation && !wordsCanReturn) {
         persistPendingCopilotTurn({ ...pending, refused: true });
         markPending(key, { dispatching: false, refused: true, error: copy });
@@ -365,12 +371,11 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
           return [{ ...m, idempotency_key: undefined, derivation_policy: undefined }];
         }),
       );
-      // Nothing was sent: give the words back to the composer unless the learner already typed more.
+      // The refusal notice belongs only to the conversation that sent the words.
       if (showing()) {
         ctx.set({
           refreshFailed: false,
           error: copy,
-          ...(wordsCanReturn ? { draft: raw } : {}),
         });
       }
       ctx.sessions.revalidateAutomaticSelection();

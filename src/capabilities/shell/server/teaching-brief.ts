@@ -1,5 +1,5 @@
 // Read-only TeachingBrief projected from the conjecture proposal → mind-probe
-// question → probe-result event chain.
+// question → probe-result event chain, with current-outcome interaction followthrough.
 
 import { and, desc, eq, gt, inArray, lte, or, sql } from 'drizzle-orm';
 import { ConjectureProbeSpec } from '@/core/schema/business';
@@ -39,6 +39,7 @@ import {
   type EffectiveProbeResultStatus,
   getEffectiveProbeResultStatuses,
 } from '@/kernel/read-models/probe-evidence';
+import { loadOutcomeFollowthrough } from './teaching-brief-followthrough';
 
 export const TEACHING_BRIEF_FINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const TEACHING_BRIEF_OUTCOME_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -193,6 +194,11 @@ export interface OutcomeRetiredTeachingBrief extends TeachingBriefBase {
 export type TeachingBrief =
   | FindingTeachingBrief
   | ProbeReadyTeachingBrief
+  | OutcomeEvidenceForTeachingBrief
+  | OutcomeConfirmedTeachingBrief
+  | OutcomeRetiredTeachingBrief;
+
+type OutcomeTeachingBrief =
   | OutcomeEvidenceForTeachingBrief
   | OutcomeConfirmedTeachingBrief
   | OutcomeRetiredTeachingBrief;
@@ -430,7 +436,7 @@ export function validateIssuedProbeFromProposal({
 }
 
 async function loadLatestRatesByProposal(
-  db: Db,
+  db: DbLike,
   proposalIds: string[],
 ): Promise<Map<string, EventRow>> {
   if (proposalIds.length === 0) return new Map();
@@ -712,12 +718,7 @@ export async function loadOutcomeBrief(
   db: DbLike,
   now: Date,
   { serial = false }: { serial?: boolean } = {},
-): Promise<
-  | OutcomeEvidenceForTeachingBrief
-  | OutcomeConfirmedTeachingBrief
-  | OutcomeRetiredTeachingBrief
-  | null
-> {
+): Promise<OutcomeTeachingBrief | null> {
   const lowerBound = new Date(now.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS);
   const results = await db
     .select()
@@ -853,6 +854,7 @@ export async function loadOutcomeBrief(
     ),
   );
 
+  let fallback: OutcomeTeachingBrief | null = null;
   for (const result of results) {
     if (resultStatuses.get(result.id) !== 'active') {
       warnSkipped('outcome', result.id, 'result_evidence_inactive');
@@ -879,6 +881,23 @@ export async function loadOutcomeBrief(
       continue;
     }
     const { proposal, probe, resolution } = outcome.value;
+    const followthrough = await loadOutcomeFollowthrough(
+      db,
+      {
+        briefId: proposal.id,
+        resultId: result.id,
+        resultAt: result.created_at,
+        knowledgeId: proposal.knowledgeId,
+        state:
+          resolution === 'confirmed'
+            ? 'outcome_confirmed'
+            : resolution === 'evidence_for'
+              ? 'outcome_evidence_for'
+              : 'outcome_retired',
+      },
+      now,
+    );
+    if (followthrough.completed) continue;
 
     const finding = await loadAcceptedFinding(db, proposal);
     // The probe belongs to the pre-edit claim; never announce it as testing the rewrite.
@@ -896,8 +915,9 @@ export async function loadOutcomeBrief(
       finding,
       basis: { summary_md: proposal.reasonMd, evidence_trace: evidence },
     };
+    let brief: OutcomeTeachingBrief;
     if (resolution === 'evidence_for') {
-      return {
+      brief = {
         ...common,
         state: 'outcome_evidence_for',
         // A single matching answer is only preliminary evidence. It must not unlock
@@ -916,9 +936,8 @@ export async function loadOutcomeBrief(
           probe_result_event_id: result.id,
         },
       };
-    }
-    if (resolution === 'confirmed') {
-      return {
+    } else if (resolution === 'confirmed') {
+      brief = {
         ...common,
         state: 'outcome_confirmed',
         // KC-scoped practice: knowledge_id is the canonical proposal KC; the result id
@@ -937,30 +956,38 @@ export async function loadOutcomeBrief(
           probe_result_event_id: result.id,
         },
       };
+    } else {
+      brief = {
+        ...common,
+        state: 'outcome_retired',
+        // A retired judgement rules the finding out; only acknowledge. Practice is scoped
+        // to confirmed outcomes.
+        prepared_action: {
+          kind: 'acknowledge_outcome' as const,
+          probe_result_event_id: result.id,
+        },
+        current_outcome: {
+          status: 'retired',
+          summary_md: rewritten
+            ? TEACHING_BRIEF_OUTCOME_COPY.RETIRED_REWRITTEN
+            : TEACHING_BRIEF_OUTCOME_COPY.RETIRED,
+          probe_question_id: probe.id,
+          probe_result_event_id: result.id,
+        },
+      };
     }
-    return {
-      ...common,
-      state: 'outcome_retired',
-      // A retired judgement rules the finding out; only acknowledge. Practice is scoped
-      // to confirmed outcomes.
-      prepared_action: {
-        kind: 'acknowledge_outcome' as const,
-        probe_result_event_id: result.id,
-      },
-      current_outcome: {
-        status: 'retired',
-        summary_md: rewritten
-          ? TEACHING_BRIEF_OUTCOME_COPY.RETIRED_REWRITTEN
-          : TEACHING_BRIEF_OUTCOME_COPY.RETIRED,
-        probe_question_id: probe.id,
-        probe_result_event_id: result.id,
-      },
-    };
+    if (!followthrough.deprioritized) return brief;
+    fallback ??= brief;
   }
-  return null;
+  // Keep the same selection for GET and ack: lower-priority outcomes yield to a
+  // fresh probe/finding, but remain eligible when the learner has no alternative.
+  if (fallback && ((await loadProbeBrief(db, now)) || (await loadFindingBrief(db, now)))) {
+    return null;
+  }
+  return fallback;
 }
 
-async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> {
+async function loadProbeBrief(db: DbLike, now: Date): Promise<TeachingBrief | null> {
   const probes = await db
     .select({ probe: question, issuance: assessment_issuance, revision: question_revision })
     .from(question)
@@ -1176,7 +1203,7 @@ async function logNonCanonicalCandidates(db: Db, now: Date): Promise<void> {
   for (const row of badProbes) warnSkipped('probe', row.id, 'probe_shape_non_canonical');
 }
 
-async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null> {
+async function loadFindingBrief(db: DbLike, now: Date): Promise<TeachingBrief | null> {
   const lowerBound = new Date(now.getTime() - TEACHING_BRIEF_FINDING_TTL_MS);
   const rawConjectures = await db
     .select()

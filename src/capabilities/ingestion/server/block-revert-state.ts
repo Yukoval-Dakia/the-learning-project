@@ -34,15 +34,14 @@ export async function readRevertedBlockIds(
       group by subject_id
     ),
     latest_revert as (
-      select coalesce(q.metadata->>'question_block_id', e.payload->>'question_block_id')
-               as block_id,
-             max(e.created_at) as at
+      select q.metadata->>'question_block_id' as block_id, max(e.created_at) as at
       from event e
-      left join question q
+      join question q
         on q.id = e.payload->'affected_refs'->0->>'id'
       where e.action = 'correct'
         and e.payload->>'correction_kind' = 'retract'
-      group by 1
+        and q.metadata->>'question_block_id' in (${ids})
+      group by q.metadata->>'question_block_id'
     )
     select r.block_id
     from latest_revert r

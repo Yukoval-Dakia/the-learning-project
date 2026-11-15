@@ -98,6 +98,18 @@ const ArtifactBodyBlocksWireSchema = z
   })
   .passthrough();
 
+// Public read-side names for the same wire doc: cross-surface consumers (the
+// knowledge detail page's primary-note preview) decode through these instead of
+// casting the narrow generated attrs type. safeParse keeps unknown block content
+// from reaching the renderer; passthrough preserves future attrs.
+export const NoteBodyBlocksWireSchema = ArtifactBodyBlocksWireSchema;
+export type NoteBodyBlocksWire = z.infer<typeof NoteBodyBlocksWireSchema>;
+
+export function parseNoteBodyBlocks(value: unknown): NoteBodyBlocksWire | null {
+  const parsed = NoteBodyBlocksWireSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 export const NotePageResponseSchema = z.object({
   id: z.string(),
   type: z.string(),

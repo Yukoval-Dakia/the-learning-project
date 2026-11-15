@@ -2,7 +2,7 @@
 //   - Steering：listActiveGoalsWithResolvedScope——steering goal 渲染今日页标题
 //     （instruction_md）+ goal_id + 学习者原话（与标题不同时）+ 时间窗 + 未对应范围，
 //     普通 goal 渲染「当前目标：title」（未开始的 steering goal 不占当前目标位）
-//   - 掌握度：readLearnerJudgments 的白话档，含不确定度，uncalibrated 照实标注
+//   - 学情叙述：canonical profile 的四问读解，含证据来源与未知项
 //   - 错因：readCauseJudgment 的最近失败窗口，与单知识点工具同一排序
 //   - 信号：判断批次的不确定备注；昨夜交班句
 // 所有确定性数字带 n；n 不够写「样本少」，不给数字。
@@ -25,6 +25,7 @@ import {
 import { readCauseJudgment } from '@/kernel/read-models/cause-judgment';
 import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { shanghaiLabel } from './delta';
+import { renderEvidenceNarrative } from './evidence-narrative';
 import type { ContractSection } from './types';
 
 type DbLike = Db | Tx;
@@ -119,7 +120,7 @@ function summarizeJudgment(batch: LearnerJudgmentBatch): {
         ? 'FSRS'
         : '候选遗忘引擎';
   const signalNotes = [
-    lowObserved ? '有本人作答落在低掌握一侧（不会），这不是证据不足。' : '',
+    lowObserved ? '有既有本人作答证据偏低，这不是证据不足，也不等于当前必然不会。' : '',
     insufficient ? '有知识点还不知道你会不会，不能当成不会或未训练。' : '',
     notEvaluable ? '有节点不评掌握，不计入会不会。' : '',
     unavailable ? '掌握读取失败，不能当成不会或不知道。' : '',
@@ -200,7 +201,7 @@ export async function readContractSection(
   const steeringParts = [...steeringLines, ...(goalLine ? [goalLine] : [])];
   const steeringMd = steeringParts.length === 0 ? null : steeringParts.join('\n');
 
-  let masteryMd: string | null = null;
+  let masteryMd = renderEvidenceNarrative(null, '当前目标范围未提供，暂不能判断。');
   let causesMd: string | null = null;
   let signalNotes: string[] = [];
   const scopeKcs = activeGoal?.scope_knowledge_ids ?? [];
@@ -217,7 +218,7 @@ export async function readContractSection(
     } else {
       masteryMd = '掌握度：样本少，暂不读数';
     }
-    masteryMd = `${masteryMd} ${sum.coreSentence}`;
+    masteryMd = renderEvidenceNarrative(judgment, `${masteryMd} ${sum.coreSentence}`);
   }
 
   if (causes.recent_top_causes.length > 0) {

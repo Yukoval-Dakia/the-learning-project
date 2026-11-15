@@ -1330,3 +1330,15 @@
     transform: translateY(-4px);
   }
 }
+
+/* Embedded read-only note body inside another surface (the knowledge detail
+   primary-note card): drop the page-level surface fill and the wide-reader's
+   negative text margin so the body stays inside the host card. */
+[data-ui-next].nt-page[data-note-embed] {
+  background: transparent;
+  color: inherit;
+}
+
+[data-ui-next].nt-page[data-note-embed] .nt-body {
+  margin-inline-start: 0;
+}

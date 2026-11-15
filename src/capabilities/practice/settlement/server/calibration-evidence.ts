@@ -22,6 +22,7 @@ import {
   practice_stream_item,
   selection_observation,
 } from '@/db/schema';
+import { recomputeQuestionDifficultyPosterior } from '@/kernel/records/joint-calibration';
 
 /**
  * 作答来源解析（A4/A6.3 口径）。判别优先级：
@@ -115,8 +116,8 @@ export interface RecordDifficultyCalibrationEvidenceInput {
 }
 
 /**
- * 写一条联合标定证据，或 skip。单条 upsert（onConflictDoNothing on attempt_event_id）
- * 无跨步副作用，可被 SAVEPOINT 吞而不留半写；caller 用 SAVEPOINT + try/catch 隔离。
+ * Record evidence and rebuild this question in the same settlement savepoint.
+ * A duplicate settlement keeps its original frozen evidence; failure rolls both writes back.
  */
 export async function recordDifficultyCalibrationEvidence(
   tx: Tx,
@@ -146,4 +147,5 @@ export async function recordDifficultyCalibrationEvidence(
       created_at: input.now,
     })
     .onConflictDoNothing({ target: difficulty_calibration_evidence.attempt_event_id });
+  await recomputeQuestionDifficultyPosterior(tx, input.questionId, { now: input.now });
 }

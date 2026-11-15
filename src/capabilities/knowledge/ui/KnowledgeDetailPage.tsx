@@ -24,6 +24,8 @@ import {
   Target,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
+import type { NoteBodyPreview as NoteBodyPreviewContribution } from '@/capabilities/notes/ui-public';
+import type { MisconceptionTraceTarget } from '@/ui/lib/misconception-evidence-routes';
 import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import { ToastHost } from '@/ui-next/feedback/ToastHost';
 import { FoldList } from '@/ui-next/primitives/FoldList';
@@ -171,10 +173,14 @@ export default function KnowledgeDetailPage({
   id,
   navigate,
   returnToPlan = false,
+  traceTarget,
+  NoteBodyPreview,
 }: {
   id: string;
   navigate: (to: string) => void;
   returnToPlan?: boolean;
+  traceTarget?: MisconceptionTraceTarget;
+  NoteBodyPreview: typeof NoteBodyPreviewContribution;
 }) {
   const queryClient = useQueryClient();
   const { getMisconceptions, getNodePage, vetoMisconception } = useKnowledgeClient();
@@ -319,6 +325,8 @@ export default function KnowledgeDetailPage({
             <MisconceptionList
               items={miscRows}
               knowledgeId={node.id}
+              returnToPlan={returnToPlan}
+              traceTarget={traceTarget}
               isLoading={miscQ.isLoading}
               isError={miscQ.isError}
               onRetry={() => void miscQ.refetch()}
@@ -364,16 +372,12 @@ export default function KnowledgeDetailPage({
                       </span>
                       <span className="kn-primary-title">{primary.title}</span>
                     </div>
-                    {/* T6 简化渲染：从 semanticBlock 抽 source_markdown；
-                        完整块渲染（NoteBlocks）随 T7 阅读器落地后可替换。 */}
                     <div className="kn-primary-body">
-                      {(primary.body_blocks?.content ?? [])
-                        .filter((b) => b.attrs?.source_markdown)
-                        .map((b) => (
-                          <p key={b.attrs?.id ?? b.attrs?.source_markdown} className="kn-primary-p">
-                            {b.attrs?.source_markdown}
-                          </p>
-                        ))}
+                      <NoteBodyPreview
+                        title={primary.title}
+                        bodyBlocks={primary.body_blocks}
+                        navigate={navigate}
+                      />
                     </div>
                     <div className="kn-primary-acts">
                       <Button
