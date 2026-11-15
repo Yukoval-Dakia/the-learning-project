@@ -74,6 +74,11 @@ export {
   jyeooSpawnTimeoutMs,
 } from './server/jyeoo-supply-config';
 export { buildQuestionPreparerTarget } from './server/preparer-target';
+export {
+  SUPPLY_CAUSE_RECURRENCE_THRESHOLD,
+  loadSupplyCauseSignals,
+  supplyKindForWeakPoint,
+} from './server/cause-driven-supply';
 export { enqueueQuestionPreparerTicket } from './server/question-preparer-ticket';
 export { type RefillDeps, refillActiveLearningPools } from './server/refill';
 export {

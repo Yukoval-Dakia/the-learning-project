@@ -31,16 +31,20 @@ import { knowledge, mastery_state, placement_starter_claim, question } from '@/d
 import { writeEvent } from '@/kernel/events';
 import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-goal-scope';
 import { globalThetaForDomain } from '@/kernel/read-models/mastery-state';
+import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { expireDueSteeringGoals } from '@/kernel/records/goal-commands';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { type SupplyPlanRunAgentFn, runSupplyPlanOperation } from '../server/supply-plan-operation';
 import {
+  SUPPLY_CAUSE_RECURRENCE_THRESHOLD,
   discoverSupplyTargets,
   isDifficultyBand,
   isUnanchoredSupplyPaused,
   jyeooBudgetRemaining,
+  loadSupplyCauseSignals,
   resolveBandLevelTarget,
+  supplyKindForWeakPoint,
 } from '../supply/public';
 
 // 非终态 placement claim（schema.ts placement_starter_claim 注释同集）：
@@ -151,6 +155,7 @@ interface FrontierEntry {
   evidence_count: number;
   available_questions: number;
   draft_questions: number;
+  available_by_kind: Record<string, number>;
 }
 
 /**
@@ -192,20 +197,34 @@ async function loadLiveKnowledge(db: Db): Promise<{
   return { rows: raw, subjectById };
 }
 
-/** 每 KC 题数：available = draft_status 非 'draft'（含 NULL），draft = 'draft'。 */
-async function loadPoolCounts(db: Db): Promise<Map<string, { available: number; draft: number }>> {
+/** Available counts use the same issuance gate as scanner coverage; drafts stay separate. */
+async function loadPoolCounts(db: Db) {
   const rows = await db
-    .select({ knowledgeIds: question.knowledge_ids, draftStatus: question.draft_status })
+    .select({
+      id: question.id,
+      kind: question.kind,
+      knowledgeIds: question.knowledge_ids,
+      draftStatus: question.draft_status,
+    })
     .from(question);
-  const counts = new Map<string, { available: number; draft: number }>();
+  const admittedIds = await readAutomaticallyServableQuestionIds(
+    db,
+    rows.map((row) => row.id),
+  );
+  const counts = new Map<string, {
+    available: number;
+    draft: number;
+    byKind: Map<string, number>;
+  }>();
   for (const row of rows) {
     const kcIds = Array.isArray(row.knowledgeIds) ? (row.knowledgeIds as string[]) : [];
     for (const kcId of kcIds) {
-      const entry = counts.get(kcId) ?? { available: 0, draft: 0 };
+      const entry = counts.get(kcId) ?? { available: 0, draft: 0, byKind: new Map<string, number>() };
       if (row.draftStatus === 'draft') {
         entry.draft += 1;
-      } else {
+      } else if (admittedIds.has(row.id)) {
         entry.available += 1;
+        if (row.kind) entry.byKind.set(row.kind, (entry.byKind.get(row.kind) ?? 0) + 1);
       }
       counts.set(kcId, entry);
     }
@@ -319,6 +338,7 @@ export async function runSupplyPlanner(
     jyeooRemaining,
     steeringScopes,
     selectionMisses,
+    causeSignals,
   ] = await Promise.all([
     loadLiveKnowledge(db),
     loadPoolCounts(db),
@@ -327,16 +347,27 @@ export async function runSupplyPlanner(
     jyeooBudgetRemaining(db, now),
     loadSteeringScopes(db, now),
     readOpenSelectionMissDemands(db, now),
+    loadSupplyCauseSignals(db, now),
   ]);
 
   const liveKnowledgeIds = new Set(knowledgeRows.map((row) => row.id));
   // YUK-1770 — steering scope KCs are guaranteed frontier members: the cap can
   // cut them in a big tree, and the planner must always see the exam scope.
   const steeringScopeIds = new Set(steeringScopes.flatMap((scope) => scope.scope_knowledge_ids));
+  const recurringCauseIds = new Set(
+    causeSignals.weak_points.weak_points
+      .filter((point) =>
+        point.failure_count >= SUPPLY_CAUSE_RECURRENCE_THRESHOLD &&
+        point.knowledge_id !== null &&
+        !poolCounts.get(point.knowledge_id)?.byKind.has(supplyKindForWeakPoint(point)))
+      .flatMap((point) => (point.knowledge_id ? [point.knowledge_id] : [])),
+  );
   const frontierAll: FrontierEntry[] = knowledgeRows
     .filter((row) => row.parentId !== null) // 非根节点才是可规划格子
     .map((row) => {
-      const counts = poolCounts.get(row.id) ?? { available: 0, draft: 0 };
+      const counts = poolCounts.get(row.id) ?? {
+        available: 0, draft: 0, byKind: new Map<string, number>(),
+      };
       const signal = mastery.get(row.id);
       return {
         id: row.id,
@@ -346,10 +377,13 @@ export async function runSupplyPlanner(
         evidence_count: signal?.evidenceCount ?? 0,
         available_questions: counts.available,
         draft_questions: counts.draft,
+        available_by_kind: Object.fromEntries(counts.byKind),
       };
     })
     .sort(
       (a, b) =>
+        Number(a.available_questions > 0) - Number(b.available_questions > 0) ||
+        Number(recurringCauseIds.has(b.id)) - Number(recurringCauseIds.has(a.id)) ||
         a.available_questions - b.available_questions ||
         a.evidence_count - b.evidence_count ||
         a.id.localeCompare(b.id),
@@ -371,6 +405,17 @@ export async function runSupplyPlanner(
     date: today,
     today: `${today}（${learnerDayWeekday(today)}）`,
     subjects,
+    cause_signals: {
+      ...causeSignals,
+      recurrence_threshold: SUPPLY_CAUSE_RECURRENCE_THRESHOLD,
+      weak_points: {
+        ...causeSignals.weak_points,
+        weak_points: causeSignals.weak_points.weak_points.map((point) => ({
+          ...point,
+          required_kind: supplyKindForWeakPoint(point),
+        })),
+      },
+    },
     pending_placement_claims: pendingClaims.map((claim) => ({
       claim_id: claim.claimId,
       subject_id: claim.subjectId,
