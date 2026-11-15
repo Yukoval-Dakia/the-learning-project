@@ -4,9 +4,11 @@
 // 不把已答稿当已判对错，也不把辨认不清的作答当空白或答错。
 
 import type { PublicMaterialViewT } from '@/core/schema/assessment/dto';
+import type { PresentationBlockT } from '@/core/schema/assessment/presentation';
 import type { ResponseSlotT, SlotResponseT } from '@/core/schema/assessment/response';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { AttachmentStrip } from '@/ui/components/response/AttachmentStrip';
+import { ResponseSlotField, nativeSlotFieldSpec } from '@/ui/components/response/ResponseSlotField';
 import type { CoarseOutcome } from '@/ui/components/response/response-types';
 import {
   type EvidenceAttachment,
@@ -15,12 +17,10 @@ import {
   nativeResponseText,
   nativeResponseValue,
 } from '@/ui/components/response/response-types';
-import { ResponseSlotField, nativeSlotFieldSpec } from '@/ui/components/response/ResponseSlotField';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-
-import type { PaperSlot } from './practice-api';
 import { boundSlots } from './blocks/envelope';
 import { PresentationBlocks, parsePresentation } from './blocks/PresentationBlocks';
+import type { PaperSlot } from './practice-api';
 
 type RetroAssessment = NonNullable<PaperSlot['assessment']>;
 
@@ -44,6 +44,22 @@ function RawEntryState({ entry }: { entry: SlotResponseT }) {
   const copy =
     'state' in entry && entry.state !== 'answered' ? ENTRY_STATE_COPY[entry.state] : undefined;
   return <span className="pf-rq-none">{copy ?? '（未作答）'}</span>;
+}
+
+/**
+ * P1-1 — 只有 text_math.part_ref 会渲染对应 face 的 prompt_md；其它块
+ * （option_list/blank_input/free_area 等）只挂作答控件不带题面文字。
+ * 收集树里实际引用到的 part_id，未引用的 issued face 在树外如实补显，
+ * 一道 frozen 题面只显示一次（树内或树外，不双显）。
+ */
+function textMathPartRefs(presentation: { root: PresentationBlockT }): ReadonlySet<string> {
+  const refs = new Set<string>();
+  const walk = (block: PresentationBlockT): void => {
+    if (block.kind === 'text_math' && block.part_ref != null) refs.add(block.part_ref);
+    if ('children' in block) for (const child of block.children) walk(child);
+  };
+  walk(presentation.root);
+  return refs;
 }
 
 function MaterialView({
@@ -114,11 +130,15 @@ function PerSlotResponses({
                 notation={notation}
                 feedback="graded"
                 selectionOutcome={
-                  releasedOutcome === null
-                    ? null
-                    : releasedOutcome === 'correct'
-                      ? 'correct'
-                      : 'not_correct'
+                  // P1-2 — 只有权威已发布且确定对错的 outcome 才着色：correct →
+                  // 对，incorrect / partial（部分得分是确定判定）→ 错选样式；
+                  // unsupported / partial_unknown / 未发布 / 不可读都保持 null
+                  // 中性，绝不让「未知」落成 not_correct 的红色错误样式。
+                  releasedOutcome === 'correct'
+                    ? 'correct'
+                    : releasedOutcome === 'incorrect' || releasedOutcome === 'partial'
+                      ? 'not_correct'
+                      : null
                 }
                 ariaLabel={slot.placement?.label ?? '作答'}
               />
@@ -200,6 +220,12 @@ export function PaperRetroResponse({
   const dto = assessment.practice_dto;
   const presentation = parsePresentation(dto.presentation);
   const bound = new Set(presentation ? boundSlots(presentation).map((item) => item.slot_id) : []);
+  // P1-1 — frozen face 至少可读一次：树里没被 text_math 引用的 issued face
+  // 在「题面」行补显（presentation 为 null 时沿用原有的全量平铺）。
+  const shownPartIds = presentation ? textMathPartRefs(presentation) : null;
+  const unshownFaces = presentation
+    ? dto.faces.filter((face) => !shownPartIds?.has(face.part_id))
+    : dto.faces;
   const evidence = groupEvidenceOf(assessment);
 
   return (
@@ -210,15 +236,14 @@ export function PaperRetroResponse({
           <MaterialView material={material} notation={notation} />
         </div>
       ))}
-      {presentation === null &&
-        dto.faces.map((face) => (
-          <div key={face.part_id} className="pf-rq-row">
-            <span className="pf-rq-label">题面</span>
-            <MathMarkdown notation={notation} className="un-read">
-              {face.prompt_md}
-            </MathMarkdown>
-          </div>
-        ))}
+      {unshownFaces.map((face) => (
+        <div key={face.part_id} className="pf-rq-row">
+          <span className="pf-rq-label">题面</span>
+          <MathMarkdown notation={notation} className="un-read">
+            {face.prompt_md}
+          </MathMarkdown>
+        </div>
+      ))}
       <div className="pf-rq-row">
         <span className="pf-rq-label">你的作答</span>
         <div className="pf-rq-native-body">
