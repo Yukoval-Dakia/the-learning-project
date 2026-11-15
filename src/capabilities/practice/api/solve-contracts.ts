@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ActivateEvaluationIntent } from '@/core/schema/assessment';
+import { DraftFocus } from '@/core/schema/assessment/draft-focus';
 import { MAX_HINT_COUNT, MAX_HINT_INDEX } from '@/core/schema/event/known';
 import { CreateSubmissionBodySchema } from './assessment-contracts';
 
@@ -53,12 +54,14 @@ export const SolveSessionResponseSchema = z
 export const HintRequestBodySchema = z
   .object({
     request_id: z.string().min(1).max(160).optional(),
+    draft_focus: DraftFocus.optional(),
     hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).default(0),
     issuance_id: z.string().min(1).optional(),
   })
   .nullable();
 export const CreateHintRequestBodySchema = z.object({
   request_id: z.string().min(1).max(160).optional(),
+  draft_focus: DraftFocus.optional(),
   question_id: z.string().trim().min(1),
   hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).optional(),
   issuance_id: z.string().min(1).optional(),

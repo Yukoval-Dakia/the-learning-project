@@ -3,6 +3,7 @@
 // /api/questions/*（题面读 + solve 链）整体留旧栈 proxy——solve 链的旧壳是
 // shim、handler 同为包内代码（quiz 域 D16 出 M2 范围，M5 收口）。
 
+import type { DraftFocusT } from '@/core/schema/assessment/draft-focus';
 import {
   ApiAuthError,
   ApiError,
@@ -435,6 +436,7 @@ export const solveHint = (
   hintIndex: number,
   issuanceId?: string,
   requestId?: string,
+  draftFocus?: DraftFocusT,
 ): Promise<SolveHintResponse> =>
   apiOperationJson('createSolveHintRequest', {
     url: `/api/solve-sessions/${encodeURIComponent(sessionId)}/hint-requests`,
@@ -444,6 +446,7 @@ export const solveHint = (
       hint_index: hintIndex,
       issuance_id: issuanceId,
       request_id: requestId,
+      draft_focus: draftFocus,
     },
   });
 

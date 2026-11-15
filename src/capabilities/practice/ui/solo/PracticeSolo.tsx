@@ -291,6 +291,9 @@ export function PracticeSolo({
                   onClose={() => setCoachOpen(false)}
                   question={q}
                   issuanceId={ready?.id}
+                  readSavedDraft={() =>
+                    engine.draft.autosave.state === 'error' ? undefined : readSavedDraft()
+                  }
                   submitted={
                     !!ready?.accepted ||
                     engine.submit.autoCommitted ||

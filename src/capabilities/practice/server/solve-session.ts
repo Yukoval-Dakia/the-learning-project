@@ -20,6 +20,7 @@ import type { SealedReplyGrounding } from '@/ai/help-reply-grounding';
 import { newId } from '@/core/ids';
 import { sanitizeJsonStringLiterals } from '@/core/json-sanitize';
 import type { ActivateEvaluationIntentT, PracticeIssuanceDtoT } from '@/core/schema/assessment';
+import type { DraftFocusT } from '@/core/schema/assessment/draft-focus';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
@@ -138,6 +139,7 @@ const HintTurn = z.object({ text_md: z.string().min(1) }).passthrough();
 
 export interface PlanSolveHintParams {
   requestId?: string;
+  draftFocus?: DraftFocusT;
   priorHints?: StoredHint[];
   issuanceId?: string;
   db: Db;
@@ -262,6 +264,14 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
 }
 
 async function prepareHintAttempt(params: PlanSolveHintParams) {
+  // The continuity owner must bind the draft to its immutable claim and revalidate
+  // it before sending; a separate draft read cannot provide that guarantee.
+  if (params.draftFocus)
+    throw new ApiError(
+      'hint_draft_unavailable',
+      'saved-draft hint authorization is unavailable',
+      409,
+    );
   const session = await Tutor.getTutorQuestionId(params.db, params.sessionId);
   if (!session.questionId || !session.issuanceId || session.status !== 'active')
     throw new ApiError(

@@ -3,6 +3,7 @@
 
 import { Lightbulb, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import type { DraftFocusT } from '@/core/schema/assessment/draft-focus';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { IconButton, UiNextRoot } from '@/ui-next/public';
 import { HintLadder } from '../HintLadder';
@@ -17,6 +18,7 @@ export interface SoloCoachProps {
   onClose: () => void;
   question: QuestionDetail;
   issuanceId?: string;
+  readSavedDraft?: () => DraftFocusT | undefined;
   /** The answer is in: its record is sealed, and what is looked at now doesn't change it. */
   submitted: boolean;
 }
@@ -27,6 +29,7 @@ export function SoloCoach({
   onClose,
   question,
   issuanceId,
+  readSavedDraft,
   presentation,
   submitted,
 }: SoloCoachProps) {
@@ -81,6 +84,7 @@ export function SoloCoach({
               question={question}
               onReturnToAnswer={onClose}
               issuanceId={issuanceId}
+              readSavedDraft={readSavedDraft}
               submitted={submitted}
               requestFullSolution={
                 issuanceId
