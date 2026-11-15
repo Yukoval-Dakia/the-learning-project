@@ -7,9 +7,11 @@
 import { ChevronRight, Link } from 'lucide-react';
 import { useState } from 'react';
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
+import { UiNextRoot } from '@/ui-next/public';
 import './notes-m3e.css';
 
-import { NoteBlockView } from './NoteBlocks';
+import { parseNoteBodyBlocks } from '../api/contracts';
+import { NoteBlockView, questionDetailHref } from './NoteBlocks';
 import { type BodyBlock, SEMANTIC_KIND_LABEL, type SemanticKind } from './notes-api';
 
 export type NoteBodyBlock = BodyBlock;
@@ -21,6 +23,34 @@ export interface NoteDocBodyProps {
   blocks: NoteBodyBlock[];
   navigate: (to: string) => void;
   onOpenQuestion: (questionId: string) => void;
+}
+
+export function NoteBodyPreview({
+  title,
+  bodyBlocks,
+  navigate,
+}: {
+  title: string;
+  bodyBlocks: unknown;
+  navigate: (to: string) => void;
+}) {
+  const body = parseNoteBodyBlocks(bodyBlocks);
+  return (
+    <UiNextRoot className="nt-page" data-note-embed="">
+      {body ? (
+        <NoteDocBody
+          type="note_atomic"
+          title={title}
+          interactive={null}
+          blocks={body.content}
+          navigate={navigate}
+          onOpenQuestion={(id) => navigate(questionDetailHref(id))}
+        />
+      ) : (
+        <p className="nt-quiet">正文暂时无法预览，可打开阅读器查看。</p>
+      )}
+    </UiNextRoot>
+  );
 }
 
 // YUK-339 — 块锚点深链（设计源 NoteReaderBody anchor()，screen-note-reader.jsx:36-40）。
