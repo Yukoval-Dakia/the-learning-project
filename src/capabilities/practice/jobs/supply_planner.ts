@@ -211,11 +211,10 @@ async function loadPoolCounts(db: Db) {
     db,
     rows.map((row) => row.id),
   );
-  const counts = new Map<string, {
-    available: number;
-    draft: number;
-    byKind: Map<string, number>;
-  }>();
+  const counts = new Map<
+    string,
+    { available: number; draft: number; byKind: Map<string, number> }
+  >();
   for (const row of rows) {
     const kcIds = Array.isArray(row.knowledgeIds) ? (row.knowledgeIds as string[]) : [];
     for (const kcId of kcIds) {
@@ -356,17 +355,21 @@ export async function runSupplyPlanner(
   const steeringScopeIds = new Set(steeringScopes.flatMap((scope) => scope.scope_knowledge_ids));
   const recurringCauseIds = new Set(
     causeSignals.weak_points.weak_points
-      .filter((point) =>
-        point.failure_count >= SUPPLY_CAUSE_RECURRENCE_THRESHOLD &&
-        point.knowledge_id !== null &&
-        !poolCounts.get(point.knowledge_id)?.byKind.has(supplyKindForWeakPoint(point)))
+      .filter(
+        (point) =>
+          point.failure_count >= SUPPLY_CAUSE_RECURRENCE_THRESHOLD &&
+          point.knowledge_id !== null &&
+          !poolCounts.get(point.knowledge_id)?.byKind.has(supplyKindForWeakPoint(point)),
+      )
       .flatMap((point) => (point.knowledge_id ? [point.knowledge_id] : [])),
   );
   const frontierAll: FrontierEntry[] = knowledgeRows
     .filter((row) => row.parentId !== null) // 非根节点才是可规划格子
     .map((row) => {
       const counts = poolCounts.get(row.id) ?? {
-        available: 0, draft: 0, byKind: new Map<string, number>(),
+        available: 0,
+        draft: 0,
+        byKind: new Map<string, number>(),
       };
       const signal = mastery.get(row.id);
       return {
