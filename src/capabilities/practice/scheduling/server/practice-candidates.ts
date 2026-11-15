@@ -70,7 +70,7 @@ import { type CandidateInput, collectCandidateSignals } from './candidate-signal
 import { REVIEW_DUE_LIMIT_MAX, queryReviewDue } from './due-list';
 import { knowledgeLabels } from './knowledge-labels';
 import { FRONTIER_MAX_ITEMS } from './learnable-frontier';
-import { readQuestionPace } from './question-pace';
+import { type QuestionPace, readQuestionPacesForQuestions } from './question-pace';
 import { VARIANT_INPUT_LIMIT } from './stream-inputs';
 
 type DbLike = Db | Tx;
@@ -962,7 +962,7 @@ async function readPracticeCandidatesInSnapshot(
   const judgmentById = new Map(judgments.items.map((item) => [item.knowledge_id, item]));
   const causeById = new Map(causes.items.map((item) => [item.knowledge_id, item]));
   const labels = await knowledgeLabels(db, pageKnowledgeIds);
-  const pace = await readQuestionPace(db, asOf);
+  const paces = await readQuestionPacesForQuestions(db, pageQuestionIds, asOf);
   const attemptWindows = await readAttemptWindows(db, pageQuestionIds, asOf);
   // Legacy question-level due cards (due fact with knowledge_id=null) are read once for the
   // whole page, not once per row: the card read is a batch loader underneath.
@@ -1201,18 +1201,7 @@ async function readPracticeCandidatesInSnapshot(
         b_source: signal?.bSource ?? 'none',
         // A default pace is a placeholder for planning, not a measurement: the candidate
         // read must not present it as an observed fact.
-        estimated_minutes:
-          pace.source === 'observed'
-            ? knownSignal(
-                pace.minutes,
-                `practice/scheduling/server/question-pace:observed(n=${pace.sample_count})`,
-                asOf,
-              )
-            : unknownSignal<number>(
-                `practice/scheduling/server/question-pace:default(n=${pace.sample_count})`,
-                asOf,
-                'insufficient_pace_samples; the 2-minute default is a planning placeholder, not a measurement',
-              ),
+        estimated_minutes: candidatePaceSignal(paces.byQuestion.get(row.refId), asOf),
       },
       serving: {
         servable: true,
@@ -1361,6 +1350,20 @@ async function readPracticeCandidatesInSnapshot(
         ref_ids: bucket.refIds,
       })),
   };
+}
+
+function candidatePaceSignal(pace: QuestionPace | undefined, asOf: Date) {
+  return pace?.source === 'observed'
+    ? knownSignal(
+        pace.minutes,
+        `practice/scheduling/server/question-pace:observed(n=${pace.sample_count})`,
+        asOf,
+      )
+    : unknownSignal<number>(
+        `practice/scheduling/server/question-pace:default(n=${pace?.sample_count ?? 0})`,
+        asOf,
+        'insufficient_pace_samples; the 2-minute default is a planning placeholder, not a measurement',
+      );
 }
 
 async function readGoalVersions(
