@@ -236,8 +236,19 @@ export async function promoteConjectureToMisconception(
         // `source` is MONOTONE soft→hard — a confirmed 'hard' row never downgrades on a
         // plain re-accept; a soft→hard upgrade still applies.
         source: sql`CASE WHEN ${misconception.source} = 'hard' THEN 'hard' ELSE ${parsed.source} END`,
-        seen: parsed.seen,
-        evidence: parsed.evidence,
+        // Recurrence-safe (YUK-2128): `seen` never regresses — a re-accept's own
+        // recurrence_count merges with later recurrence recordings already on the row
+        // (GREATEST keeps whichever is larger). `evidence` MERGES the new event ids in
+        // instead of overwriting, so attempt pointers appended by the recurrence hop
+        // survive the promotion upsert. Both run under the shared `misc:<id>` lock,
+        // so the merge reads the post-recurrence row.
+        seen: sql`GREATEST(${misconception.seen}, ${parsed.seen})`,
+        evidence: sql`COALESCE((
+          SELECT jsonb_agg(DISTINCT elem ORDER BY elem)
+          FROM jsonb_array_elements_text(
+            ${misconception.evidence} || ${JSON.stringify(parsed.evidence)}::jsonb
+          ) AS elem
+        ), '[]'::jsonb)`,
         updated_at: input.now,
         // `archived_at` is NOT unconditionally reset: only an explicit reactivation clears it,
         // so a retired / soft-archived node is never silently resurrected.
