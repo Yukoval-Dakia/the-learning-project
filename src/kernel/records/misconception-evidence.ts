@@ -25,8 +25,8 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import type { Tx } from '@/db/client';
+import { acquireSortedAdvisoryLocks } from '@/db/learning-state-lock';
 import { misconception, misconception_edge } from '@/db/schema';
-import { lockMisconceptionIdentity } from '@/kernel/locks/misconception-identity-lock';
 import { createMisconceptionEdge } from '@/kernel/records/misconception-edges';
 
 export interface RecordMisconceptionRecurrenceInput {
@@ -57,11 +57,9 @@ export async function recordMisconceptionRecurrence(
   tx: Tx,
   input: RecordMisconceptionRecurrenceInput,
 ): Promise<RecordMisconceptionRecurrenceResult> {
-  // Serialize per misconception identity: `lockMisconceptionIdentity` takes the same
-  // `misc:<id>` xact lock the promote/archive writer issues, so the edge read, the
-  // seen/evidence update, and the edge upsert are linearizable against concurrent
-  // recurrences and accepts.
-  await lockMisconceptionIdentity(tx, input.misconceptionId);
+  // Share the promotion/archive writer's `misc:<id>` transaction lock so the
+  // evidence update and edge upsert serialize with accepts and archives.
+  await acquireSortedAdvisoryLocks(tx, 'misc', [input.misconceptionId]);
 
   // Read the node under the lock: replay detection needs its evidence array, and the
   // active/archived guard decides whether recording is even possible.
