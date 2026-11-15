@@ -8,7 +8,11 @@ import { loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { reviewTimingJson } from '@/kernel/read-models/review-timing';
-import { KnowledgeIdParamsSchema, KnowledgeTreeQuerySchema } from '../api/contracts';
+import {
+  KnowledgeIdParamsSchema,
+  KnowledgeNodePageQuerySchema,
+  KnowledgeTreeQuerySchema,
+} from '../api/contracts';
 import { loadKnowledgeNodePage } from './node-page';
 
 type TreeRows = Array<
@@ -53,12 +57,18 @@ export async function readLearnerKnowledgeTree(
 }
 
 /** Hidden, missing and archived nodes are all the same 404. */
-export async function readLearnerKnowledgeNodePage(db: Db, rawParams: unknown) {
+export async function readLearnerKnowledgeNodePage(
+  db: Db,
+  rawParams: unknown,
+  rawQuery: unknown = {},
+) {
   const parsed = KnowledgeIdParamsSchema.safeParse(rawParams);
   if (!parsed.success) {
     throw new ApiError('validation_error', 'knowledge id is required', 400);
   }
-  const page = await loadKnowledgeNodePage(db, parsed.data.id);
+  const query = KnowledgeNodePageQuerySchema.safeParse(rawQuery);
+  if (!query.success) throw new ApiError('validation_error', 'invalid activity query', 400);
+  const page = await loadKnowledgeNodePage(db, parsed.data.id, query.data.timeline_cursor);
   if (!page) {
     throw new ApiError('not_found', `knowledge ${parsed.data.id} not found`, 404);
   }

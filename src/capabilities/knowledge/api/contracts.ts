@@ -10,6 +10,9 @@ import { RetentionReadingSchema } from '@/core/schema/scheduling-state';
 import { SubjectProfileSchema } from '@/subjects/profile-schema';
 
 export const KnowledgeIdParamsSchema = z.object({ id: z.string().trim().min(1) });
+export const KnowledgeNodePageQuerySchema = z.object({
+  timeline_cursor: z.string().min(1).max(4096).optional(),
+});
 
 export const KnowledgeRoleSchema = z.enum(['kc', 'goal', 'container']);
 
@@ -279,6 +282,8 @@ export const KnowledgeNodePageResponseSchema = z.object({
       created_at: z.string(),
     }),
   ),
+  timeline_has_more: z.boolean(),
+  timeline_next_cursor: z.string().nullable(),
 });
 
 export const KnowledgeMisconceptionSchema = z.object({

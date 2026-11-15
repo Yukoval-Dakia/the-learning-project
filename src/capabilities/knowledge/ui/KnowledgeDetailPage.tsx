@@ -9,7 +9,7 @@
 // M3E 呈现（YUK-1473）：外壳 UiNextRoot.kn-page + main.un-m3e-bridge，样式在 knowledge-m3e.css，
 // 记录见 docs/design/2026-11-03-knowledge-m3e.md。
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   ArrowRight,
@@ -23,7 +23,7 @@ import {
   Sparkles,
   Target,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useId, useState } from 'react';
 import type { NoteBodyPreview as NoteBodyPreviewContribution } from '@/capabilities/notes/ui-public';
 import type { MisconceptionTraceTarget } from '@/ui/lib/misconception-evidence-routes';
 import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
@@ -38,7 +38,7 @@ import { BandChip } from './BandChip';
 import { humanizeActivity } from './humanize-activity';
 import { DecayChip, RelTag } from './KnowledgeChips';
 import { KnowledgeEmpty } from './KnowledgeEmpty';
-import type { KnowledgeNodePage, NoteSummary } from './knowledge-api';
+import type { KnowledgeNodePage, NoteSummary, getNodePage } from './knowledge-api';
 import { useKnowledgeClient } from './knowledge-client';
 import { knowledgeNodeQueryOptions } from './knowledge-node-query';
 import { MasteryDial } from './MasteryDial';
@@ -62,6 +62,117 @@ const NOTE_KIND_LABEL: Record<string, string> = {
   note_hub: '汇总笔记',
   note_long: '长文笔记',
 };
+
+function KnowledgeActivity({
+  node,
+  readPage,
+}: {
+  node: KnowledgeNodePage;
+  readPage: typeof getNodePage;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const listId = useId();
+  const activity = useInfiniteQuery({
+    queryKey: ['knowledge-activity-pages', node.id],
+    initialPageParam: '',
+    initialData: { pages: [node], pageParams: [''] },
+    queryFn: async ({ pageParam }) => {
+      const page = await readPage(node.id, pageParam || undefined);
+      if (page.id !== node.id) throw new Error('activity node differs');
+      return page;
+    },
+    getNextPageParam: (page) =>
+      page.timeline_has_more === true ? (page.timeline_next_cursor ?? undefined) : undefined,
+    staleTime: Number.POSITIVE_INFINITY,
+    gcTime: 0,
+    retry: false,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const pages = activity.data?.pages ?? [node];
+  const lastPage = pages[pages.length - 1];
+  const seen = new Set<string>();
+  const rows = pages.flatMap((page) =>
+    page.timeline.filter((row) => {
+      if (seen.has(row.event_id)) return false;
+      seen.add(row.event_id);
+      return true;
+    }),
+  );
+  const shown = expanded ? rows : rows.slice(0, 3);
+  return (
+    <section className="kn-sec" aria-labelledby="kn-sec-activity">
+      <SectionHead id="kn-sec-activity" title="活动" />
+      <div className="kn-card">
+        {rows.length === 0 ? (
+          <p className="kn-quiet">无活动记录</p>
+        ) : (
+          <>
+            <div id={listId}>
+              <FoldList
+                as="div"
+                className="kn-events"
+                items={shown}
+                limit={shown.length}
+                renderItem={(a, i, shownCount) => (
+                  <div key={a.event_id} className="kn-event">
+                    <span className="kn-event-rail" aria-hidden="true">
+                      <span className={`kn-event-dot tone-${outcomeTone(a.outcome)}`} />
+                      {i < shownCount - 1 && <span className="kn-event-line" />}
+                    </span>
+                    <div className="kn-event-body">
+                      <p className="kn-event-lead">{humanizeActivity(a)}</p>
+                      <p className="kn-event-time un-num">
+                        {new Date(a.created_at).toLocaleString('zh-CN', {
+                          month: 'numeric',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              />
+            </div>
+            {rows.length > 3 && (
+              <button
+                type="button"
+                className="un-fold-toggle un-hit"
+                aria-expanded={expanded}
+                aria-controls={listId}
+                onClick={() => setExpanded((value) => !value)}
+              >
+                {expanded ? '收起' : `展开已加载 ${rows.length} 条`}
+              </button>
+            )}
+            <p className="kn-quiet" role="status">
+              已加载 {rows.length} 条{lastPage.timeline_has_more === false ? '，已到最后一页' : ''}
+            </p>
+          </>
+        )}
+        {activity.isError && (
+          <p className="kn-quiet" role="status">
+            更多活动未能加载，已加载记录保留。
+          </p>
+        )}
+        {activity.hasNextPage && (
+          <button
+            type="button"
+            className="un-fold-toggle un-hit"
+            disabled={activity.isFetchingNextPage}
+            onClick={() => {
+              setExpanded(true);
+              void activity.fetchNextPage({ cancelRefetch: false });
+            }}
+          >
+            {activity.isFetchingNextPage ? '正在加载活动…' : '查看更多活动'}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
 
 function NoteLinkRow({
   note,
@@ -558,43 +669,7 @@ export default function KnowledgeDetailPage({
             </div>
           </section>
 
-          <section className="kn-sec" aria-labelledby="kn-sec-activity">
-            <SectionHead id="kn-sec-activity" title="活动" />
-            <div className="kn-card">
-              {node.timeline.length === 0 ? (
-                <p className="kn-quiet">无活动记录</p>
-              ) : (
-                // 倒序已是最近在前（wire 约定）。默认只露最近 3 条，其余收进「全部 N 条」——
-                // 防侧栏被无界时间线撑爆（S8 audit §3.9；owner 2026-10-18 折叠决定，设计 L5）。
-                <FoldList
-                  as="div"
-                  className="kn-events"
-                  items={node.timeline}
-                  renderItem={(a, i, shownCount) => (
-                    <div key={a.event_id} className="kn-event">
-                      <span className="kn-event-rail" aria-hidden="true">
-                        <span className={`kn-event-dot tone-${outcomeTone(a.outcome)}`} />
-                        {i < shownCount - 1 && <span className="kn-event-line" />}
-                      </span>
-                      <div className="kn-event-body">
-                        {/* S8 (YUK-335 §2 P3 + 批次乙 review)：人话句是 event row 主叙事行（强），
-                            时间弱于主句；不渲裸 a.action 标签（避免 debug-log 味与人话句重复）。 */}
-                        <p className="kn-event-lead">{humanizeActivity(a)}</p>
-                        <p className="kn-event-time un-num">
-                          {new Date(a.created_at).toLocaleString('zh-CN', {
-                            month: 'numeric',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                />
-              )}
-            </div>
-          </section>
+          <KnowledgeActivity key={node.id} node={node} readPage={getNodePage} />
         </aside>
       </div>
     </DetailFrame>
