@@ -278,3 +278,22 @@ export async function readQuestionPacesForQuestions(
     },
   };
 }
+
+/** Attach scoped question prices while retaining the caller's paper slot counts. */
+export async function readQuestionPacesForStreamItems<
+  Item extends { item_kind: 'question' | 'paper'; ref_id: string },
+>(db: DbLike, items: readonly Item[], now: Date = new Date()) {
+  const paces = await readQuestionPacesForQuestions(
+    db,
+    items.filter((item) => item.item_kind === 'question').map((item) => item.ref_id),
+    now,
+  );
+  return {
+    ...paces,
+    items: items.map((item) => ({
+      ...item,
+      estimatedMinutes:
+        item.item_kind === 'question' ? paces.byQuestion.get(item.ref_id)?.minutes : undefined,
+    })),
+  };
+}

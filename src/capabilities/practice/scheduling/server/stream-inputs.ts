@@ -276,6 +276,25 @@ export async function resolveDailyPracticeBudget(
   return { pace, minutes: dailyPracticeBudgetMinutes(pace) };
 }
 
+/** A scoped stream keeps its item cap within the learner's existing minute budget. */
+export async function resolveScopedPracticeBudget(
+  db: DbLike,
+  rows: readonly { item_kind: 'question' | 'paper'; ref_id: string }[],
+  questionLimit: number,
+): Promise<{ pace: DailyPracticePace; minutes: number }> {
+  const [budget, paces] = await Promise.all([
+    resolveDailyPracticeBudget(db),
+    readQuestionPacesForQuestions(
+      db,
+      rows.filter((row) => row.item_kind === 'question').map((row) => row.ref_id),
+    ),
+  ]);
+  return {
+    pace: budget.pace,
+    minutes: Math.min(budget.minutes, questionLimit * paces.overall.minutes),
+  };
+}
+
 interface QuestionMixMetadata {
   knowledgeId?: string;
   questionKind?: string;

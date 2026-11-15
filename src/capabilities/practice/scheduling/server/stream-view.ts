@@ -28,7 +28,9 @@ import {
 } from '@/kernel/records/assessment-issuance';
 import { countPaperSlots } from '../../session/public';
 import { knowledgeLabels } from './knowledge-labels';
-import { readQuestionPacesForQuestions } from './question-pace';
+import { attachPaperQuestionCounts } from './paper-rank';
+import { readQuestionPacesForQuestions, readQuestionPacesForStreamItems } from './question-pace';
+import { storedStreamExceedsBudget } from './stored-stream-budget';
 import { type DailyPracticePace, estimateStreamItemMinutes } from './stream-budget';
 import { isUploadPracticeRow } from './upload-ready';
 
@@ -436,5 +438,27 @@ export async function buildStreamView(input: {
       estimated_total_minutes: estimatedTotalMinutes,
       estimated_remaining_minutes: estimatedRemainingMinutes,
     },
+  };
+}
+
+/** Budget the same scoped question prices and paper slots that the stream projects. */
+export async function readStreamBudget(
+  db: DbLike,
+  rows: StreamItemRow[],
+  recoveryRowIds: ReadonlySet<string>,
+  budgetMinutes: number,
+): Promise<{ exceedsBudget: boolean; questionMinutes: number }> {
+  const paces = await readQuestionPacesForStreamItems(
+    db,
+    await attachPaperQuestionCounts(db, rows),
+  );
+  return {
+    exceedsBudget: storedStreamExceedsBudget({
+      rows: paces.items,
+      recoveryRowIds,
+      budgetMinutes,
+      questionMinutes: paces.unscoped.minutes,
+    }),
+    questionMinutes: paces.unscoped.minutes,
   };
 }
