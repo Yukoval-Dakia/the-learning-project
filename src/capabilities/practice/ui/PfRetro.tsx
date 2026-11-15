@@ -16,6 +16,8 @@ import { EvidenceLightbox } from '@/ui/components/response/EvidenceLightbox';
 import {
   COARSE_OUTCOME_META,
   type CoarseOutcome,
+  isSlotResponseAnswered,
+  nativeResponseValue,
   optionsFromChoicesMd,
 } from '@/ui/components/response/response-types';
 import { SlotResultBadge } from '@/ui/components/response/SlotResultBadge';
@@ -25,6 +27,7 @@ import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { Button, Chip } from '@/ui-next/public';
 
 import type { PaperSlot } from './practice-api';
+import { PaperRetroResponse } from './PaperRetroResponse';
 import { usePracticeClient } from './practice-client';
 
 type Verdict = 'good' | 'hard' | 'again';
@@ -66,6 +69,19 @@ export function PfrQRow({
   const isChoice = choiceOptions.length > 0;
   const releasedOutcome = visible ? coarseOutcomeOf(visible.outcome) : null;
   const answerImages = sub?.answer_image_refs ?? [];
+  // YUK-1593 — 已公开 assessment 的作答/题面/证据从冻结字段回读；提交槽恒 answered，
+  // 未提交槽按 response_set 条目判定（missing 才是真未作答），不再读 answer_md。
+  const native = slot.assessment !== undefined;
+  const nativeEntries = slot.assessment?.response_set.entries ?? [];
+  const nativeAnswered =
+    sub !== null ||
+    nativeEntries.some((entry) => isSlotResponseAnswered(nativeResponseValue(entry)));
+  // 辨认不清/主动留白是有记录的作答状态，不能当未作答；没有内容条目才是 missing。
+  const nativeMissing =
+    !nativeAnswered &&
+    nativeEntries.every(
+      (entry) => !('state' in entry) || (entry.state !== 'unknown' && entry.state !== 'blank'),
+    );
 
   return (
     <div className="pf-rq">
@@ -88,6 +104,11 @@ export function PfrQRow({
             // 交卷缓冲（visible_to_user=false）= 联合组暂定：已提交待全组解锁，无对错色。
             <SlotResultBadge lifecycle="group_tentative" />
           )
+        ) : native && nativeMissing ? (
+          <Chip>未作答</Chip>
+        ) : native ? (
+          // 有作答/辨认不清/主动留白记录但判分未 release：UNKNOWN（caution），不当对错。
+          <Chip tone="caution">已作答</Chip>
         ) : (
           <Chip>未作答</Chip>
         )}
@@ -103,35 +124,44 @@ export function PfrQRow({
               variant="inline"
             />
           ))}
-          <div className="pf-rq-row">
-            <span className="pf-rq-label">你的作答</span>
-            {isChoice && sub ? (
-              <ChoiceSetResponse
-                options={choiceOptions}
-                mode="single"
-                value={answeredText ? selectedIds : null}
-                onChange={() => {}}
-                disabled
-                notation={slot.question.notation}
-                feedback="graded"
-                selectionOutcome={
-                  releasedOutcome === null
-                    ? null
-                    : releasedOutcome === 'correct'
-                      ? 'correct'
-                      : 'not_correct'
-                }
-                ariaLabel={`第 ${n} 题选项`}
-              />
-            ) : sub?.answer_md ? (
-              // de-wenyan: PaperSlot carries no subject profile and this is the
-              // student's own typed answer (not a classical-Chinese passage), so
-              // it renders in the neutral default font.
-              <span>{sub.answer_md}</span>
-            ) : (
-              <span className="pf-rq-none">（未作答）</span>
-            )}
-          </div>
+          {native ? (
+            <PaperRetroResponse
+              slot={slot}
+              notation={slot.question.notation}
+              releasedOutcome={releasedOutcome}
+              onPreview={setZoomAsset}
+            />
+          ) : (
+            <div className="pf-rq-row">
+              <span className="pf-rq-label">你的作答</span>
+              {isChoice && sub ? (
+                <ChoiceSetResponse
+                  options={choiceOptions}
+                  mode="single"
+                  value={answeredText ? selectedIds : null}
+                  onChange={() => {}}
+                  disabled
+                  notation={slot.question.notation}
+                  feedback="graded"
+                  selectionOutcome={
+                    releasedOutcome === null
+                      ? null
+                      : releasedOutcome === 'correct'
+                        ? 'correct'
+                        : 'not_correct'
+                  }
+                  ariaLabel={`第 ${n} 题选项`}
+                />
+              ) : sub?.answer_md ? (
+                // de-wenyan: PaperSlot carries no subject profile and this is the
+                // student's own typed answer (not a classical-Chinese passage), so
+                // it renders in the neutral default font.
+                <span>{sub.answer_md}</span>
+              ) : (
+                <span className="pf-rq-none">（未作答）</span>
+              )}
+            </div>
+          )}
           {answerImages.length > 0 && (
             <div className="pf-rq-row">
               <span className="pf-rq-label">作答附件</span>

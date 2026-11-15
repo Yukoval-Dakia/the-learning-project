@@ -487,6 +487,13 @@
     color: var(--un-md-sys-color-on-surface-variant);
   }
 
+  /* YUK-1593 — native retrospective body: block tree + per-slot rows share the
+     answer cell's vertical rhythm. */
+  & .pf-rq-native-body {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
   & .pf-rq-note {
     margin: 0;
     font-size: var(--un-md-sys-typescale-body-medium-size);
