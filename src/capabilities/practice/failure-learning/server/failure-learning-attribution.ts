@@ -14,6 +14,8 @@ import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluat
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import { listActiveMisconceptionsForKcs } from '@/kernel/read-models/failure-learning-context';
 import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
+import { isMiscCauseId } from '@/kernel/read-models/misc-cause-labels';
+import { recordMisconceptionRecurrence } from '@/kernel/records/misconception-evidence';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 // stale-const 收口（v2①）：defaultSubjectProfile 冻结常量 → 活 registry
 // resolveSubjectProfile（每次调用求值，owner 编辑 general 即跟随）。
@@ -322,6 +324,28 @@ export async function runAttributionAndWriteJudgeEvent(
         cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
         created_at: new Date(),
       });
+      // Recurrence evidence (YUK-2128 slice): when the new effective attribution selected
+      // promoted misconception ids, record each recurrence in THIS transaction — seen +1,
+      // the attempt event appended to evidence, and an idempotent observed_in edge — so the
+      // judge event and the evidence hop commit or roll back together. Any persisted
+      // (misc, event) marker — evidence ptr or live edge — makes the hop a no-op, so
+      // redelivery / concurrent same-attempt attribution counts once; primary + secondary
+      // are deduped to count an attempt once per misc. Only `misc_` ids are touched; the
+      // vocabulary `other` and unseen categories never resolve to a node.
+      // The set is SORTED before iteration: each hop takes a `misc:<id>` xact advisory
+      // lock held to commit, so a deterministic global lock order keeps two multi-misc
+      // attributions from deadlocking (model output order would permit opposite orders).
+      // Sorting changes lock order only — the stored payload keeps model order.
+      const recurrenceEventTime = new Date();
+      for (const miscId of [...new Set([parsed.primary_category, ...parsed.secondary_categories])]
+        .filter(isMiscCauseId)
+        .sort()) {
+        await recordMisconceptionRecurrence(tx, {
+          misconceptionId: miscId,
+          attemptEventId: params.attemptEventId,
+          now: recurrenceEventTime,
+        });
+      }
       return true;
     });
     if (!persisted) return { outcome: 'superseded' };
