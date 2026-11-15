@@ -328,9 +328,14 @@ describe('Task 9 作答后有界增量重排 reRankAfterAnswer（YUK-361 Phase 4
   // @fails-if rerank completion commits separately from partition changes, retries sample again, or PATCH resamples a native answer; receipt and row equality fail.
   it('commits one settlement rerank across concurrent delivery, acknowledgement recovery and PATCH', async () => {
     const sharedKc = createId();
-    await testDb()
-      .insert(knowledge)
-      .values({ id: sharedKc, name: 'bounded rerank', domain: 'physics' });
+    const seededAt = new Date();
+    await testDb().insert(knowledge).values({
+      id: sharedKc,
+      name: 'bounded rerank',
+      domain: 'physics',
+      created_at: seededAt,
+      updated_at: seededAt,
+    });
     await seedDueQuestion();
     const answeredId = await insertQuestion({ kind: 'choice', knowledgeIds: [sharedKc] });
     const original = await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0 });
