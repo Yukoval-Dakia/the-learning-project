@@ -4,6 +4,7 @@ import { AgentNoteClientProvider } from '@/capabilities/agency/ui-public';
 import { CopilotClientProvider } from '@/capabilities/copilot/ui-public';
 import { WorkbenchClientProvider } from '@/capabilities/shell/ui-public';
 import { SubjectClientProvider } from '@/ui/hooks/subject-client';
+import { apiOperationJson } from '@/ui/lib/api';
 import { startIssuanceCreateClient } from './issuance-create-client';
 import { startIssuanceStateClient } from './issuance-state-client';
 import { startResponseDraftClient } from './response-draft-client';
@@ -16,12 +17,25 @@ import { startNotePageClient } from './note-page-client';
 import { startPracticeAdviceClient } from './practice-advice-client';
 import { startPracticeSubmitClient } from './practice-submit-client';
 import { startQuestionCardReadClient } from './question-card-client';
+import { startHintHistoryClient } from './solve-client';
+import { startStudyReferenceClient } from './study-reference-client';
 import { startSubjectClient } from './subject-client';
 import { startKnowledgeTreeClient, startWorkbenchClient } from './workbench-client';
 
 const confirmationClient = {
   getIssuanceState: startIssuanceStateClient,
   saveResponseDraft: startResponseDraftClient,
+};
+
+const failedTurnReferenceClient = {
+  readTarget: (runId: string, sessionId: string) =>
+    apiOperationJson('getCopilotFailedTurnPracticeTarget', {
+      url: `/api/copilot/runs/${encodeURIComponent(runId)}/practice-target?session_id=${encodeURIComponent(sessionId)}`,
+      method: 'GET',
+      init: { cache: 'no-store' },
+    }),
+  revealReference: startStudyReferenceClient,
+  restoreHints: startHintHistoryClient,
 };
 
 const questionCardClient = {
@@ -49,6 +63,7 @@ export function StartWorkbenchShell({
             <SubjectClientProvider value={startSubjectClient}>
               <CopilotClientProvider value={startCopilotClient}>
                 <RootShell
+                  failedTurnReferenceClient={failedTurnReferenceClient}
                   confirmationClient={confirmationClient}
                   questionCardClient={questionCardClient}
                   pathname={pathname}

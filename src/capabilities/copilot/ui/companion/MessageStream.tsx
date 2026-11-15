@@ -9,6 +9,7 @@ import {
   type QuestionRefSlotProps,
 } from '@/ui/components/blocks/question-ref-slot';
 import type { ConfirmationAssessmentRenderer } from '../confirmation';
+import type { FailedTurnReferenceRenderer } from '../failed-turn-reference';
 import type { QuestionCardRenderer } from '../question-card';
 import { conversationReady } from './companion-state';
 // The scrolling conversation: today's summary on top (open while the conversation is empty), then
@@ -23,6 +24,7 @@ import type { StickToBottom } from './stick-to-bottom';
 import { useCompanion } from './use-companion';
 
 export interface MessageStreamProps {
+  failedTurnReferenceRenderer?: FailedTurnReferenceRenderer;
   confirmationRenderer?: ConfirmationAssessmentRenderer;
   questionCardRenderer?: QuestionCardRenderer;
   readNotePage: NotePageClient;
@@ -36,6 +38,7 @@ export function MessageStream({
   stick,
   navigate,
   confirmationRenderer,
+  failedTurnReferenceRenderer,
   questionCardRenderer,
   readNotePage,
 }: MessageStreamProps) {
@@ -122,6 +125,8 @@ export function MessageStream({
                 <MessageRow
                   key={message.id}
                   message={message}
+                  failedTurnReferenceRenderer={failedTurnReferenceRenderer}
+                  referenceDisabled={disabled}
                   thinkingText={
                     message.role === 'ai' && !message.nudge_line
                       ? thinkingByRun[message.run_id ?? currentRunId ?? '']

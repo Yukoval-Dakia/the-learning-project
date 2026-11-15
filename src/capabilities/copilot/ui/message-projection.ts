@@ -518,6 +518,9 @@ export function projectReplayMessage(turn: ReplayTurn): ReplayChatMessage | null
     run_id: turn.run_id,
     derivation_policy: turn.derivation_policy,
     retryable: turn.retryable,
+    ...(turn.role === 'ai' && turn.help_return_target
+      ? { help_return_target: turn.help_return_target }
+      : {}),
   };
   if (turn.role === 'tombstone')
     return {
@@ -542,7 +545,15 @@ export function projectReplayMessage(turn: ReplayTurn): ReplayChatMessage | null
     };
   }
   const message = projectCopilotReply(previous, { ...turn, reply: turn.text });
-  if (!message) return null;
+  if (!message)
+    return previous.help_return_target
+      ? {
+          ...previous,
+          session_id: turn.session_id,
+          public_prose: publicProse,
+          tool_calls: turn.tool_calls,
+        }
+      : null;
   const { streaming: _streaming, subtasks: _subtasks, tool_calls: _toolCalls, ...rest } = message;
   return { ...rest, tool_calls: turn.tool_calls };
 }

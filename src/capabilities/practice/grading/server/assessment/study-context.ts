@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import Markdown from 'react-markdown';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { LearnerHandwritingMarkerT } from '@/core/schema/assessment/materials';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import type { assessment_issuance, question_revision } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { readFigureMaterialMarkers } from '@/kernel/read-models/figure-origin';
@@ -11,6 +11,7 @@ import {
   withinAssessmentSignal,
 } from '@/kernel/records/assessment-assets';
 import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
+import { withStudyAuthorization } from '@/kernel/records/hint-continuity';
 import {
   loadIssuanceStudyCoordinate,
   projectFrozenStudyReference,
@@ -20,6 +21,15 @@ import { recordAssistanceExposure } from './assistance';
 /** Teaching sees exactly the issued face and published marking for its scope. */
 export async function loadFrozenStudyContext(
   database: Db,
+  issuanceId: string,
+  questionId?: string,
+) {
+  const loaded = await loadAssistableStudyCoordinate(database, issuanceId, questionId);
+  return projectFrozenStudyContext(loaded.revision, loaded.issuance, questionId);
+}
+
+async function loadAssistableStudyCoordinate(
+  database: Db | Tx,
   issuanceId: string,
   questionId?: string,
 ) {
@@ -36,7 +46,7 @@ export async function loadFrozenStudyContext(
         409,
       );
     case 'assistable':
-      return projectFrozenStudyContext(loaded.revision, loaded.issuance, questionId);
+      return loaded;
   }
 }
 
@@ -64,16 +74,27 @@ export function projectFrozenStudyContext(
 }
 
 export async function revealFrozenStudyReference(database: Db, issuanceId: string) {
-  const context = await loadFrozenStudyContext(database, issuanceId);
-  if (context.reference_md)
-    await recordAssistanceExposure(database, {
-      issuanceId,
-      questionId: context.question_id,
-      kind: 'solution',
-      impact: 'answer_help',
-      contentDigest: `sha256:${canonicalHash(context.reference_md)}`,
-    });
-  return { reference_md: context.reference_md };
+  const expected = await loadAssistableStudyCoordinate(database, issuanceId);
+  return withStudyAuthorization(
+    database,
+    { issuanceId, questionId: expected.questionId },
+    async (tx, _coordinate, binding) => {
+      if (binding !== canonicalHash(issuanceRowToContract(expected.issuance).binding))
+        throw new ApiError('coordinate_mismatch', 'issued coordinate changed', 409);
+      // Re-read the study gate and issued scope while root/source/issuance locks are held.
+      const current = await loadAssistableStudyCoordinate(tx, issuanceId, expected.questionId);
+      const context = projectFrozenStudyContext(current.revision, current.issuance);
+      if (context.reference_md)
+        await recordAssistanceExposure(tx, {
+          issuanceId,
+          questionId: context.question_id,
+          kind: 'solution',
+          impact: 'answer_help',
+          contentDigest: `sha256:${canonicalHash(context.reference_md)}`,
+        });
+      return { reference_md: context.reference_md };
+    },
+  );
 }
 
 /** Only issued public figure bindings authorize byte reads, including Markdown images. */
