@@ -23,7 +23,6 @@ function ingestJob(eventId: string): Job<{ event_id: string }> {
 function sourceEvent(id: string): MemoryEventInput {
   return {
     id,
-    session_id: 'session-generic-concurrent',
     actor_kind: 'user',
     action: 'experimental:copilot_user_ask',
     subject_kind: 'question',
