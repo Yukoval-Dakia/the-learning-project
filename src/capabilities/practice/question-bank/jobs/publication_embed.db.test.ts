@@ -456,7 +456,9 @@ it.each(['continuation', 'not_sent', 'source_changed', 'drifted', 'legacy_wrappe
     try {
       await expect(
         runPublicationEmbed(db, bound.data, boundAttempt, recoveredProvider),
-      ).rejects.toThrow('application unavailable');
+      ).rejects.toMatchObject({
+        cause: { code: 'P0001', message: 'application unavailable' },
+      });
       const [saved] = await db.select().from(paid_effect).where(successorWhere);
       expect(saved.state).toBe('receipt_ready');
       expect(saved.input_json).toEqual(successorInput.input);
