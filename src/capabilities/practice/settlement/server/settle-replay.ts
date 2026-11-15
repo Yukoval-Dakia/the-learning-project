@@ -19,7 +19,7 @@ import {
   coerceMs,
   subjectKey,
 } from '@/kernel/read-models/assessment-settlements';
-import { resetPosteriorToPriorIfNoEvidence } from '@/kernel/records/item-calibration';
+import { recomputeQuestionDifficultyPosterior } from '@/kernel/records/joint-calibration';
 import { orchestrateCascadeRevert } from '@/kernel/settlement-cascade-revert';
 import { unfoldFamilyCalibration } from './personalized-difficulty';
 import { clearCalibrationBelowThreshold } from './recalibration';
@@ -71,24 +71,21 @@ export async function revertSettlementMember(
       };
     }
   }
-  // YUK-439 (A4「更正跟随有效判分」) — 同判别子删联合标定证据（reapply 落新 settlement
-  // id ⇒ 新证据行，不双计）。**对所有成员执行**，包括 fsrsOnly / retained-FSRS 的 replay
-  // 成员：theta 虽 abstain，executePlan 仍按 plan.calibration 写过证据行，提前 return 会
-  // 漏删。删后该题若无证据行，同事务把后验修回先验——标定批的候选只从有证据的题里选，
-  // 零证据题不会再进批，不修就会把已撤销作答永久留在 effectiveB 读链里（幽灵校准）。
+  // Reapply mints a new settlement id. Remove the old contribution even for
+  // fsrsOnly members, then rebuild from surviving evidence in this same transaction.
   const removedEvidence = await tx
     .delete(difficulty_calibration_evidence)
     .where(eq(difficulty_calibration_evidence.attempt_event_id, member.id))
     .returning({ question_id: difficulty_calibration_evidence.question_id });
   for (const questionId of new Set(removedEvidence.map((row) => row.question_id))) {
-    await resetPosteriorToPriorIfNoEvidence(tx, questionId);
+    await recomputeQuestionDifficultyPosterior(tx, questionId);
   }
 
   // Drop this member's difficulty label. Reapply mints a new event id, so the old label would double.
   // Falling under the minimum does not clear b_calib by itself. Clear it here,
   // or the undone attempt keeps feeding effectiveB.
   // 〔YUK-439：b_calib 已退出 effectiveB 读链，clear 保留为旧列的 hygiene（无害）；
-  //   读链头 b_post 的修复见上面的 evidence 删除 + 后验回先验。〕
+  //   读链头 b_post 的修复见上面的 evidence 删除 + 单题重算。〕
   if (member.fsrsOnly) return null;
   const removedLabels = await tx
     .delete(difficulty_calibration_label)

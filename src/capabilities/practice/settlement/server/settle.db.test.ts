@@ -18,14 +18,18 @@ import { FsrsStateSchema } from '@/core/schema/event/blocks';
 //     <domain>` xact 锁在同事务内可观测。
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { evidenceWeight, priorTau, updateDifficultyPosterior } from '@/core/difficulty-posterior';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   assessment_issuance,
   assessment_submission,
+  difficulty_calibration_evidence,
   evaluation,
   evaluation_group,
   event,
+  item_calibration,
   knowledge,
   mastery_state,
   material_fsrs_state,
@@ -41,6 +45,8 @@ import {
   normalizeQuestionRowToContract,
 } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { applyItemPrior } from '@/kernel/records/item-calibration';
+import { runJointCalibrationBatch } from '@/kernel/records/joint-calibration';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { activateEvaluation, insertInitialEvaluationHead } from './activate';
 import { ASSESSMENT_SETTLEMENT_ACTION, learningSettlement } from './settle';
@@ -150,16 +156,16 @@ async function writeIndependentReceipt(
 /** 单 submission group + head 同事务（§11 原子不变量）。 */
 async function seedChain(
   prefix: string,
-  opts: { kcs?: string[]; submittedAt?: Date } = {},
+  opts: { kcs?: string[]; submittedAt?: Date; question?: SeedIds } = {},
 ): Promise<SeedIds> {
   const db = testDb();
-  const qid = `${prefix}_q`;
+  const qid = opts.question?.qid ?? `${prefix}_q`;
   const issuanceId = `${prefix}_iss`;
   const groupId = `${prefix}_grp`;
   const submissionId = `${prefix}_sub`;
   const submittedAt = opts.submittedAt ?? NOW;
-  await seedQuestionRow(qid, { kcs: opts.kcs });
-  const { revisionId } = await publishAdmittedForGroup(qid);
+  if (!opts.question) await seedQuestionRow(qid, { kcs: opts.kcs });
+  const { revisionId } = opts.question ?? (await publishAdmittedForGroup(qid));
   await db.insert(assessment_issuance).values({
     issuance_id: issuanceId,
     revision_id: revisionId,
@@ -300,6 +306,173 @@ async function settlementEvents(groupId?: string) {
 
 describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
   beforeEach(resetDb);
+
+  // @invariant concurrency: settlement and nightly rebuild one posterior from exactly the live frozen evidence, including duplicate delivery, corrections and complete retraction
+  // @fails-if nightly overwrites a committed settlement with a stale evidence set, a replay double-learns, or removed evidence remains in the posterior
+  it('updates difficulty at settlement and reconciles duplicates and retractions under the nightly lock', async () => {
+    const db = testDb();
+    const first = await seedChain('posterior_0');
+    const seeds = [first];
+    await applyItemPrior(db, {
+      questionId: first.qid,
+      source: 'fixed_anchor',
+      draft: { b_logit: 0, confidence: 1, reasoning: 'fixed reference' },
+    });
+    const posterior = async () => {
+      const [row] = await db
+        .select()
+        .from(item_calibration)
+        .where(eq(item_calibration.question_id, first.qid));
+      return row;
+    };
+    const prior = await posterior();
+    for (let i = 0; i < 5; i++) {
+      const seed =
+        i === 0
+          ? first
+          : await seedChain(`posterior_${i}`, {
+              question: first,
+              submittedAt: new Date(NOW.getTime() + i * 1000),
+            });
+      if (i > 0) seeds.push(seed);
+      await seedEvaluation(seed, `posterior_ev_${i}`, {
+        unitResults: [unitResult(`${first.qid}::u`, 1)],
+      });
+      expect(
+        (await activate(`posterior_ev_${i}`, { effectiveId: null, generation: 0 })).status,
+      ).toBe('activated');
+      expect((await posterior()).calibration_n).toBe(i + 1);
+    }
+    const learned = await posterior();
+    expect(learned.b_post).toBeLessThan(prior.b_post ?? 0);
+    await activate('posterior_ev_4', { effectiveId: 'posterior_ev_4', generation: 1 });
+    expect(await posterior()).toEqual(learned);
+    const originals = await settlementEvents();
+    await seedEvaluation(seeds[4], 'posterior_corrected', {
+      attempt: 2,
+      unitResults: [unitResult(`${first.qid}::u`, 0)],
+      aggregate: { kind: 'points_total', points: 0, policy: { kind: 'sum' } },
+    });
+    await runJointCalibrationBatch(db, { now: NOW });
+    expect(
+      (await activate('posterior_corrected', { effectiveId: 'posterior_ev_4', generation: 1 }))
+        .status,
+    ).toBe('activated');
+    const corrected = await posterior();
+    expect(corrected.calibration_n).toBe(5);
+    expect(corrected.b_post).toBeGreaterThan(learned.b_post ?? 0);
+
+    // Hold the correction's real transaction after settlement. Nightly must wait,
+    // then rebuild from the committed survivors rather than its earlier candidate read.
+    let release!: () => void;
+    let entered!: (pid: number) => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ready = new Promise<number>((resolve) => {
+      entered = resolve;
+    });
+    await seedEvaluation(seeds[4], 'posterior_manual_4', {
+      attempt: 3,
+      provenance: { source: 'manual', assisted: false },
+      unitResults: [unitResult(`${first.qid}::u`, 1)],
+    });
+    const withdrawal = db.transaction(async (tx) => {
+      await acquireLearningStateWriteLock(tx);
+      const result = await activateEvaluation(
+        tx,
+        {
+          evaluation_id: 'posterior_manual_4',
+          expected_effective_id: 'posterior_corrected',
+          expected_generation: 2,
+        },
+        { settle: learningSettlement, actorRef: 'test', now: NOW },
+      );
+      expect(result.status).toBe('activated');
+      const [row] = await tx.execute<{ pid: number }>(sql`SELECT pg_backend_pid() AS pid`);
+      entered(row.pid);
+      await gate;
+    });
+    const pid = await Promise.race([
+      ready,
+      withdrawal.then(() => {
+        throw new Error('withdrawal ended before the lock barrier');
+      }),
+    ]);
+    const nightly = runJointCalibrationBatch(db, { now: NOW });
+    try {
+      await vi.waitFor(async () => {
+        const [row] = await db.execute<{ waiting: boolean }>(sql`
+          SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE ${pid}::int = ANY(pg_blocking_pids(pid))) AS waiting
+        `);
+        expect(row.waiting).toBe(true);
+      });
+    } finally {
+      release();
+      await Promise.all([withdrawal, nightly]);
+    }
+    const rows = await db
+      .select()
+      .from(difficulty_calibration_evidence)
+      .where(eq(difficulty_calibration_evidence.question_id, first.qid));
+    expect(rows).toHaveLength(4);
+    const expected = updateDifficultyPosterior(
+      { mu: 0, tau: priorTau('fixed_anchor') },
+      rows.map((row) => ({
+        theta: row.theta_snapshot,
+        score: row.score,
+        weight: evidenceWeight({
+          source: row.evidence_source,
+          judgeRoute: row.judge_route,
+          judgeConfidence: row.judge_confidence,
+          modelAgreementRate: null,
+        }),
+      })),
+    );
+    expect((await posterior()).b_post).toBeCloseTo(expected.bPost, 6);
+    const reconciled = await posterior();
+    await runJointCalibrationBatch(db, { now: NOW });
+    expect((await posterior()).b_post).toBe(reconciled.b_post);
+    for (let i = 3; i >= 0; i--) {
+      await seedEvaluation(seeds[i], `posterior_manual_${i}`, {
+        attempt: 2,
+        provenance: { source: 'manual', assisted: false },
+        unitResults: [unitResult(`${first.qid}::u`, 1)],
+      });
+      expect(
+        (
+          await activate(`posterior_manual_${i}`, {
+            effectiveId: `posterior_ev_${i}`,
+            generation: 1,
+          })
+        ).status,
+      ).toBe('activated');
+      expect((await posterior()).calibration_n).toBe(i);
+    }
+    expect(await posterior()).toMatchObject({
+      b: prior.b,
+      b_anchor: prior.b_anchor,
+      source: prior.source,
+      confidence: prior.confidence,
+      b_post: prior.b_post,
+      posterior_variance: prior.posterior_variance,
+      calibration_n: 0,
+      calibration_source: 'prior',
+      calibration_weight: null,
+      last_calibrated_at: null,
+    });
+    expect(
+      await db
+        .select()
+        .from(event)
+        .where(
+          inArray(
+            event.id,
+            originals.map((row) => row.id),
+          ),
+        ),
+    ).toEqual(expect.arrayContaining(originals));
+  });
 
   it('首次激活全对单 KC：FSRS good 卡 + θ̂ success 一次（bounded adapter 恰一次）+ snapshot brackets', async () => {
     const db = testDb();
