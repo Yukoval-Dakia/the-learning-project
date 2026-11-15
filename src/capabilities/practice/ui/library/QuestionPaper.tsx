@@ -6,6 +6,7 @@ import { FoldList } from '@/ui-next/primitives/FoldList';
 import { Expand } from '@/ui-next/public';
 import type { QuestionFullDetail } from './library-api';
 import { kindWord } from './library-copy';
+import { PublishedQuestionFace, usePublishedQuestionFace } from './PublishedQuestionVersion';
 import { QuestionFigures } from './QuestionFigures';
 import { questionHref } from './QuestionLine';
 
@@ -22,6 +23,11 @@ function useLink(navigate: (to: string) => void) {
 /**
  * The question on white paper (R2): stem, options, small parts. The answer stays folded behind
  * 「看答案」 so opening a question you got wrong never spoils trying it again.
+ *
+ * YUK-1848 — the frozen published face is the primary read (full response_spec,
+ * multi-slot select.text, material binding). The live flat projection below is
+ * the explicit fallback for legacy/no-publication rows — it never shadows an
+ * available published face.
  */
 export function QuestionPaper({
   detail,
@@ -36,6 +42,11 @@ export function QuestionPaper({
   const link = useLink(navigate);
   const choices = detail.choices_md ?? [];
   const variants = detail.family.members.filter((m) => !m.is_self);
+  const face = usePublishedQuestionFace(detail.id);
+  // Published face is the primary read; the live flat row only renders for the
+  // explicit legacy/no-publication states — never as a loading placeholder and
+  // never alongside an available face.
+  const legacy = face.kind === 'unavailable';
 
   return (
     <section className="qd-paper" aria-labelledby="qd-paper-h">
@@ -43,23 +54,32 @@ export function QuestionPaper({
         <h2 id="qd-paper-h" className="qd-label">
           题目
         </h2>
-        {onEdit && (
+        {onEdit && legacy && (
           <button type="button" className="ql-text-btn un-hit" onClick={onEdit}>
             修改
           </button>
         )}
       </div>
-      <MathMarkdown className="qd-stem un-read" notation={detail.notation}>
-        {detail.prompt_md.trim() || '（这道题没有文字题面）'}
-      </MathMarkdown>
+      {face.kind === 'available' ? (
+        <PublishedQuestionFace face={face} onEdit={onEdit} />
+      ) : face.kind !== 'unavailable' ? (
+        <PublishedQuestionFace face={face} />
+      ) : (
+        <>
+          <p className="qd-quiet">{face.message} 以下为编辑底稿视图。</p>
+          <MathMarkdown className="qd-stem un-read" notation={detail.notation}>
+            {detail.prompt_md.trim() || '（这道题没有文字题面）'}
+          </MathMarkdown>
+        </>
+      )}
       {isLowJudgeConfidence(detail.ingestion_judge_confidence) && (
         <p className="qd-low-confidence">
           这道题录入时认得把握不高，内容可能有错{onEdit ? '，不对的话可以修改' : ''}。
         </p>
       )}
-      <QuestionFigures detail={detail} />
+      {legacy && <QuestionFigures detail={detail} />}
 
-      {choices.length > 0 && (
+      {legacy && choices.length > 0 && (
         <ol className="qd-choices">
           {choices.map((choice, index) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: options are positional; text can repeat.
@@ -73,7 +93,7 @@ export function QuestionPaper({
         </ol>
       )}
 
-      {detail.parts.length > 0 && (
+      {legacy && detail.parts.length > 0 && (
         <ol className="qd-parts">
           {detail.parts.map((part) => (
             <li key={part.id}>
