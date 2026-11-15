@@ -17,8 +17,8 @@ import {
 } from '../api/task-continuation-contracts';
 import { getFrozenPaperDetail } from './assessment/paper-detail';
 import { paperBindingId, readPaperAssessmentBinding } from './assessment/paper-issuance';
-import { isPaperIntentSource } from './paper-intent-sources';
 import type { PaperDetailResult } from './paper-detail';
+import { isPaperIntentSource } from './paper-intent-sources';
 import { transitionReviewSession } from './review-session-lifecycle';
 
 type Session = typeof learning_session.$inferSelect;

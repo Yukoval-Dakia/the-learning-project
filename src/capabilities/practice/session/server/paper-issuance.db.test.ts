@@ -20,12 +20,12 @@ import {
 import { createAnswerDraft } from '../api/paper-answer-route';
 import { createPaperReviewSession } from '../api/paper-session-create';
 import { createPaperSubmission } from '../api/paper-submit-route';
+import { PATCH as transitionReview } from '../api/review-session-detail';
 import {
-  GET as readContinuation,
   PATCH as navigatePaper,
+  GET as readContinuation,
   POST as resumePaper,
 } from '../api/task-continuation';
-import { PATCH as transitionReview } from '../api/review-session-detail';
 import { submitNativePaperAttempt } from './assessment/paper-attempt';
 import { readPaperAssessmentBinding } from './assessment/paper-issuance';
 import { getPaperDetail } from './paper-detail';

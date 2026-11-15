@@ -14,7 +14,6 @@ import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
 import { answer, artifact, learning_session, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import type { PaperContinuation, PaperTaskRef } from '../../api/paper-contracts';
 import {
   type JudgeVerdictProjection,
   resolveVerdictsForAttempts,
@@ -27,6 +26,7 @@ import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+import type { PaperContinuation, PaperTaskRef } from '../../api/paper-contracts';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Response types (contract for L-practice-ui)
