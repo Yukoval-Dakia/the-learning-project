@@ -65,6 +65,7 @@ describe('memory ingest concurrency', () => {
     });
     await writeEvent(db, {
       ...sourceEvent(sourceId),
+      session_id: 'session-generic-concurrent',
       actor_ref: 'self',
       outcome: 'success',
       ingest_at: new Date(),
@@ -99,15 +100,19 @@ describe('memory ingest concurrency', () => {
       options ? deterministicSendId(options) : null,
     );
     const dependencies = {
-      loadEvent: async () => sourceEvent(sourceId),
+      loadEvent: async () => ({
+        ...sourceEvent(sourceId),
+        session_id: 'session-generic-concurrent',
+      }),
       memoryClient: memoryClientMock({ addEventMemoryOnce, findByEventId }),
     };
     const firstHandler = buildMemoryEventIngestHandler(db, { send }, dependencies);
     const secondHandler = buildMemoryEventIngestHandler(db, { send }, dependencies);
+    const originalClaim = secondHandler;
 
     const settled = await Promise.allSettled([
       firstHandler([ingestJob(sourceId)]),
-      secondHandler([ingestJob(sourceId)]),
+      originalClaim([ingestJob(sourceId)]),
     ]);
 
     expect(settled.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);

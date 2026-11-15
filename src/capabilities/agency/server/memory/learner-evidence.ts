@@ -6,8 +6,8 @@ import { eq, inArray, sql } from 'drizzle-orm';
 import { allowsDerivation } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { event, learning_session } from '@/db/schema';
-import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
+import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 
 /**

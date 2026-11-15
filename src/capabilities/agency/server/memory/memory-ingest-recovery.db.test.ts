@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { requestCopilotConversationDeletion } from '@/capabilities/copilot/server/conversation-lifecycle';
 import { event, learning_session, provider_attempt, provider_attempt_admission } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { type Mem0Like, type MemoryEventInput, createMemoryClient } from '@/server/ai/mem0/client';
@@ -10,7 +11,6 @@ import {
 } from '@/server/ai/provider-attempt-runtime';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { memoryClientMock } from '../../../../../tests/helpers/memory-client-mock';
-import { requestCopilotConversationDeletion } from '@/capabilities/copilot/server/conversation-lifecycle';
 import type { MemoryIngestReplayRequest } from './memory-ingest-recovery-contract';
 import {
   assertMemoryIngestReplayGrant,
@@ -185,6 +185,9 @@ describe('explicit single-event memory ingest recovery', () => {
     const agent = await stalledSource('agent-output', 'agent');
     await expect(authorizeMemoryIngestReplay(testDb(), agent)).rejects.toThrow(
       /existing user event/,
+    );
+    await expect(claimMemoryIngest(testDb(), agent.sourceEventId)).rejects.toThrow(
+      /source excluded/,
     );
     const historical = await stalledSource('historical-non-ask');
     const historicalGrant = await authorizeMemoryIngestReplay(testDb(), historical);
@@ -410,24 +413,25 @@ describe('explicit single-event memory ingest recovery', () => {
     ]);
   });
 
+  // @invariant security: sessionless owner-edited verbatim enters the provider only through its existing claim contract, while sessionless inferred asks remain excluded
+  // @fails-if sessionless edits are rejected or sessionless inferred asks reach any provider lookup/add
   it('keeps a sessionless owner-edited conjecture verbatim while rejecting sessionless asks', async () => {
     const sourceId = 'sessionless-owner-edit';
-    await writeEvent(testDb(), {
-      id: sourceId,
-      actor_kind: 'user',
-      actor_ref: 'owner',
-      action: 'rate',
-      subject_kind: 'event',
-      subject_id: 'conjecture-sessionless',
-      payload: {
-        rating: 'accept',
-        conjecture_id: 'conjecture-sessionless',
-        corrected_by_owner: true,
-        corrected_claim_md: 'Preserve this corrected claim verbatim.',
-      },
-      outcome: 'success',
-      ingest_at: new Date(),
-    });
+    await testDb()
+      .update(event)
+      .set({
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: 'conjecture-sessionless',
+        session_id: null,
+        payload: {
+          rating: 'accept',
+          conjecture_id: 'conjecture-sessionless',
+          corrected_by_owner: true,
+          corrected_claim_md: 'Preserve this corrected claim verbatim.',
+        },
+      })
+      .where(eq(event.id, (await stalledSource(sourceId)).sourceEventId));
     const boundary = providerBoundary();
     await buildMemoryEventIngestHandler(testDb(), boundary.boss, {
       memoryClient: memoryClientMock({
@@ -439,21 +443,21 @@ describe('explicit single-event memory ingest recovery', () => {
     })([{ data: { event_id: sourceId } }]);
     expect(boundary.add).not.toHaveBeenCalled();
 
-    await writeEvent(testDb(), {
-      id: 'sessionless-inferred-ask',
-      actor_kind: 'user',
-      actor_ref: 'owner',
-      action: 'experimental:copilot_user_ask',
-      subject_kind: 'query',
-      subject_id: 'query-sessionless',
-      payload: { user_message: 'This inferred ask must not be admitted.' },
-      outcome: 'success',
-      ingest_at: new Date(),
-    });
+    const askId = 'sessionless-inferred-ask';
+    await testDb()
+      .update(event)
+      .set({
+        action: 'experimental:copilot_user_ask',
+        subject_kind: 'query',
+        subject_id: 'query-sessionless',
+        session_id: null,
+        payload: { user_message: 'This inferred ask must not be admitted.' },
+      })
+      .where(eq(event.id, (await stalledSource(askId)).sourceEventId));
     await expect(
       buildMemoryEventIngestHandler(testDb(), boundary.boss, {
         memoryClient: boundary.client,
-      })([{ data: { event_id: 'sessionless-inferred-ask' } }]),
+      })([{ data: { event_id: askId } }]),
     ).resolves.toBeUndefined();
     expect(boundary.add).not.toHaveBeenCalled();
     expect(boundary.getAll).not.toHaveBeenCalled();
