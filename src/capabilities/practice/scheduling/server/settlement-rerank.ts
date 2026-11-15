@@ -113,7 +113,7 @@ export async function handleSettlementRerankDelivery(
       .select()
       .from(event)
       .where(eq(event.id, assessmentAttemptEventId(member.inputs.submissionId)));
-    if (attempt?.payload.issuance_id !== binding.issuanceId || attempt.subject_kind !== 'question')
+    if (attempt?.payload.issuance_id !== issuanceId || attempt.subject_kind !== 'question')
       return finish({ status: 'skipped', reason: 'sealed stream attempt unavailable' });
     // Carry keeps the issuance-bound row id while changing its date. Admission
     // prevents a move between locating that row and locking its actual partition.
