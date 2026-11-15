@@ -3,7 +3,7 @@ import type { Tx } from '@/db/client';
 import { readLearnerProfilesAsBatch } from '@/kernel/learner-profile/read';
 import { readCauseJudgment } from '@/kernel/read-models/cause-judgment';
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
-import { listDerivableActiveMisconceptionsForKcs } from '@/kernel/read-models/failure-learning-context';
+import { listDerivableMisconceptionEvidenceForKcs } from '@/kernel/read-models/failure-learning-context';
 import type { TeachingLearnerPicture } from '../../tasks/teaching-turn';
 
 // The caller owns the read-only repeatable-read snapshot, including KC selection.
@@ -21,13 +21,15 @@ export async function loadTeachingLearnerPicture(
     }),
     readCauseJudgment(tx, { knowledge_ids: [firstKnowledgeId], as_of: asOf }),
     getFailureAttemptsForDerivation(tx, { limit: 200 }),
-    listDerivableActiveMisconceptionsForKcs(tx, [firstKnowledgeId]),
+    listDerivableMisconceptionEvidenceForKcs(tx, [firstKnowledgeId]),
   ]);
   const profile = profiles.items.find((item) => item.knowledge_id === firstKnowledgeId);
   const ability = profile?.ability;
   const mastery = ability?.kind === 'available' ? masteryBandView(ability.reading) : null;
   const topCauses = causes.items.find((item) => item.knowledge_id === firstKnowledgeId)?.top_causes;
-  const permittedTitles = new Map(misconceptions.map((row) => [row.id, row.title]));
+  // Permission to reuse a soft AI prior does not make it a confirmed weakness.
+  const confirmedMisconceptions = misconceptions.filter((row) => row.source === 'hard');
+  const permittedTitles = new Map(confirmedMisconceptions.map((row) => [row.id, row.title]));
 
   return {
     selection: 'first_learning_item_kc',
@@ -61,6 +63,6 @@ export async function loadTeachingLearnerPicture(
         return [{ answer_excerpt: answer.slice(0, 400), at: failure.created_at.toISOString() }];
       })
       .slice(0, 2),
-    active_misconceptions: misconceptions.slice(0, 5).map((row) => row.title.slice(0, 120)),
+    active_misconceptions: confirmedMisconceptions.slice(0, 5).map((row) => row.title.slice(0, 120)),
   };
 }
