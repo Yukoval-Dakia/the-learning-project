@@ -346,17 +346,32 @@ it('refuses external candidate fetches whose arguments copy observed learner tex
       { tool: step.tool, args: step.args },
     ];
     await runQuestionPreparer(testDb(), job.id, job.data);
-    // The next model turn carries the soft-stop result as a role:"tool" message; the
-    // assistant's own tool_calls arguments legitimately still contain the submitted
-    // args, so only the tool-result content is asserted against echoing learner text.
-    const nextBody = bodies[2] as { messages?: { role?: string; content?: unknown }[] };
-    const toolResults = (nextBody.messages ?? []).filter((msg) => msg.role === 'tool');
-    expect(toolResults).toHaveLength(2);
-    const refusal = JSON.stringify(toolResults.map((msg) => msg.content));
-    expect(refusal).toContain('learner_external_egress_refused');
-    expect(refusal.includes('我在草稿纸'), `${step.tool} refusal must not echo learner text`).toBe(
-      false,
+    // Bind to the external-fetch result alone: the assistant's own tool_calls
+    // arguments legitimately still carry the submitted args, and the preceding
+    // query_mistakes result carries the observed note. openai-completions
+    // correlates each role:"tool" result to its assistant call via tool_call_id.
+    const nextBody = bodies[2] as {
+      messages?: {
+        role?: string;
+        tool_call_id?: string;
+        tool_calls?: { id: string; function?: { name?: string } }[];
+        content?: unknown;
+      }[];
+    };
+    const messages = nextBody.messages ?? [];
+    const fetchCallId = messages
+      .flatMap((msg) => msg.tool_calls ?? [])
+      .find((call) => call.function?.name?.endsWith(step.tool))?.id;
+    if (!fetchCallId) throw new Error(`${step.tool} tool_call missing from next turn`);
+    const fetchResult = messages.find(
+      (msg) => msg.role === 'tool' && msg.tool_call_id === fetchCallId,
     );
+    const refusal = JSON.parse(String(fetchResult?.content)) as { error?: string };
+    expect(refusal.error).toContain('learner_external_egress_refused');
+    expect(
+      refusal.error?.includes('我在草稿纸'),
+      `${step.tool} refusal must not echo learner text`,
+    ).toBe(false);
     const actions = (await testDb().select({ action: event.action }).from(event)).map(
       (row) => row.action,
     );
