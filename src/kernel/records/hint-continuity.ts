@@ -423,10 +423,6 @@ export async function admitHintSend(
       throw new ApiError('hint_request_conflict', 'hint input differs from the frozen draft', 409);
     if (frozenDraft) {
       assertDraftCoordinate(input, coordinate, frozenDraft.focus, frozenDraft);
-      // Revalidate the exact ACK version; never replace the claim's frozen input.
-      const current = await readFocusedSavedDraft(tx, frozenDraft.focus);
-      if (canonicalHash(current.response_set) !== frozenDraft.response_digest)
-        throw new ApiError('draft_focus_stale', 'saved draft content differs', 409);
       await recordStudyAssistanceExposure(tx, {
         issuanceId: input.issuanceId,
         questionId: input.questionId,

@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetTestConfig } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
+import type { ResponseSetT } from '@/core/schema/assessment/response';
 import {
   ai_task_runs,
   event,
@@ -17,8 +18,10 @@ import {
   normalizeQuestionGroupToContract,
 } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { admitHintSend, claimIssuedHint } from '@/kernel/records/hint-continuity';
 import { type RunnerMessage, __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { saveResponseDraft } from '../grading/public';
 import { type RunTaskFn, planSolveHint, startSolveSession } from './solve-session';
 
 const r2 = vi.hoisted(() => ({ get: vi.fn() }));
@@ -159,7 +162,12 @@ async function seed(options: { inline?: string; unsupported?: boolean; reference
     questionId: root.id,
     issuanceId: issued.issuance.issuance_id,
   });
-  return { ...session, issuanceId: issued.issuance.issuance_id };
+  return {
+    ...session,
+    issuanceId: issued.issuance.issuance_id,
+    issuance: issued.issuance,
+    responseSpec: contract.response_spec,
+  };
 }
 
 beforeEach(async () => {
@@ -178,6 +186,85 @@ afterEach(() => {
 });
 
 describe('frozen solve image task payload', () => {
+  // @invariant concurrency: autosave after claim preserves the authorized frozen answer and single-send identity
+  // @fails-if admission requires the latest draft, replaces the frozen answer, or allows a changed focus or duplicate send
+  it('admits the frozen saved answer after a newer autosave without reopening its claim', async () => {
+    const s = await seed();
+    const slot = s.responseSpec.slots.find((candidate) => candidate.part_id === 'issued-part');
+    if (!slot || !('options' in slot)) throw new Error('fixture choice slot missing');
+    const original: ResponseSetT = {
+      entries: [{ slot_id: slot.slot_id, kind: 'choice', option_ids: [slot.options[0].option_id] }],
+    };
+    const saved = await saveResponseDraft(db, {
+      issuance_id: s.issuanceId,
+      response_set: original,
+      expected_save_epoch: 0,
+    });
+    if (saved.status !== 'saved') throw new Error(saved.status);
+    const focus = {
+      question_id: 'media-root',
+      issuance_id: s.issuanceId,
+      revision_id: s.issuance.binding.revision_id,
+      save_epoch: saved.save_epoch,
+    };
+    const request = {
+      issuanceId: s.issuanceId,
+      questionId: focus.question_id,
+      rung: 0,
+      requestId: 'hint-before-autosave',
+    };
+    const claim = await claimIssuedHint(db, { ...request, draftFocus: focus });
+    if (!claim.frozenDraft) throw new Error('saved draft was not frozen');
+    const admission = { ...request, draftSnapshotDigest: canonicalHash(claim.frozenDraft) };
+    expect(
+      await saveResponseDraft(db, {
+        issuance_id: s.issuanceId,
+        response_set: {
+          entries: [
+            { slot_id: slot.slot_id, kind: 'choice', option_ids: [slot.options[1].option_id] },
+          ],
+        },
+        expected_save_epoch: saved.save_epoch,
+      }),
+    ).toMatchObject({ status: 'saved', save_epoch: saved.save_epoch + 1 });
+    await admitHintSend(db, admission);
+    expect(
+      await db
+        .select({ id: event.id, payload: event.payload })
+        .from(event)
+        .where(
+          inArray(event.id, [
+            claim.claimId,
+            `${claim.claimId}:draft-read`,
+            `${claim.claimId}:send`,
+          ]),
+        )
+        .orderBy(event.dispatch_seq),
+    ).toMatchObject([
+      {
+        id: claim.claimId,
+        payload: {
+          draft_snapshot: {
+            focus,
+            response_digest: canonicalHash(original),
+            entries: original.entries,
+          },
+        },
+      },
+      { id: `${claim.claimId}:draft-read`, payload: { kind: 'chat_context' } },
+      { id: `${claim.claimId}:send` },
+    ]);
+    await expect(
+      claimIssuedHint(db, {
+        ...request,
+        draftFocus: { ...focus, save_epoch: saved.save_epoch + 1 },
+      }),
+    ).rejects.toMatchObject({ code: 'hint_request_conflict' });
+    await expect(admitHintSend(db, admission)).rejects.toMatchObject({
+      code: 'hint_outcome_unknown',
+    });
+  });
+
   // @invariant security: the vision runner receives only original issued image bytes
   // @fails-if private or unissued media reaches the provider or the vision route loses its image blocks
   it('sends base64 image blocks through the real task runner and logs the vision route offline', async () => {
