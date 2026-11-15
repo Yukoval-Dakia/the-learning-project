@@ -47,7 +47,11 @@ vi.mock('@/server/ai/embed', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/server/ai/embed')>()),
   EMBED_MODEL: 'text-embedding-v4',
   embedText: async () => embedState.vector,
-  embedMany: async (texts: string[]) => {
+  embedMany: async (
+    texts: string[],
+    attempt?: import('@/server/ai/embed').EmbedProviderAttemptOptions,
+  ) => {
+    await attempt?.beforeSend?.();
     await embedState.onBatch?.();
     return texts.map(() => embedState.vector.slice());
   },

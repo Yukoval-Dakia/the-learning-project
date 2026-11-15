@@ -451,11 +451,11 @@ export const PROVIDER_LANES = [
           'embedMany emits ceil(input_count / 10) sequential requests; publication embeds one question, while nightly runs at most 100 per-question calls, 10 knowledge chunks, and the existing bounded per-part solution-prior facet calls',
       },
       durableIdentity:
-        'one provider_attempt per chunk under the caller operation anchor; publication and nightly question sends share the embed_backfill/question_embedding paid identity keyed by question row version and exact text/model/embed-version/dimensions, independently of delivery id',
+        'one provider_attempt per chunk under the caller operation anchor; publication and nightly question sends share the embed_backfill/question_embedding paid identity keyed by question row version and exact text/model/embed-version/dimensions, independently of delivery id; only an applied not_sent control receipt advances an append-only no-send attempt coordinate',
       timeout: '15 seconds per chunk with AbortController cancellation',
       clientRetry: 'none; the fetch executes once per attempt wrapper invocation',
       redelivery:
-        'API calls are not redelivered; llm queues allow two retries, but question receipt-ready/applied results replay without payment and sending/unknown outcomes stay held; knowledge and solution-prior calls retain their existing queue retry behavior',
+        'API calls are not redelivered; llm queues allow two retries, but question vector receipts replay without payment, proven no-send controls permit a subsequent attempt, and sending/unknown outcomes stay held; knowledge and solution-prior calls retain their existing queue retry behavior',
       fanOut:
         'publication sends at most one question text per admitted question/revision job; nightly reads at most 100 questions, 100 knowledge rows and 100 solution-prior parts, with sequential chunks of at most 10 texts and the prior owner enforcing facet bounds/deadline',
       evidence: [
@@ -476,11 +476,12 @@ export const PROVIDER_LANES = [
             'recordPaidEffectResult',
             'recordPaidEffectApplication',
             'markPaidEffectUnknown',
+            'settleExpiredPaidEffectSends',
           ],
           contains: [
             "family: 'embed_backfill'",
             "unit: 'question_embedding'",
-            "effect.kind === 'held'",
+            "gate.outcome === 'held'",
           ],
         },
         {

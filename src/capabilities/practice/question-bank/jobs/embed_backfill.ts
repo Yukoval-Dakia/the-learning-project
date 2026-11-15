@@ -13,13 +13,16 @@ import {
   knowledgeEmbedText,
   questionEmbedText,
 } from '@/core/embed-source';
+import { computePaidEffectIdentity } from '@/core/paid-work/protocol/paid-effect-protocol';
 import { lockPaidEffectControlFamily } from '@/core/paid-work/server/paid-effect-control';
 import {
+  admitPaidEffectIntent,
   markPaidEffectUnknown,
   readPaidEffect,
   recordPaidEffectApplication,
   recordPaidEffectResult,
   reservePaidEffect,
+  settleExpiredPaidEffectSends,
 } from '@/core/paid-work/server/paid-effect-store';
 import type { Db } from '@/db/client';
 import { isEmbedRevisionCurrent } from '@/db/embed-currency';
@@ -29,6 +32,7 @@ import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 import {
   EMBED_DIMS,
   EMBED_MODEL,
+  EmbeddingRequestNotSentError,
   type EmbedProviderAttemptOptions,
   embedMany,
 } from '@/server/ai/embed';
@@ -149,74 +153,145 @@ export async function runQuestionEmbedding(
     derivationAllowed,
     publicationCurrent,
   );
-  // Delivery ids never enter paid identity: publication retries and the next
-  // night's sweep reuse the same receipt, even after queue retention expires.
   const deliveryId = providerAttempt.operationAnchor ?? `question-embed:${row.id}:${row.version}`;
-  const effect = await reservePaidEffect(
-    db,
-    {
-      family: 'embed_backfill',
-      entityId: row.id,
-      entityRevision: String(row.version),
-      unit: 'question_embedding',
-      input: { text, model: EMBED_MODEL, embed_version: EMBED_VERSION, dimensions: EMBED_DIMS },
-    },
-    {
-      backend: 'pg-boss',
-      deliveryId,
-      leaseExpiresAt: providerAttempt.deadlineAt,
-    },
-  );
-  if (effect.kind === 'held') return 'held';
-  if (effect.kind === 'winner') {
+  const baseInput = {
+    text,
+    model: EMBED_MODEL,
+    embed_version: EMBED_VERSION,
+    dimensions: EMBED_DIMS,
+  };
+  const prepared = await db.transaction(async (tx) => {
+    await lockPaidEffectControlFamily(tx, 'embed_backfill');
+    // Like source-verify rechecks, only a proven not_sent terminal receipt may
+    // advance the attempt coordinate. Frozen receipts and unknowns never reopen.
+    for (let notSentAttempt = 0; ; notSentAttempt += 1) {
+      const input = {
+        family: 'embed_backfill',
+        entityId: row.id,
+        entityRevision: String(row.version),
+        unit: 'question_embedding',
+        input:
+          notSentAttempt === 0 ? baseInput : { ...baseInput, not_sent_attempt: notSentAttempt },
+      };
+      await admitPaidEffectIntent(tx, input);
+      const identity = computePaidEffectIdentity(input);
+      const snapshot = await readPaidEffect(tx, identity);
+      if (!snapshot) throw new Error('question embedding intent missing');
+      if (
+        snapshot.state === 'applied' &&
+        (snapshot.result as { status?: string } | null)?.status === 'not_sent'
+      )
+        continue;
+      return { input, identity, snapshot };
+    }
+  });
+  const effect = { identity: prepared.identity };
+  let expectedFence = prepared.snapshot.fence;
+  if (['sending', 'unknown', 'voided', 'cancelled'].includes(prepared.snapshot.state))
+    return 'held';
+  if (prepared.snapshot.state === 'pending') {
+    const gate: { claim?: { fence: number }; outcome?: 'held' | 'completed'; rejected: boolean } = {
+      rejected: false,
+    };
     try {
       const vector = await embedQuestionTextForIngest(
         row,
         {
           ...providerAttempt,
           beforeSend: async () => {
+            // embedMany checks credentials/endpoint before invoking this wire gate.
+            // A failure here leaves the intent pending and safely retryable.
             await providerAttempt.beforeSend?.();
-            const [current] = await db
-              .select({ id: question.id })
-              .from(question)
-              .where(sourceCurrent)
-              .limit(1);
-            if (!current) throw new Error('question embedding source no longer authorized/current');
+            const reservation = await reservePaidEffect(db, prepared.input, {
+              backend: 'pg-boss',
+              deliveryId,
+              leaseExpiresAt: providerAttempt.deadlineAt,
+            });
+            if (reservation.kind !== 'winner') {
+              gate.outcome = reservation.kind === 'held' ? 'held' : 'completed';
+              throw new EmbeddingRequestNotSentError('send_not_authorized');
+            }
+            gate.claim = reservation;
+            expectedFence = reservation.fence;
+            try {
+              const [current] = await db
+                .select({ id: question.id })
+                .from(question)
+                .where(sourceCurrent)
+                .limit(1);
+              if (!current)
+                throw new Error('question embedding source no longer authorized/current');
+            } catch (error) {
+              gate.rejected = true;
+              throw new EmbeddingRequestNotSentError('send_not_authorized', error);
+            }
           },
         },
         embedFn,
       );
+      if (!gate.claim) throw new Error('embedding provider did not enter the send gate');
+      const fence = gate.claim.fence;
       await db.transaction((tx) =>
-        recordPaidEffectResult(
-          tx,
-          effect.identity,
-          deliveryId,
-          { vector },
-          { fence: effect.fence },
-        ),
+        recordPaidEffectResult(tx, effect.identity, deliveryId, { vector }, { fence }),
       );
     } catch (error) {
-      // Includes an uncertain receipt commit. The store refuses to erase a known
-      // result; a committed receipt can still be replayed after this job fails.
-      await db.transaction(async (tx) => {
-        await lockPaidEffectControlFamily(tx, effect.identity.family);
-        if ((await readPaidEffect(tx, effect.identity))?.state === 'sending') {
-          await markPaidEffectUnknown(
+      if (gate.outcome === 'held') return 'held';
+      if (gate.outcome === 'completed') {
+        const receipt = await readPaidEffect(db, effect.identity);
+        if (!receipt) throw new Error('question embedding receipt missing');
+        expectedFence = receipt.fence;
+      } else if (!gate.claim) {
+        throw error;
+      } else if (gate.rejected || error instanceof EmbeddingRequestNotSentError) {
+        const fence = gate.claim.fence;
+        await db.transaction(async (tx) => {
+          await recordPaidEffectResult(
             tx,
             effect.identity,
             deliveryId,
-            'question_embedding_unresolved',
-            { fence: effect.fence },
+            { status: 'not_sent', reason: 'provider_send_not_authorized' },
+            { fence },
           );
-        }
-      });
-      throw error;
+          await recordPaidEffectApplication(tx, effect.identity, {
+            question_id: row.id,
+            version: row.version,
+            status: 'not_sent',
+          });
+        });
+        // Source/permission changes are control outcomes, never bought vectors.
+        if (gate.rejected) return 'skipped';
+        throw error;
+      } else {
+        const fence = gate.claim.fence;
+        // A lost receipt commit may already be durable. Never erase it as unknown.
+        await db.transaction(async (tx) => {
+          await lockPaidEffectControlFamily(tx, effect.identity.family);
+          const current = await readPaidEffect(tx, effect.identity);
+          if (current?.state === 'sending' && current.fence === fence) {
+            await markPaidEffectUnknown(
+              tx,
+              effect.identity,
+              deliveryId,
+              'question_embedding_unresolved',
+              { fence },
+            );
+          }
+        });
+        throw error;
+      }
     }
   }
   return db.transaction(async (tx) => {
     await lockPaidEffectControlFamily(tx, effect.identity.family);
     const receipt = await readPaidEffect(tx, effect.identity);
-    const vector = (receipt?.result as { vector?: number[] } | null)?.vector;
+    if (
+      !receipt ||
+      !['receipt_ready', 'applied'].includes(receipt.state) ||
+      receipt.fence !== expectedFence
+    )
+      return 'held';
+    if ((receipt.result as { status?: string } | null)?.status === 'not_sent') return 'skipped';
+    const vector = (receipt.result as { vector?: number[] } | null)?.vector;
     if (!vector || vector.length !== EMBED_DIMS || vector.some((v) => !Number.isFinite(v))) {
       throw new Error('question embedding receipt has no usable vector');
     }
@@ -243,7 +318,13 @@ export async function runQuestionEmbedding(
     ) {
       const written = await tx
         .update(question)
-        .set(stamp)
+        .set({
+          embedding: stamp.embedding,
+          embed_model: stamp.embed_model,
+          embed_version: stamp.embed_version,
+          embed_content_hash: stamp.embed_content_hash,
+          embed_source_revision: stamp.embed_source_revision,
+        })
         .where(
           and(
             sourceCurrent,
@@ -408,7 +489,9 @@ export async function runEmbedBackfill(
    *  DashScope client. */
   embedFn: typeof embedMany = embedMany,
 ): Promise<number> {
+  await settleExpiredPaidEffectSends(db, { family: 'embed_backfill' });
   let total = 0;
+  let heldQuestions = 0;
 
   // YUK-1603 — currency sweep first, so provenance repairs are free of provider calls
   // and sweep-invalidated rows are re-embedded by the stale passes in this same run.
@@ -438,6 +521,7 @@ export async function runEmbedBackfill(
   for (const row of qs) {
     const outcome = await runQuestionEmbedding(db, row.id, providerAttempt, embedFn);
     if (outcome === 'embedded') total += 1;
+    if (outcome === 'held') heldQuestions += 1;
   }
 
   const kStale = or(
@@ -494,6 +578,10 @@ export async function runEmbedBackfill(
 
   total += await embedSolutionPriorVectors(db, limit, providerAttempt, embedFn);
 
+  if (heldQuestions > 0)
+    throw new Error(
+      `question embedding has ${heldQuestions} held paid obligations; embedded=${total}`,
+    );
   return total;
 }
 

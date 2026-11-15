@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 
+import { settleExpiredPaidEffectSends } from '@/core/paid-work/server/paid-effect-store';
 import type { Db } from '@/db/client';
 import { type EmbedProviderAttemptOptions, embedMany } from '@/server/ai/embed';
 import { runQuestionEmbedding } from './embed_backfill';
@@ -34,6 +35,7 @@ export async function runPublicationEmbed(
   embedFn: typeof embedMany = embedMany,
 ): Promise<'embedded' | 'skipped'> {
   const parsed = PublicationEmbedJobData.parse(data);
+  await settleExpiredPaidEffectSends(db, { family: 'embed_backfill' });
   const result = await runQuestionEmbedding(
     db,
     parsed.group_id,
