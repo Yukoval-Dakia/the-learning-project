@@ -186,6 +186,38 @@ function seedRow(over: Partial<typeof drawing.$inferInsert> = {}) {
     .returning();
 }
 
+/** A published revision plus one open (unsubmitted) issuance for a question. */
+async function seedOpenIssuance(questionId: string): Promise<string> {
+  const [q] = await db.select().from(question).where(eq(question.id, questionId));
+  const contract = normalizeQuestionGroupToContract(q, []);
+  contract.integrity_digest = contractIntegrityDigest(contract);
+  const revisionId = `rev_${newId()}`;
+  await db.insert(question_revision).values({
+    revision_id: revisionId,
+    group_id: questionId,
+    revision_ordinal: 1,
+    integrity_digest: contract.integrity_digest,
+    structure: contract.structure,
+    response_spec: contract.response_spec,
+    scoring_basis: contract.scoring_basis,
+    execution_plan: contract.execution_plan,
+    availability: 'general_pool',
+    published_at: new Date(),
+  });
+  const issuanceId = `iss_${newId()}`;
+  await db.insert(assessment_issuance).values({
+    issuance_id: issuanceId,
+    revision_id: revisionId,
+    part_ids: [contract.structure.parts[0].part_id],
+    material_bindings: [],
+    option_order: [],
+    claim_policy: 'unbounded',
+    claim_status: 'unclaimed',
+    issued_at: new Date(),
+  });
+  return issuanceId;
+}
+
 describe('drawing service invariants', () => {
   beforeEach(resetDb);
 
@@ -518,6 +550,69 @@ describe('drawing service invariants', () => {
     const [oldRow] = await db.select().from(drawing).where(eq(drawing.id, secondId));
     expect(oldRow?.status).toBe('expired');
     expect(sends).toHaveLength(3);
+  });
+
+  // @invariant grading: an unjudged lineage question whose brief carries none
+  // of its reference answer proceeds to draw, and records exactly one
+  // chat_context study_assistance exposure against its uniquely-open issuance.
+  // @fails-if a clean brief is still refused, or admission writes zero/two+
+  // exposure rows or targets a submitted/ambiguous coordinate.
+  it('unjudged question with an answer-free brief draws and records one exposure', async () => {
+    const session = sessionId();
+    const reference = '摩擦力方向沿斜面向上，大小等于 mgsinθ';
+    const questionId = await seedQuestion({ reference_md: reference });
+    const issuanceId = await seedOpenIssuance(questionId);
+    const ledger = new TurnSourceLedger();
+    ledger.note({ kind: 'question', id: questionId });
+    const sends: string[] = [];
+    const outcome = await requestDrawing(
+      { db, sessionId: session, taskRunId: `run_${newId()}`, actorRef: 'test', ledger },
+      { brief: '画出斜面上物块的受力示意图', alt: '受力示意图' },
+      { boss: async () => stubBoss(sends) },
+    );
+    expect(outcome.status).toBe('ready');
+    expect(sends).toHaveLength(1);
+
+    const exposures = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        sql`${event.action} = 'experimental:assessment_assistance' AND ${event.subject_id} = ${issuanceId}`,
+      );
+    expect(exposures).toHaveLength(1);
+    const payload = exposures[0]?.payload as Record<string, unknown>;
+    expect(payload.kind).toBe('chat_context');
+    expect(payload.phase).toBe('before_submit');
+    expect(payload.dose).toBeNull();
+  });
+
+  // @invariant security: a brief that quotes the unjudged question's reference
+  // answer keeps the typed refusal — no drawing row, no job, no exposure.
+  // @fails-if an answer-bearing brief is admitted, dispatched, or recorded.
+  it('unjudged question with an answer-bearing brief still refuses', async () => {
+    const session = sessionId();
+    const reference = '摩擦力方向沿斜面向上，大小等于 mgsinθ';
+    const questionId = await seedQuestion({ reference_md: reference });
+    const issuanceId = await seedOpenIssuance(questionId);
+    const ledger = new TurnSourceLedger();
+    ledger.note({ kind: 'question', id: questionId });
+    const sends: string[] = [];
+    const outcome = await requestDrawing(
+      { db, sessionId: session, taskRunId: `run_${newId()}`, actorRef: 'test', ledger },
+      { brief: `把答案画出来：${reference}`, alt: '答案' },
+      { boss: async () => stubBoss(sends) },
+    );
+    expect(outcome.status).toBe('unavailable');
+    expect((outcome as { issues: { code: string }[] }).issues[0]?.code).toBe('unjudged_source');
+    expect(sends).toHaveLength(0);
+    expect(await db.select().from(drawing).where(eq(drawing.session_id, session))).toHaveLength(0);
+    const exposures = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(
+        sql`${event.action} = 'experimental:assessment_assistance' AND ${event.subject_id} = ${issuanceId}`,
+      );
+    expect(exposures).toHaveLength(0);
   });
 });
 
