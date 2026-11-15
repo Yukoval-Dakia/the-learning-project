@@ -25,6 +25,7 @@ import {
   memoryReconcileHandoffEventId,
   persistIngestCompleted,
   readIngestCompleted,
+  writeMemoryHandoffRecord,
 } from './memory-reconcile-handoff-store';
 import { buildMemoryEventIngestHandler } from './triggers';
 
@@ -61,7 +62,18 @@ async function stalledSource(sourceId = 'stalled-owner-event', actor: 'user' | '
       },
     },
   });
-  await claimMemoryIngest(db, sourceId);
+  if (actor === 'user') {
+    await claimMemoryIngest(db, sourceId);
+  } else {
+    // Existing excluded-source records must remain inspectable without admitting a new add.
+    await db.transaction((tx) =>
+      writeMemoryHandoffRecord(tx, sourceId, 'add_started', {
+        version: 1,
+        handoff_kind: 'add_started',
+        source_event_id: sourceId,
+      }),
+    );
+  }
   const markerId = memoryReconcileHandoffEventId('add_started', sourceId);
   await db
     .update(event)
@@ -183,9 +195,7 @@ describe('explicit single-event memory ingest recovery', () => {
     ]);
     expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
     const agent = await stalledSource('agent-output', 'agent');
-    await expect(authorizeMemoryIngestReplay(testDb(), agent)).rejects.toThrow(
-      /existing user event/,
-    );
+    await expect(authorizeMemoryIngestReplay(testDb(), agent)).rejects.toThrow(/source excluded/);
     await expect(claimMemoryIngest(testDb(), agent.sourceEventId)).rejects.toThrow(
       /source excluded/,
     );
