@@ -115,11 +115,14 @@ export function createConversationDrafts(store: StoreApi<CompanionState>) {
       clear() {
         if (!original || read(sessionId) !== original) return;
         if (original.text === raw) {
-          cleared = empty();
-          write(sessionId, cleared);
+          const next = empty();
+          write(sessionId, next);
+          // A pending draft shadows the map entry: clear reaches that draft so a refusal
+          // restore does not land where finishCreate would overwrite it.
+          cleared = creating?.sessionId === sessionId && creating.draft ? creating.draft : next;
         } else if (original.text === '') {
           // Page prompts can be sent without ever occupying the composer.
-          cleared = original;
+          cleared = creating?.sessionId === sessionId && creating.draft ? creating.draft : original;
         }
       },
       restore() {
@@ -129,7 +132,15 @@ export function createConversationDrafts(store: StoreApi<CompanionState>) {
           read(sessionId) !== cleared
         )
           return false;
-        write(sessionId, { text: raw, handed: null });
+        const restored: Draft = { text: raw, handed: null };
+        if (creating?.sessionId === sessionId && creating.draft) {
+          // The visible box belongs to the pending draft: restore there, and the create's
+          // select/finish carries the refused words instead of dropping them.
+          creating.draft = restored;
+          store.setState({ draft: restored.text });
+        } else {
+          write(sessionId, restored);
+        }
         cleared = undefined;
         return true;
       },
