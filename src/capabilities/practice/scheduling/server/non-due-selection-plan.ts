@@ -1,4 +1,8 @@
-import { estimateStreamItemMinutes, nonDueQuestionFloor } from './stream-budget';
+import {
+  estimateStreamItemMinutes,
+  nonDueQuestionFloor,
+  pricedStreamItemMinutes,
+} from './stream-budget';
 
 interface NonDueSelectionSignal {
   refKind: 'question' | 'paper';
@@ -8,7 +12,7 @@ interface NonDueSelectionSignal {
 
 interface NonDueSelectionInputs<Signal extends NonDueSelectionSignal> {
   signals: readonly Signal[];
-  dueDrafts: readonly { item_kind: 'question' | 'paper' }[];
+  dueDrafts: readonly { item_kind: 'question' | 'paper'; estimatedMinutes?: number }[];
   max: number;
   dailyBudgetMinutes: number | undefined;
   questionMinutes: number | undefined;
@@ -78,7 +82,7 @@ export function planNonDueSelection<Signal extends NonDueSelectionSignal>({
   });
   const questionCost = estimateStreamItemMinutes('question', questionMinutes);
   const dueMinutes = dueDrafts.reduce(
-    (sum, item) => sum + estimateStreamItemMinutes(item.item_kind, questionMinutes),
+    (sum, item) => sum + pricedStreamItemMinutes(item, questionMinutes),
     0,
   );
   const floorMinutes = floorPassthrough.length * questionCost;
@@ -99,7 +103,9 @@ export function planNonDueSelection<Signal extends NonDueSelectionSignal>({
   // reserve sampler capacity.
   const fixedCount = dueDrafts.length + recallLocked.length + floorPassthrough.length;
   const nonDueBudget = Math.max(0, max - fixedCount);
-  const fixedMinutes = fixedCount * estimateStreamItemMinutes('question', questionMinutes);
+  const fixedMinutes = dueDrafts.some((item) => item.estimatedMinutes !== undefined)
+    ? dueMinutes + (recallLocked.length + floorPassthrough.length) * questionCost
+    : fixedCount * questionCost;
   const timeQuestionBudget =
     dailyBudgetMinutes === undefined
       ? nonDueBudget

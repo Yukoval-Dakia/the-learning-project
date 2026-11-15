@@ -150,6 +150,9 @@ export async function composeSoftmaxStream(
   const allDueDrafts: Omit<StreamPlanItem, 'position'>[] = dueItems.map((d) => ({
     item_kind: 'question',
     ref_id: d.questionId,
+    ...(inputs.questionMinutesByQuestion?.[d.questionId] !== undefined
+      ? { estimatedMinutes: inputs.questionMinutesByQuestion[d.questionId] }
+      : {}),
     ...presentDueQuestion(d.knowledgeLabel, d.source),
     // 到期项不带选题信号（它们不经 sampler/MFI）——signals 缺省 {}（materialize 兜底）。
   }));
@@ -328,7 +331,13 @@ export async function composeSoftmaxStream(
   }
 
   // 顺序：到期（L1 序，热身/优先） → 非到期散题（recall 透传 + 抽中） → 卷收口。
-  const assembled = [...dueDrafts, ...nonDueDrafts, ...paperDrafts];
+  const assembled = [...dueDrafts, ...nonDueDrafts, ...paperDrafts].map((item) => ({
+    ...item,
+    ...(item.item_kind === 'question' &&
+    inputs.questionMinutesByQuestion?.[item.ref_id] !== undefined
+      ? { estimatedMinutes: inputs.questionMinutesByQuestion[item.ref_id] }
+      : {}),
+  }));
 
   // ── L3 容量守门（铁律④）：超 max 截断。**到期项 + 被抽中非到期项受保护**——截断只砍卷
   // （paper，确定性、不记 π_i）尾部。到期项 presence（铁律②）优先于容量；被抽中非到期项

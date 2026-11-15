@@ -71,6 +71,7 @@ export interface ComposerInputs {
   dailyBudgetMinutes?: number;
   /** 实测/默认单题用时；缺省时沿用 的 2 分钟。 */
   questionMinutes?: number;
+  questionMinutesByQuestion?: Readonly<Record<string, number>>;
 }
 
 export interface StreamPlanItem {
@@ -93,6 +94,8 @@ export interface StreamPlanItem {
   signals?: Record<string, unknown>;
   /** In-memory paper price. Not a stored column; the view recounts slots. */
   questionCount?: number;
+  /** In-memory question price from the shared scoped pace reader. */
+  estimatedMinutes?: number;
 }
 
 export interface StreamPlan {
@@ -177,7 +180,13 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
     ...presentNonDueQuestion('frontier', f.knowledgeLabel),
   }));
 
-  const all = [...solo, ...papers, ...tail, ...frontierTail];
+  const all = [...solo, ...papers, ...tail, ...frontierTail].map((item) => ({
+    ...item,
+    ...(item.item_kind === 'question' &&
+    inputs.questionMinutesByQuestion?.[item.ref_id] !== undefined
+      ? { estimatedMinutes: inputs.questionMinutesByQuestion[item.ref_id] }
+      : {}),
+  }));
   const budgeted = fitStreamToTimeBudget(all, inputs.dailyBudgetMinutes, inputs.questionMinutes);
   const capped = capStreamToItemMax(budgeted.kept, max);
   const droppedDue = budgeted.kept.filter((item) => item.source === 'decay').length;

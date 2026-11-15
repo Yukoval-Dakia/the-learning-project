@@ -34,7 +34,7 @@ import { type CollectedSignal, collectCandidateSignals } from './candidate-signa
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { completeDailyStreamIfDone } from './daily-stream-close';
 import { attachPaperQuestionCounts } from './paper-rank';
-import { readQuestionPace } from './question-pace';
+import { readQuestionPacesForQuestions } from './question-pace';
 import { selectScopedKnowledgeFill } from './scoped-fill';
 import {
   type SelectionObservationInput,
@@ -815,13 +815,16 @@ async function getKnowledgeScopedStream(
 
   const [dailyBudget, questionPace] = await Promise.all([
     resolveDailyPracticeBudget(db),
-    readQuestionPace(db),
+    readQuestionPacesForQuestions(
+      db,
+      rows.filter((row) => row.item_kind === 'question').map((row) => row.ref_id),
+    ),
   ]);
   const budget = {
     pace: dailyBudget.pace,
     minutes: Math.min(
       dailyBudget.minutes,
-      SCOPED_QUESTION_LIMIT * estimateStreamItemMinutes('question', questionPace.minutes),
+      SCOPED_QUESTION_LIMIT * estimateStreamItemMinutes('question', questionPace.overall.minutes),
     ),
   };
   const scope: StreamScope = {
@@ -837,7 +840,6 @@ async function getKnowledgeScopedStream(
     rows,
     budget,
     scope,
-    questionMinutes: questionPace.minutes,
     openingLine: scopedOpeningLine(knowledgeRow.name, rows.length, preparing),
   });
 }
@@ -857,8 +859,16 @@ async function trimStoredPendingItemsToBudget(
       .orderBy(asc(practice_stream_item.position));
 
     const { rows: eligible, recoveryRowIds } = await filterProspectiveStreamQuestions(tx, current);
+    const paces = await readQuestionPacesForQuestions(
+      tx,
+      eligible.filter((row) => row.item_kind === 'question').map((row) => row.ref_id),
+    );
     const deleteIds = planStoredStreamBudgetTrim({
-      rows: await attachPaperQuestionCounts(tx, eligible),
+      rows: (await attachPaperQuestionCounts(tx, eligible)).map((row) => ({
+        ...row,
+        estimatedMinutes:
+          row.item_kind === 'question' ? paces.byQuestion.get(row.ref_id)?.minutes : undefined,
+      })),
       recoveryRowIds,
       budgetMinutes,
       questionMinutes,
@@ -968,18 +978,30 @@ export async function getStream(
 
   const [budget, questionPace] = await Promise.all([
     resolveDailyPracticeBudget(db),
-    readQuestionPace(db),
+    readQuestionPacesForQuestions(
+      db,
+      rows.filter((row) => row.item_kind === 'question').map((row) => row.ref_id),
+    ),
   ]);
   const gated = await filterProspectiveStreamQuestions(db, rows);
   rows = gated.rows;
   const exceedsBudget = storedStreamExceedsBudget({
-    rows: await attachPaperQuestionCounts(db, rows),
+    rows: (await attachPaperQuestionCounts(db, rows)).map((row) => ({
+      ...row,
+      estimatedMinutes:
+        row.item_kind === 'question' ? questionPace.byQuestion.get(row.ref_id)?.minutes : undefined,
+    })),
     recoveryRowIds: gated.recoveryRowIds,
     budgetMinutes: budget.minutes,
-    questionMinutes: questionPace.minutes,
+    questionMinutes: questionPace.unscoped.minutes,
   });
   if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && exceedsBudget) {
-    rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes, questionPace.minutes);
+    rows = await trimStoredPendingItemsToBudget(
+      db,
+      date,
+      budget.minutes,
+      questionPace.unscoped.minutes,
+    );
   }
 
   rows = (await filterProspectiveStreamQuestions(db, rows)).rows;
@@ -988,7 +1010,6 @@ export async function getStream(
     date,
     rows,
     budget,
-    questionMinutes: questionPace.minutes,
     scope: null,
     // Templated opening; composer_nightly may replace it with AI text.
     openingLine:
