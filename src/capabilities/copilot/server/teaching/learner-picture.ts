@@ -23,7 +23,8 @@ export async function loadTeachingLearnerPicture(
     getFailureAttemptsForDerivation(tx, { limit: 200 }),
     listDerivableActiveMisconceptionsForKcs(tx, [firstKnowledgeId]),
   ]);
-  const ability = profiles.items.find((item) => item.knowledge_id === firstKnowledgeId)?.ability;
+  const profile = profiles.items.find((item) => item.knowledge_id === firstKnowledgeId);
+  const ability = profile?.ability;
   const mastery = ability?.kind === 'available' ? masteryBandView(ability.reading) : null;
   const topCauses = causes.items.find((item) => item.knowledge_id === firstKnowledgeId)?.top_causes;
   const permittedTitles = new Map(misconceptions.map((row) => [row.id, row.title]));
@@ -33,6 +34,10 @@ export async function loadTeachingLearnerPicture(
     knowledge_id: firstKnowledgeId,
     as_of: asOf.toISOString(),
     mastery_band: mastery && !mastery.unknown ? A5_BANDS[mastery.band] : UNKNOWN_BAND_LABEL,
+    independent_evidence: profile?.uncertainty.independent_evidence ?? {
+      kind: 'unknown',
+      reason: 'learner_profile_unavailable',
+    },
     top_causes:
       topCauses?.known && topCauses.value !== null
         ? topCauses.value.slice(0, 3).map(({ category, count }) => ({
