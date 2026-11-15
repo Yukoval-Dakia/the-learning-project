@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import type { MouseEvent } from 'react';
+import { type MouseEvent, useCallback } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { questionEvidenceHref } from '@/ui/lib/question-evidence-routes';
 import { FoldList } from '@/ui-next/primitives/FoldList';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
@@ -19,8 +20,6 @@ import { LIBRARY_KEY, useLookups } from './use-library';
 
 type Attempt = QuestionFullDetail['timeline'][number];
 type Open = (href: string) => (event: MouseEvent<HTMLAnchorElement>) => void;
-
-const eventHref = (id: string) => `/events/${encodeURIComponent(id)}`;
 
 function minutes(ms: number | null): string | null {
   if (ms == null) return null;
@@ -70,12 +69,14 @@ function Summary({
 
 function RecordItem({
   record,
+  questionId,
   currentPrompt,
   notation,
   causeLabel,
   open,
 }: {
   record: MistakeRecord;
+  questionId: string;
   currentPrompt: string;
   notation: string | null;
   causeLabel: (id: string) => string;
@@ -83,6 +84,7 @@ function RecordItem({
 }) {
   const word = RECORD_WORDS[record.standing];
   const promptChanged = record.promptMd.trim() !== currentPrompt.trim();
+  const evidenceHref = questionEvidenceHref(record.id, questionId);
   return (
     <li className="qd-wrong" data-standing={record.standing}>
       <div className="qd-wrong-head">
@@ -92,7 +94,7 @@ function RecordItem({
             {word}
           </span>
         )}
-        <a className="qd-evidence" href={eventHref(record.id)} onClick={open(eventHref(record.id))}>
+        <a className="qd-evidence" href={evidenceHref} onClick={open(evidenceHref)}>
           看证据
         </a>
       </div>
@@ -144,8 +146,14 @@ export function MyHistory({
     queryFn: () => listQuestionMistakes(detail.id),
   });
   const { causeLabel } = useLookups();
+  const restoreHistory = useCallback((element: HTMLElement | null) => {
+    if (!element || window.location.hash !== '#history') return;
+    element.focus({ preventScroll: true });
+    element.scrollIntoView({ block: 'start' });
+  }, []);
   const open: Open = (href) => (event) => {
-    if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0)
+      return;
     event.preventDefault();
     navigate(href);
   };
@@ -155,7 +163,13 @@ export function MyHistory({
   const attempts: readonly Attempt[] = detail.timeline;
 
   return (
-    <section className="qd-section" aria-labelledby="qd-history-h">
+    <section
+      id="history"
+      ref={restoreHistory}
+      tabIndex={-1}
+      className="qd-section"
+      aria-labelledby="qd-history-h"
+    >
       <h2 id="qd-history-h" className="qd-section-title">
         我和这道题
       </h2>
@@ -179,6 +193,7 @@ export function MyHistory({
               <RecordItem
                 key={record.id}
                 record={record}
+                questionId={detail.id}
                 currentPrompt={detail.prompt_md}
                 notation={detail.notation}
                 causeLabel={causeLabel}
@@ -207,8 +222,8 @@ export function MyHistory({
                 <span className="qd-quiet">{minutes(a.duration_ms)}</span>
                 <a
                   className="qd-evidence"
-                  href={eventHref(a.event_id)}
-                  onClick={open(eventHref(a.event_id))}
+                  href={questionEvidenceHref(a.event_id, detail.id)}
+                  onClick={open(questionEvidenceHref(a.event_id, detail.id))}
                 >
                   看证据
                 </a>

@@ -7,6 +7,11 @@ import {
   readMisconceptionTraceTarget,
   withMisconceptionOrigin,
 } from '@/ui/lib/misconception-evidence-routes';
+import {
+  questionEvidenceReturnHref,
+  readQuestionEvidenceOrigin,
+  withQuestionEvidenceOrigin,
+} from '@/ui/lib/question-evidence-routes';
 import { startEventDetailClient } from '../event-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
@@ -23,21 +28,30 @@ export const Route = createFileRoute('/events/$id')({
             returnToPlan: search.returnTo === 'learning-plan',
           }
         : undefined;
-    return { origin };
+    return {
+      origin,
+      questionOrigin: origin ? undefined : readQuestionEvidenceOrigin(search),
+    };
   },
   component: EventDetailRoute,
 });
 function EventDetailRoute() {
   const { id } = Route.useParams();
-  const { origin } = Route.useSearch();
+  const { origin, questionOrigin } = Route.useSearch();
   return (
     <StartWorkbenchShell pathname={`/events/${encodeURIComponent(id)}`}>
       <Suspense>
         <Page
           id={id}
-          navigate={(to) => startNavigate(origin ? withMisconceptionOrigin(to, origin) : to)}
+          navigate={(to) => {
+            let href = to;
+            if (origin) href = withMisconceptionOrigin(to, origin);
+            else if (questionOrigin) href = withQuestionEvidenceOrigin(to, questionOrigin);
+            startNavigate(href);
+          }}
           onBack={() => {
             if (origin) startNavigate(misconceptionReturnHref(origin));
+            else if (questionOrigin) startNavigate(questionEvidenceReturnHref(questionOrigin));
             else window.history.back();
           }}
           client={startEventDetailClient}
