@@ -57,11 +57,11 @@ import {
   savePaperAnswer,
 } from './practice-api';
 import { usePracticeClient } from './practice-client';
+import { usePaperCompanionFocus } from './use-paper-companion-focus';
 // YUK-784 — 采集判据与装配复用 PfSolo 先例（YUK-444 / #1069），不在本面重写判据：
 // shouldOfferProcessBox 决定过程框挂不挂，buildCaptureFields 负责 trim 判空 + 防御性截断
 // +「空值不发字段」。两者随 PfSolo 的提交引擎移到 use-practice-submit（YUK-1473）。
 import { buildCaptureFields, shouldOfferProcessBox } from './use-practice-submit';
-import { usePaperCompanionFocus } from './use-paper-companion-focus';
 
 // YUK-1573 — the server refuses opening / handing in a whole paper whose issued slots this
 // page cannot draw; the learner answers those questions one by one instead.
