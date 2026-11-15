@@ -1223,6 +1223,61 @@
     font-size: var(--un-fs-1);
   }
 
+  /* Canonical learner judgment (YUK-1587): focal-item facts below the three dims. */
+  & .kn-judgment {
+    display: grid;
+    gap: var(--un-sp-3);
+    width: 100%;
+    padding-top: var(--un-sp-3);
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .kn-judgment-text {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    line-height: 1.6;
+    text-wrap: pretty;
+  }
+
+  & .kn-judgment-rows {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .kn-judgment-row {
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    gap: var(--un-sp-3);
+    align-items: baseline;
+  }
+
+  & .kn-judgment-term {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-judgment-value {
+    display: grid;
+    gap: 2px;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-judgment-claim {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .kn-judgment-note {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-judgment-meta {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
   /* Two columns: the node's own material, then what points at it. */
   & .kn-detail-grid {
     display: grid;
@@ -1797,6 +1852,7 @@
     }
 
     & .kn-dims,
+    & .kn-judgment,
     & .kn-diag-body {
       animation: kn-fade-in var(--un-t-small) var(--un-ease-glide);
     }

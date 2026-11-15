@@ -21723,6 +21723,96 @@ export interface operations {
                             verification_status: string;
                             version: number;
                         }[];
+                        judgment: {
+                            ability_claim: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                /** @enum {string} */
+                                kind: "low_observed";
+                                rule: {
+                                    low: number;
+                                };
+                            } | {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                /** @enum {string} */
+                                kind: "observed";
+                                rule: {
+                                    low: number;
+                                };
+                            } | {
+                                /** @enum {string} */
+                                kind: "insufficient_evidence";
+                                reason: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "not_evaluable";
+                                /** @enum {string} */
+                                reason: "knowledge_role_not_mastery_evaluable";
+                            } | {
+                                /** @enum {string} */
+                                kind: "unavailable";
+                                reason: string;
+                            };
+                            batch: {
+                                as_of: string;
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                /** @enum {string} */
+                                version: "v0-incumbent";
+                            };
+                            judgement: string;
+                            uncertainty: {
+                                component_disagreement: {
+                                    /** @enum {string} */
+                                    kind: "unknown";
+                                    reason: string;
+                                } | {
+                                    /** @enum {string} */
+                                    calibration: "uncalibrated";
+                                    /** @enum {string} */
+                                    direction: "ability_high_retention_low" | "ability_low_retention_high";
+                                    /** @enum {string} */
+                                    kind: "divergence_observed";
+                                    rule: {
+                                        high: number;
+                                        low: number;
+                                    };
+                                } | {
+                                    /** @enum {string} */
+                                    calibration: "uncalibrated";
+                                    /** @enum {string} */
+                                    kind: "no_divergence_observed";
+                                    rule: {
+                                        high: number;
+                                        low: number;
+                                    };
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "partial_coverage";
+                                    /** @enum {string} */
+                                    missing: "ability" | "retention";
+                                    reason: string;
+                                };
+                                evidence_age: {
+                                    /** @enum {string} */
+                                    kind: "not_applicable";
+                                    reason: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "undated";
+                                    /** @enum {string} */
+                                    reason: "observed_evidence_without_timestamp";
+                                } | {
+                                    /** @enum {string} */
+                                    freshness: "fresh" | "mild" | "stale";
+                                    growing: boolean;
+                                    idle_days: number;
+                                    /** @enum {string} */
+                                    kind: "dated";
+                                };
+                            };
+                        };
                         last_evidence_at: string | null;
                         low_confidence: boolean;
                         mastery: number | null;
