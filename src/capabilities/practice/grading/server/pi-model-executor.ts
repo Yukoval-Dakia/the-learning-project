@@ -9,6 +9,7 @@ import type {
   PendingStateT,
 } from '@/core/schema/assessment';
 import { isOriginalEvidenceQuote } from '@/core/schema/assessment/evidence-quote';
+import { acceptedProcessEventId } from '@/core/schema/assessment/judgment';
 import {
   AssessmentRuleDecision,
   type AssessmentRuleDecisionT,
@@ -144,6 +145,7 @@ function citationRejections(
 ): { rejected: ModelOutcomeRejectedCitationT[]; observed: ModelObservedCitation[] } {
   const slots = new Map(request.slot_responses.map((entry) => [entry.slot_id, entry]));
   const evidenceIds = new Set([
+    ...(request.learner_processes ?? []).map((p) => acceptedProcessEventId(p.submission_id)),
     ...request.slot_responses.flatMap((entry) =>
       entry.kind === 'open' ? entry.evidence.map((item) => item.evidence_id) : [],
     ),

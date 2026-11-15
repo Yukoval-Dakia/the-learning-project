@@ -133,8 +133,8 @@ async function countEvents(action: string): Promise<number> {
 }
 
 describe('review advice answer lifecycle', () => {
-  // @invariant grading: automatic advice commits one accepted original and freezes the learner's duration and confidence into both the attempt and settlement replay inputs
-  // @fails-if preview and commit create separate submissions, the nested committed response drops the rating claim, or settlement reads different capture values from the attempt
+  // @invariant grading: automatic advice freezes the first learner process into its accepted grading input and keeps one original with the same duration and confidence through attempt and settlement
+  // @fails-if preview drops process before accepting, preview and commit create separate submissions, the nested response drops the rating claim, or settlement reads different capture values
   it('commits one automatic advice original with frozen learner capture', async () => {
     const db = testDb();
     const f = await nativeSoloHttpFixture(db);
@@ -168,6 +168,17 @@ describe('review advice answer lifecycle', () => {
     expect(await db.select().from(assessment_submission)).toHaveLength(1);
     expect(await countEvents('experimental:assessment_attempt')).toBe(1);
     expect(await countEvents('experimental:assessment_settlement')).toBe(1);
+
+    const [process] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_accepted_process'));
+    expect(process?.payload).toMatchObject({
+      submission_id: result.submission_id,
+      reasoning_trace: 'controlled variables',
+    });
+    const [candidate] = await db.select().from(evaluation);
+    expect(candidate.provenance?.input_snapshot).toMatchObject({ version: 2 });
 
     const [attempt] = await db
       .select()

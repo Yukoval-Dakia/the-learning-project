@@ -1,5 +1,5 @@
 import { stableStringify } from '../../migration/stable-stringify';
-import type { GroupEvidenceT, SubmissionRecordT } from './judgment';
+import type { AcceptedLearnerProcessT, GroupEvidenceT, SubmissionRecordT } from './judgment';
 import type { EvidenceAttachmentT } from './materials';
 import { type ResponseSetT, validateResponseSet } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
@@ -8,6 +8,7 @@ import type { PublishedQuestionRevisionT } from './revision';
 export interface EvaluationInputMember {
   submission: SubmissionRecordT;
   issued_part_ids: readonly string[];
+  learner_process?: AcceptedLearnerProcessT;
 }
 
 export class GroupInputContractError extends Error {

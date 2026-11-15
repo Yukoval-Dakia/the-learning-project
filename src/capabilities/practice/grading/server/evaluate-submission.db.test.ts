@@ -9,6 +9,7 @@
 //   4. evaluateAttempt contract lane 端到端（登记 → 落库 → 投影）；
 //   5. 绝不触碰 evaluation_effective_head（activation = YUK-1045 的范围）。
 
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { evaluateSubmission } from '@/capabilities/practice/grading/server/judge/evaluate-submission';
 import { canonicalHash } from '@/core/migration/canonical';
@@ -24,9 +25,11 @@ import {
   assessment_submission,
   evaluation,
   evaluation_group,
+  event,
   question_revision,
 } from '@/db/schema';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { prepareFormalAttemptSubmission } from './assessment/attempt';
 
 let db: Db = testDb();
 beforeEach(async () => {
@@ -160,6 +163,8 @@ async function seedContractChain(spec: SeedSpec): Promise<void> {
 }
 
 describe('YUK-1047 formal entry candidate reuse', () => {
+  // @invariant grading: a historical v1 submission cannot acquire late process or a changed candidate identity during formal replay.
+  // @fails-if backfill capture on replay or change the v1 input identity; absent-process and byte-identical candidate assertions fail.
   it('reuses the same frozen candidate for preview and commit; changed execution intent conflicts', async () => {
     await seedContractChain({
       groupId: 'reuse_g',
@@ -174,6 +179,28 @@ describe('YUK-1047 formal entry candidate reuse', () => {
       evaluation_key: 'submission:reuse_s',
     };
     const preview = await evaluateSubmission(db, request);
+    const [original] = await db.select().from(assessment_submission);
+    await prepareFormalAttemptSubmission(
+      db,
+      'solo_submit',
+      'reuse_g',
+      {
+        issuance_id: original.issuance_id,
+        submission_id: original.submission_id,
+        evaluation_group_id: original.evaluation_group_id,
+        idempotency_key: original.idempotency_key,
+        response_set: original.response_set,
+        group_evidence: original.group_evidence,
+      },
+      { reasoning_trace: 'a late capture must not backfill a historical submission' },
+    );
+    expect(
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:assessment_accepted_process')),
+    ).toHaveLength(0);
+    expect(preview.record.provenance?.input_snapshot?.version).toBe(1);
     const commit = await evaluateSubmission(db, request);
     expect.soft(commit.replayed).toBe(true);
     expect.soft(commit.record).toEqual(preview.record);

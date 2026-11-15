@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import { acceptLearnerProcess } from '@/core/assessment-input';
 import { crisisDerivationPayload } from '@/core/crisis/classify';
 import { ATTEMPT_SCHEDULING_POLICY } from '@/core/scheduling/attempt-rating';
 import {
@@ -20,6 +21,7 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import type { FormalAttemptPreview } from '@/kernel/judge';
 import { lockAssessmentAttemptCapture } from '@/kernel/locks/grading';
+import { recordAcceptedProcess } from '@/kernel/records/assessment-accepted-process';
 import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import {
   EvaluateSubmissionError,
@@ -40,6 +42,7 @@ export async function prepareFormalAttemptSubmission(
   entry: GradingEntryPoint,
   questionId: string,
   request: SaveSubmissionRequest,
+  capture?: AssessmentAttemptCaptureT,
 ) {
   const [issuance] = await database
     .select()
@@ -77,7 +80,18 @@ export async function prepareFormalAttemptSubmission(
   }
   const scopedBasis = projectIssuedScoringBasis(revision, issuance.part_ids);
   const scopedUnitIds = new Set(scopedBasis.units.map((unit) => unit.scoring_unit_id));
-  const saved = await saveSubmission(database, { ...request, actorRef: `assessment:${entry}` });
+  const saved = await database.transaction(async (tx) => {
+    const result = await saveSubmission(tx, { ...request, actorRef: `assessment:${entry}` });
+    if (result.status === 'saved') {
+      const process = acceptLearnerProcess(
+        result.submission,
+        issuance.part_ids,
+        capture?.reasoning_trace,
+      );
+      if (process) await recordAcceptedProcess(tx, process, result.submission.submitted_at);
+    }
+    return result;
+  });
   if (saved.status === 'stale_draft') {
     throw new ApiError('stale_draft', '草稿已在别处更新，请读取最新答案', 409, undefined, {
       current_save_epoch: saved.current_save_epoch,
@@ -124,6 +138,7 @@ export async function previewFormalAttempt(
   request: SaveSubmissionRequest,
   signal?: AbortSignal,
   options: {
+    capture?: AssessmentAttemptCaptureT;
     selfReport?: boolean;
     candidateId?: string;
     expectedSubmissionIds?: string[];
@@ -142,7 +157,7 @@ export async function previewFormalAttempt(
     replayed,
     assisted,
     assistance,
-  } = await prepareFormalAttemptSubmission(database, entry, questionId, request);
+  } = await prepareFormalAttemptSubmission(database, entry, questionId, request, options.capture);
   const hold = options.hold;
   const candidate = await evaluateAttempt({
     db: database,
@@ -332,6 +347,7 @@ export async function commitFormalAttempt(
     request,
     options.signal,
     {
+      capture: options.capture,
       selfReport: options.selfReport,
       modelAdmission: options.modelAdmission,
       judgeExecution: options.judgeExecution,

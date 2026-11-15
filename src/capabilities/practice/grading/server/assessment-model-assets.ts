@@ -8,6 +8,7 @@ import type {
   PendingStateT,
   VersionedAssetRefT,
 } from '@/core/schema/assessment';
+import { acceptedProcessEventId } from '@/core/schema/assessment/judgment';
 import type { LearnerHandwritingMarkerT } from '@/core/schema/assessment/materials';
 import type { Db } from '@/db/client';
 import { readFigureMaterialMarkers } from '@/kernel/read-models/figure-origin';
@@ -62,7 +63,12 @@ export async function prepareAssessmentModelInput(
   const answerText = request.slot_responses.flatMap((entry) =>
     entry.kind === 'text' || entry.kind === 'open' ? [entry.text_md ?? ''] : [],
   );
-  if ([...ruleText, ...answerText].some(containsRenderedImage))
+  const learnerProcesses = request.learner_processes ?? [];
+  if (
+    [...ruleText, ...answerText, ...learnerProcesses.map((p) => p.reasoning_trace)].some(
+      containsRenderedImage,
+    )
+  )
     return hold('rule or submitted text contains an unbound original image');
   // A question figure may show the learner's earlier work; the judge must know which.
   const figureMarkers = await readFigureMaterialMarkers(db, request.materials);
@@ -79,7 +85,12 @@ export async function prepareAssessmentModelInput(
     contains_learner_handwriting?: LearnerHandwritingMarkerT;
     asset: VersionedAssetRefT;
   }> = [];
-  const textEvidence: Array<{ evidence_id: string; text: string }> = [];
+  const textEvidence: Array<{ evidence_id: string; text: string }> = learnerProcesses.map(
+    (process) => ({
+      evidence_id: acceptedProcessEventId(process.submission_id),
+      text: process.reasoning_trace,
+    }),
+  );
   const digest = (bytes: Uint8Array | string) =>
     `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
   const read = async (ref: VersionedAssetRefT) => {
@@ -206,6 +217,7 @@ export async function prepareAssessmentModelInput(
         question_parts: request.question_parts,
         response_slots: request.response_slots,
         slot_responses: request.slot_responses,
+        ...(learnerProcesses.length > 0 ? { learner_processes: learnerProcesses } : {}),
         group_evidence: request.group_evidence,
         materials,
         image_manifest: imageManifest,
