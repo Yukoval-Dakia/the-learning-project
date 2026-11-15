@@ -129,8 +129,7 @@ function frozenThetaGuessing(
     return undefined;
   const slot = spec.slots.find((row) => row.slot_id === unit.slot_refs[0]);
   if (
-    !slot ||
-    slot.kind !== 'select' ||
+    slot?.kind !== 'select' ||
     slot.pick !== 'one' ||
     slot.axes ||
     slot.text ||

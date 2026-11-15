@@ -21,6 +21,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { evidenceWeight, priorTau, updateDifficultyPosterior } from '@/core/difficulty-posterior';
+import type { ResponseSetT } from '@/core/schema/assessment';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   assessment_issuance,
@@ -208,6 +209,25 @@ async function seedChain(
       .set({ choices_md: ['甲', '乙', '丙', '丁'] })
       .where(eq(question.id, qid));
   const { revisionId } = opts.question ?? (await publishAdmittedForGroup(qid, opts.nativeChoice));
+  let responseSet: ResponseSetT = { entries: [] };
+  if (opts.nativeChoice) {
+    const [revision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, revisionId));
+    const slot = revision.response_spec.slots[0];
+    if (slot.kind !== 'select') throw new Error('select fixture required');
+    responseSet = {
+      entries: [
+        {
+          slot_id: slot.slot_id,
+          kind: 'select',
+          state: 'answered',
+          item_ids: [slot.items[1].item_id],
+        },
+      ],
+    };
+  }
   await db.insert(assessment_issuance).values({
     issuance_id: issuanceId,
     revision_id: revisionId,
@@ -230,7 +250,7 @@ async function seedChain(
       issuance_id: issuanceId,
       revision_id: revisionId,
       evaluation_group_id: groupId,
-      response_set: { entries: [] },
+      response_set: responseSet,
       group_evidence: [],
       idempotency_key: `${prefix}_idem`,
       submitted_at: submittedAt,
@@ -241,29 +261,6 @@ async function seedChain(
       now: submittedAt,
     });
   });
-  if (opts.nativeChoice) {
-    const [revision] = await db
-      .select()
-      .from(question_revision)
-      .where(eq(question_revision.revision_id, revisionId));
-    const slot = revision.response_spec.slots[0];
-    if (slot.kind !== 'select') throw new Error('select fixture required');
-    await db
-      .update(assessment_submission)
-      .set({
-        response_set: {
-          entries: [
-            {
-              slot_id: slot.slot_id,
-              kind: 'select',
-              state: 'answered',
-              item_ids: [slot.items[1].item_id],
-            },
-          ],
-        },
-      })
-      .where(eq(assessment_submission.submission_id, submissionId));
-  }
   await writeIndependentReceipt(db, `${prefix}_receipt`, submissionId, submittedAt);
   return { qid, revisionId, issuanceId, groupId, submissionId };
 }
@@ -924,8 +921,9 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     const receipt = (await settlementEvents(seed.groupId)).find(
       (row) => row.payload.evaluation_id === 's5_ev2',
     );
+    if (!receipt) throw new Error('corrected settlement receipt missing');
     expect(
-      (receipt?.payload.replay_inputs as Record<string, unknown>).thetaGuessing,
+      (receipt.payload.replay_inputs as Record<string, unknown>).thetaGuessing,
     ).toBeUndefined();
   });
 
@@ -994,6 +992,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(newPayload.reverted_settlement_event_ids).toContain(oldEv?.id);
   });
 
+  // @invariant grading: out-of-order settlement retains the sealed legacy math and scope while counting each original occurrence once
+  // @fails-if replay upgrades an unversioned receipt to guessing credit, changes its scope, or duplicates or drops an evidence contribution
   it.each([1, 2])(
     '有序 replay：早期证据晚到，保留封存 scope v%i 和原 occurrence',
     async (scopeVersion) => {
@@ -1060,10 +1060,10 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       const m = await masteryRow('kc_a');
       expect(m?.evidence_count).toBe(2);
       expect(m?.success_count).toBe(2);
-      expect(
-        (reApplied[0]?.payload as { replay_inputs?: { thetaGuessing?: unknown } }).replay_inputs
-          ?.thetaGuessing,
-      ).toBeUndefined();
+      const replayInputs = reApplied[0]?.payload.replay_inputs as
+        | { thetaGuessing?: unknown }
+        | undefined;
+      expect(replayInputs?.thetaGuessing).toBeUndefined();
       expect(m?.theta_hat).toBeCloseTo(0.06 + 0.12 * (1 - 1 / (1 + Math.exp(-0.0672))), 14);
       expect(new Date(m?.last_outcome_at ?? 0).toISOString()).toBe(t2.toISOString());
     },
