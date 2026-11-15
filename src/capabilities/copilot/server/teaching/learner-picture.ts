@@ -26,6 +26,7 @@ export async function loadTeachingLearnerPicture(
   const ability = profiles.items.find((item) => item.knowledge_id === firstKnowledgeId)?.ability;
   const mastery = ability?.kind === 'available' ? masteryBandView(ability.reading) : null;
   const topCauses = causes.items.find((item) => item.knowledge_id === firstKnowledgeId)?.top_causes;
+  const permittedTitles = new Map(misconceptions.map((row) => [row.id, row.title]));
 
   return {
     selection: 'first_learning_item_kc',
@@ -34,9 +35,10 @@ export async function loadTeachingLearnerPicture(
     mastery_band: mastery && !mastery.unknown ? A5_BANDS[mastery.band] : UNKNOWN_BAND_LABEL,
     top_causes:
       topCauses?.known && topCauses.value !== null
-        ? topCauses.value.slice(0, 3).map(({ category, label, count }) => ({
+        ? topCauses.value.slice(0, 3).map(({ category, count }) => ({
             category,
-            label: label?.slice(0, 120) ?? null,
+            // Display labels have no derivation authority; use only the permitted owner title.
+            label: permittedTitles.get(category)?.slice(0, 120) ?? null,
             count,
           }))
         : null,
