@@ -21562,6 +21562,12 @@ export interface operations {
                             mastery_lo: number | null;
                             name: string;
                             parent_id: string | null;
+                            review_timing: {
+                                freshness: {
+                                    /** @enum {string} */
+                                    decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                };
+                            } | null;
                             /** @enum {string} */
                             role: "kc" | "goal" | "container";
                         }[];
