@@ -21,10 +21,16 @@ export function createConversationDrafts(store: StoreApi<CompanionState>) {
   const empty = (): Draft => ({ text: '', handed: null });
   drafts.set(null, empty());
 
+  // The backing map can stay unchanged while pending edits own a newer draft version.
+  function read(sessionId: string | null): Draft | undefined {
+    return creating?.sessionId === sessionId && creating.draft
+      ? creating.draft
+      : drafts.get(sessionId);
+  }
+
   function current(): Draft {
     const sessionId = store.getState().currentSessionId;
-    if (creating?.sessionId === sessionId && creating.draft) return creating.draft;
-    let draft = drafts.get(sessionId);
+    let draft = read(sessionId);
     if (!draft) {
       draft = empty();
       drafts.set(sessionId, draft);
@@ -103,11 +109,11 @@ export function createConversationDrafts(store: StoreApi<CompanionState>) {
   }
 
   function captureSend(sessionId: string, raw: string): DraftSend {
-    const original = drafts.get(sessionId);
+    const original = read(sessionId);
     let cleared: Draft | undefined;
     return {
       clear() {
-        if (!original || drafts.get(sessionId) !== original) return;
+        if (!original || read(sessionId) !== original) return;
         if (original.text === raw) {
           cleared = empty();
           write(sessionId, cleared);
@@ -120,7 +126,7 @@ export function createConversationDrafts(store: StoreApi<CompanionState>) {
         if (
           !cleared ||
           store.getState().currentSessionId !== sessionId ||
-          drafts.get(sessionId) !== cleared
+          read(sessionId) !== cleared
         )
           return false;
         write(sessionId, { text: raw, handed: null });
