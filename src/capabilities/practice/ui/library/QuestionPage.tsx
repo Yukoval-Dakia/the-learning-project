@@ -15,7 +15,7 @@ import { type QuestionFullDetail, focusTitle, isDeleted, isDraft } from './libra
 import { useLibraryClient } from './library-client';
 import { MyHistory } from './MyHistory';
 import { NextSteps } from './NextSteps';
-import { PublishedQuestionVersion } from './PublishedQuestionVersion';
+import { PublishedQuestionVersion, usePublishedQuestionFace } from './PublishedQuestionVersion';
 import { QuestionBanner } from './QuestionBanner';
 import { QuestionEditor } from './QuestionEditor';
 import { QuestionNotice } from './QuestionNotice';
@@ -46,6 +46,9 @@ function Loaded({
     [detail],
   );
   const deleted = isDeleted(detail);
+  // The published face is the paper's primary read; the folded 「当前发布版」
+  // history only makes sense while the live flat fallback is showing.
+  const face = usePublishedQuestionFace(detail.id);
 
   return (
     <main className="qd-main un-m3e-bridge" ref={publishFocus}>
@@ -60,7 +63,7 @@ function Loaded({
           onEdit={deleted ? undefined : () => setEditing(true)}
         />
       )}
-      <PublishedQuestionVersion questionId={detail.id} />
+      {face.kind !== 'available' && <PublishedQuestionVersion questionId={detail.id} />}
       <MyHistory detail={detail} navigate={navigate} />
       {!deleted && (
         <NextSteps
