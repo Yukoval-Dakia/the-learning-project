@@ -78,12 +78,14 @@ export {
   collectComposerInputs,
   resolveDailyPracticeBudget,
 } from './stream-inputs';
+
 // reRankAfterAnswer moved to stream-rerank.ts; this re-export keeps the existing
 // import path for callers and tests unchanged, and binds the legacy call below.
 import { reRankAfterAnswer } from './stream-rerank';
-export { reRankAfterAnswer };
+
 export type { StreamScope, StreamView } from './stream-view';
 export { getStreamViewItem } from './stream-view';
+export { reRankAfterAnswer };
 
 export type StreamItemRow = typeof practice_stream_item.$inferSelect;
 export type StreamItemStatus = StreamItemRow['status'];
