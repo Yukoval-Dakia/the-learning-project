@@ -33,7 +33,7 @@ import {
 } from '@/server/events/subscriptions/runtime';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { commitFormalAttempt } from '../../grading/public';
-import { settlementManifestPart } from '../../settlement/manifest-part';
+import { practiceCapability } from '../../manifest';
 import { SETTLEMENT_RERANK_SUBSCRIBER, handleSettlementRerankDelivery } from './settlement-rerank';
 import { advanceStreamItem, composeNightly, getStream } from './stream-store';
 
@@ -372,9 +372,9 @@ describe('Task 9 作答后有界增量重排 reRankAfterAnswer（YUK-361 Phase 4
         {
           name: 'practice',
           description: 'settlement rerank invariant',
-          events: settlementManifestPart.events,
+          events: practiceCapability.events,
           subscriptions: {
-            handlers: (settlementManifestPart.subscriptions?.handlers ?? []).filter(
+            handlers: (practiceCapability.subscriptions?.handlers ?? []).filter(
               (row) => row.id === SETTLEMENT_RERANK_SUBSCRIBER,
             ),
           },
