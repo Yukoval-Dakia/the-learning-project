@@ -4,6 +4,7 @@ import { ApiError, canonicalResourceResponse, errorResponse } from '@/kernel/htt
 import {
   createPracticeHintRequest,
   createPracticeSolveSession,
+  readPracticeHints,
   restorePracticeHints,
 } from '../server/solve-operations';
 import { createAnswerDraft, createPracticePaperSubmission } from '../session/public';
@@ -12,6 +13,22 @@ import { CreateSolveSubmissionBodySchema } from './solve-contracts';
 import { createSolveSubmission } from './solve-submit';
 
 type JsonObject = Record<string, unknown>;
+export async function readHintHistoryResource(req: Request): Promise<Response> {
+  let response: Response;
+  try {
+    const query = new URL(req.url).searchParams;
+    for (const key of query.keys()) {
+      if (query.getAll(key).length !== 1)
+        throw new ApiError('validation_error', 'duplicate hint coordinate parameter', 400);
+    }
+    response = Response.json(await readPracticeHints(db, Object.fromEntries(query)));
+  } catch (error) {
+    response = errorResponse(error);
+  }
+  response.headers.set('Cache-Control', 'no-store');
+  return response;
+}
+
 export async function restoreHintHistoryResource(req: Request): Promise<Response> {
   try {
     return Response.json(await restorePracticeHints(db, await req.json()));

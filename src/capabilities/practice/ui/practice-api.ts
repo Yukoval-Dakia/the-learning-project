@@ -420,6 +420,12 @@ export const revealStudyReference = (
 export type SolveHintResponse = ApiOperationJsonResponse<'createSolveHintRequest'>;
 export type SolveHintFallbackHelp = Extract<SolveHintResponse, { status: 'fallback' }>['help'];
 export type HintHistoryResponse = ApiOperationJsonResponse<'restoreHintHistory'>;
+export const readHints = (questionId: string, issuanceId: string): Promise<HintHistoryResponse> =>
+  apiOperationJson('readHintHistory', {
+    url: `/api/hint-history?issuance_id=${encodeURIComponent(issuanceId)}&question_id=${encodeURIComponent(questionId)}`,
+    method: 'GET',
+    init: { cache: 'no-store' },
+  });
 export const restoreHints = (
   questionId: string,
   issuanceId: string,

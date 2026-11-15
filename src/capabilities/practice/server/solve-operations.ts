@@ -5,12 +5,14 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { restoreIssuedHints } from '@/kernel/records/hint-continuity';
+import { readIssuedHints, restoreIssuedHints } from '@/kernel/records/hint-continuity';
 import {
   CreateHintRequestBodySchema,
   CreateSolveSessionBodySchema,
   HintHistoryResponseSchema,
+  type HintHistoryResponseT,
   HintRequestBodySchema,
+  ReadHintsQuerySchema,
   RestoreHintsBodySchema,
   StartSolveBodySchema,
 } from '../api/solve-contracts';
@@ -44,6 +46,24 @@ export async function createPracticeSolveSession(db: Db, raw: unknown) {
 export async function createPracticeHintRequest(db: Db, sessionId: string, raw: unknown) {
   const { question_id: questionId, ...body } = parseResourceInput(raw, CreateHintRequestBodySchema);
   return requestPracticeSolveHint(db, questionId, sessionId, body);
+}
+
+export async function readPracticeHints(db: Db, raw: unknown): Promise<HintHistoryResponseT> {
+  const input = parseResourceInput(raw, ReadHintsQuerySchema);
+  const state = await readIssuedHints(db, {
+    issuanceId: input.issuance_id,
+    questionId: input.question_id,
+  });
+  return HintHistoryResponseSchema.parse({
+    status: state.status,
+    next_rung: state.next_rung,
+    hints: state.hints.map((h) => ({
+      index: h.publication.rung,
+      text_md: h.publication.body,
+      kind: h.publication.kind,
+      disclosure_md: h.publication.disclosure,
+    })),
+  });
 }
 
 export async function restorePracticeHints(db: Db, raw: unknown) {

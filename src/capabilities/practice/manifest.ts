@@ -14,6 +14,7 @@ import {
   CreateSolveSubmissionBodySchema,
   HintHistoryResponseSchema,
   HintRequestResponseSchema,
+  ReadHintsQuerySchema,
   RestoreHintsBodySchema,
   SolveSessionCreatedSchema,
   SolveSessionParamsSchema,
@@ -84,6 +85,15 @@ export const practiceCapability = defineCapability({
     // 段由 server/app.ts 的 toHonoPath 转 :id/:sid 并把捕获参数透传 handler。
     // 注：/api/practice/[id]/answer 实际是 POST（P2a 声明误写 PUT，壳与包从来是 POST）。
     routes: [
+      {
+        method: 'GET',
+        path: '/api/hint-history',
+        operationId: 'readHintHistory',
+        request: { query: ReadHintsQuerySchema },
+        responses: { 200: HintHistoryResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/resource-routes').then((m) => m.readHintHistoryResource),
+      },
       {
         method: 'POST',
         path: '/api/hint-history/restorations',

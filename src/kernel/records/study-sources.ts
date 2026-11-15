@@ -26,20 +26,21 @@ export function studyMaterialAssetIds(materials: readonly SharedMaterialT[]): st
   );
 }
 
-/** Called under the publication root lock. Only proven direct source sets qualify. */
+/** Publication owns the root lock; snapshot readers omit row locks. Only proven sources qualify. */
 export async function captureStudySources(
   tx: Tx,
   groupId: string,
   partIds: string[],
   assetIds: string[],
+  lockRows = true,
 ) {
   const ids = [...new Set([groupId, ...partIds])].sort();
-  const rows = await tx
+  const questionRows = tx
     .select()
     .from(question)
     .where(inArray(question.id, ids))
-    .orderBy(question.id)
-    .for('share');
+    .orderBy(question.id);
+  const rows = await (lockRows ? questionRows.for('share') : questionRows);
   // Native part ids are local to the frozen contract, not question-row foreign keys.
   // Existing legacy part rows contribute their own provenance when present.
   const root = rows.find((row) => row.id === groupId);
@@ -49,13 +50,15 @@ export async function captureStudySources(
   const sessionIds = rows
     .map((row) => row.metadata?.ingestion_session_id)
     .filter((id): id is string => typeof id === 'string');
-  const sessions = sessionIds.length
-    ? await tx
+  const sessionRows = sessionIds.length
+    ? tx
         .select()
         .from(learning_session)
         .where(inArray(learning_session.id, [...new Set(sessionIds)].sort()))
         .orderBy(learning_session.id)
-        .for('share', { noWait: true })
+    : null;
+  const sessions = sessionRows
+    ? await (lockRows ? sessionRows.for('share', { noWait: true }) : sessionRows)
     : [];
   const questions: StudySources['questions'] = [];
   for (const row of rows) {
@@ -93,12 +96,12 @@ export async function captureStudySources(
     });
     if (!(await sourceAllowsDerivation(tx, { kind: 'question', id: row.id }))) return null;
   }
-  const docs = await tx
+  const documentRows = tx
     .select()
     .from(source_document)
     .where(inArray(source_document.id, [...documents].sort()))
-    .orderBy(source_document.id)
-    .for('share');
+    .orderBy(source_document.id);
+  const docs = await (lockRows ? documentRows.for('share') : documentRows);
   if (docs.length !== documents.size) return null;
   const allowedAssets = new Set(docs.flatMap((doc) => doc.source_asset_ids));
   const requestedAssets = [...new Set(assetIds)].sort();
@@ -111,13 +114,15 @@ export async function captureStudySources(
   });
   const lockedIds = [...new Set([...requestedAssets, ...parents])].sort();
   // Crop writers own their storage-key lock. Never wait across that lock order.
-  const assets = lockedIds.length
-    ? await tx
+  const assetRows = lockedIds.length
+    ? tx
         .select()
         .from(source_asset)
         .where(inArray(source_asset.id, lockedIds))
         .orderBy(source_asset.id)
-        .for('share', { noWait: true })
+    : null;
+  const assets = assetRows
+    ? await (lockRows ? assetRows.for('share', { noWait: true }) : assetRows)
     : [];
   const assetBindings: StudySources['assets'] = [];
   for (const id of requestedAssets) {
@@ -165,12 +170,13 @@ export async function captureStudySources(
 }
 
 /** Revision publication seals provenance; legacy rows never acquire it by inference. */
-export async function lockStudySources(
+async function verifyStudySources(
   tx: Tx,
   revisionId: string,
   groupId: string,
   partIds: string[],
   assetIds: string[],
+  lockRows: boolean,
 ) {
   const [publication] = await tx
     .select({ payload: event.payload })
@@ -186,7 +192,7 @@ export async function lockStudySources(
   const parsed = Sources.safeParse(publication?.payload.study_sources);
   if (!parsed.success)
     throw new ApiError('study_source_unknown', 'frozen source permission is unavailable', 409);
-  const current = await captureStudySources(tx, groupId, partIds, assetIds);
+  const current = await captureStudySources(tx, groupId, partIds, assetIds, lockRows);
   if (!current || canonicalHash(current) !== canonicalHash(parsed.data)) {
     throw new ApiError(
       'study_source_restricted',
@@ -195,4 +201,25 @@ export async function lockStudySources(
     );
   }
   return parsed.data;
+}
+
+export function lockStudySources(
+  tx: Tx,
+  revisionId: string,
+  groupId: string,
+  partIds: string[],
+  assetIds: string[],
+) {
+  return verifyStudySources(tx, revisionId, groupId, partIds, assetIds, true);
+}
+
+/** Caller owns a read-only snapshot; authorization uses the same source proof as writers. */
+export function readStudySources(
+  tx: Tx,
+  revisionId: string,
+  groupId: string,
+  partIds: string[],
+  assetIds: string[],
+) {
+  return verifyStudySources(tx, revisionId, groupId, partIds, assetIds, false);
 }

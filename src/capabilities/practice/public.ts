@@ -207,6 +207,7 @@ export {
 export {
   createPracticeHintRequest,
   createPracticeSolveSession,
+  readPracticeHints,
   restorePracticeHints,
 } from './server/solve-operations';
 export type { PaperTaskRef } from './session/public';

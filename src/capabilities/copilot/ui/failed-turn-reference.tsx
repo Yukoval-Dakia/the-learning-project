@@ -17,6 +17,10 @@ export type FailedTurnReferenceRenderer = ComponentType<FailedTurnReferenceProps
 
 export interface FailedTurnReferenceClient {
   readTarget(runId: string, sessionId: string): Promise<FailedTurnPracticeTargetT>;
+  readHints(
+    questionId: string,
+    issuanceId: string,
+  ): Promise<ApiOperationJsonResponse<'restoreHintHistory'>>;
   revealReference(issuanceId: string): Promise<{ reference_md: string | null }>;
   restoreHints(
     questionId: string,
@@ -38,6 +42,7 @@ type HintHistoryView =
   | { status: 'unavailable' | 'unknown'; message: string }
   | {
       status: 'received';
+      mode: 'read' | 'restore';
       target: Extract<FailedTurnPracticeTargetT, { status: 'ready' }>;
       history: ApiOperationJsonResponse<'restoreHintHistory'>;
     };
@@ -76,34 +81,46 @@ export function FailedTurnReference({
     };
   }, []);
 
-  async function readMaterial(material: 'reference' | 'hints') {
+  async function readMaterial(material: 'reference' | 'hints' | 'saved_hints') {
     if (disabled || inFlight.current) return;
     inFlight.current = true;
     const activeLifetime = lifetime.current;
     let requestedMaterial = false;
-    if (material === 'hints') setHintView({ status: 'loading' });
+    if (material !== 'reference') setHintView({ status: 'loading' });
     else setView({ status: 'loading' });
     try {
       const target = FailedTurnPracticeTarget.parse(await client.readTarget(runId, sessionId));
-      // Leaving this message during its GET must not start a later disclosure/restoration POST.
+      // Leaving this message during its target GET must not start a later material request.
       if (lifetime.current !== activeLifetime) return;
       if (target.status === 'unavailable') {
         const next: { status: 'unavailable'; message: string } = {
           status: 'unavailable',
           message: unavailableMessage(
             target.reason,
-            material === 'hints' ? '恢复已发布提示' : '查看封存参考',
+            material === 'saved_hints'
+              ? '查看已保存的提示'
+              : material === 'hints'
+                ? '恢复已发布提示'
+                : '查看封存参考',
           ),
         };
-        if (material === 'hints') setHintView(next);
+        if (material !== 'reference') setHintView(next);
         else setView(next);
         return;
       }
       requestedMaterial = true;
-      if (material === 'hints') {
-        const history = await client.restoreHints(target.question_id, target.issuance_id);
+      if (material !== 'reference') {
+        const history =
+          material === 'saved_hints'
+            ? await client.readHints(target.question_id, target.issuance_id)
+            : await client.restoreHints(target.question_id, target.issuance_id);
         if (lifetime.current !== activeLifetime) return;
-        setHintView({ status: 'received', target, history });
+        setHintView({
+          status: 'received',
+          target,
+          history,
+          mode: material === 'saved_hints' ? 'read' : 'restore',
+        });
         return;
       }
       const result = await client.revealReference(target.issuance_id);
@@ -122,6 +139,7 @@ export function FailedTurnReference({
         error instanceof ApiError &&
         (error.status === 403 ||
           error.status === 404 ||
+          (material === 'saved_hints' && error.status === 409) ||
           [
             'coordinate_mismatch',
             'reveal_unavailable',
@@ -134,21 +152,24 @@ export function FailedTurnReference({
         ? {
             status: 'unavailable',
             message:
-              material === 'hints'
-                ? '原题的已发布提示暂不可恢复，未显示提示内容。'
+              material !== 'reference'
+                ? '这次作答已不可恢复提示，未显示提示内容。'
                 : '原题参考已不可用，未显示参考内容。',
           }
         : {
             status: 'unknown',
-            message: requestedMaterial
-              ? material === 'hints'
-                ? '这次恢复的结果尚未确认，可能已经记录援助。不会自动再次请求。'
-                : '这次查看的结果尚未确认，可能已经记录援助。不会自动再次请求。'
-              : material === 'hints'
-                ? '暂时无法确认原题提示入口，尚未发起恢复提示的请求。'
-                : '暂时无法确认原题参考入口，尚未发起查看参考的请求。',
+            message:
+              material === 'saved_hints'
+                ? '已保存的提示暂时没能读取，结果尚未确认。不会自动再次读取或生成新提示；可以明确点击后再读。'
+                : requestedMaterial
+                  ? material === 'hints'
+                    ? '这次恢复的结果尚未确认，可能已经记录援助。不会自动再次请求。'
+                    : '这次查看的结果尚未确认，可能已经记录援助。不会自动再次请求。'
+                  : material === 'hints'
+                    ? '暂时无法确认原题提示入口，尚未发起恢复提示的请求。'
+                    : '暂时无法确认原题参考入口，尚未发起查看参考的请求。',
           };
-      if (material === 'hints') setHintView(next);
+      if (material !== 'reference') setHintView(next);
       else setView(next);
     } finally {
       inFlight.current = false;
@@ -156,26 +177,32 @@ export function FailedTurnReference({
   }
 
   const loading = view.status === 'loading' || hintView.status === 'loading';
-  const history = hintView.status === 'received' ? hintView.history : undefined;
   return (
     <section ref={attach} aria-label="原题的已保存帮助">
+      <p className="un-cp-reply-status">
+        查看仅限这次作答已保存的提示，不会生成下一条或新增援助记录。
+      </p>
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={disabled || loading}
+        onClick={() => void readMaterial('saved_hints')}
+      >
+        查看已保存的提示
+      </Button>
       <p className="un-cp-reply-status">恢复已发布提示可能记入援助；已提交的作答回执保留原记录。</p>
-      {hintView.status === 'idle' ||
-      hintView.status === 'loading' ||
-      hintView.status === 'unknown' ||
-      history?.status === 'outcome_unknown' ? (
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={disabled || loading}
-          onClick={() => void readMaterial('hints')}
-        >
-          {hintView.status === 'loading'
-            ? '正在核对并恢复…'
-            : hintView.status === 'unknown' || history?.status === 'outcome_unknown'
-              ? '再次恢复已发布提示（记援助）'
-              : '恢复已发布提示（记援助）'}
-        </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={disabled || loading}
+        onClick={() => void readMaterial('hints')}
+      >
+        恢复已发布提示（记援助）
+      </Button>
+      {hintView.status === 'loading' ? (
+        <p className="un-cp-reply-status" role="status">
+          正在核对原题并读取已发布提示…
+        </p>
       ) : null}
       {hintView.status === 'unavailable' || hintView.status === 'unknown' ? (
         <p className="un-cp-reply-status" role="status">
@@ -186,9 +213,13 @@ export function FailedTurnReference({
         <>
           <p className="un-cp-reply-status" role="status">
             {hintView.history.status === 'ready'
-              ? '已恢复这次作答可用的已发布提示。'
+              ? hintView.mode === 'read'
+                ? '已读取这次作答已保存的提示。'
+                : '已恢复这次作答可用的已发布提示。'
               : hintView.history.status === 'empty'
-                ? '没有可恢复的已发布提示。'
+                ? hintView.mode === 'read'
+                  ? '这次作答没有已保存的提示正文。'
+                  : '没有可恢复的已发布提示。'
                 : hintView.history.status === 'legacy_body_unavailable'
                   ? '存在旧提示使用记录，但部分正文无法恢复；这里只展示已确认发布的部分。'
                   : '仍有提示结果未确认；这里只展示已发布部分，不会自动再次请求恢复。'}
