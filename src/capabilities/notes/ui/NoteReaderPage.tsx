@@ -37,6 +37,7 @@ import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button, Chip, IconButton, UiNextRoot } from '@/ui-next/public';
 import './notes-m3e.css';
 
+import { parseNoteBodyBlocks } from '../api/contracts';
 import { blockHeadings, blockOutlineLabel, questionDetailHref } from './NoteBlocks';
 import { NoteDocBody } from './NoteDocBody';
 import { NoteEditor } from './NoteEditor';
@@ -44,6 +45,7 @@ import { NoteEmpty } from './NoteEmpty';
 import { NoteKnownIssues } from './NoteKnownIssues';
 import {
   type BodyBlock,
+  type NotePage,
   editingBlur,
   editingHeartbeat,
   getAiChanges,
@@ -59,6 +61,14 @@ const NOTE_TYPE_LABEL: Record<string, string> = {
   note_long: '长文笔记',
   interactive: '互动内容',
 };
+
+const GENERATION_FAILURE_COPY: Record<NonNullable<NotePage['generation_failure']>['kind'], string> =
+  {
+    timeout: '自动整理等待时间过长，已停止。',
+    model_or_parse: '自动整理未能得到可用的笔记内容。',
+    provider_outage: '自动整理服务暂时未能完成请求。',
+    learner_edited: '你已有编辑，自动整理没有覆盖已有正文。',
+  };
 
 // The page frame shared by every state: M3E scope, the M3 role bridge and the toast host.
 function ReaderFrame({ children }: { children: ReactNode }) {
@@ -220,13 +230,17 @@ export default function NoteReaderPage({
   // 之后随 id 变化在下面 shownId 复位块重读：同一 /notes/$id 实例被复用时（正文交叉
   // 链跳别篇笔记不 remount——见 shownId adjust 块），若不重读会沿用旧 entry，在新笔记
   // 上误亮 banner / 返回链指向旧知识点（Codex #400 F3）。
-  // 无 param → 无入口上下文（banner 不渲、strip 不高亮、返回链回退 labels[0]）。
+  // 无 param → 无入口上下文（banner 不渲、strip 不高亮）。
   const [entryKid, setEntryKid] = useState(() =>
     new URLSearchParams(window.location.search).get('entry'),
   );
 
   const note = noteQ.data;
-  const blocks = note?.body_blocks?.content ?? [];
+  const generationFailed = note?.generation_status === 'failed';
+  const failedBody = generationFailed ? parseNoteBodyBlocks(note?.body_blocks) : null;
+  const blocks = generationFailed
+    ? (failedBody?.content ?? [])
+    : (note?.body_blocks?.content ?? []);
 
   // 草稿只在进入编辑态时快照一次（见编辑 tab onClick）——不能依赖 note 对象：
   // query refetch（窗口聚焦/重连）会换引用，若挂 effect 会把未保存编辑静默覆盖。
@@ -362,13 +376,18 @@ export default function NoteReaderPage({
       </ReaderFrame>
     );
 
-  // S12 (YUK-335)：entryMatch = ?entry 严格命中的 label（有入口上下文时才 truthy，
-  // 用于 banner 文案 + strip 当前入口反白）；entryLabel = 返回链/右栏入口
-  // tag 的派生来源，命中则用命中 label，否则回退 labels[0]（无入口上下文也保返回链
-  // 不空——返回链是导航兜底，不是入口断言）。
   const entryMatch = entryKid ? (note.labels.find((l) => l.id === entryKid) ?? null) : null;
-  const entryLabel = entryMatch ?? note.labels[0] ?? null;
+  const entryLabel =
+    entryMatch ?? (generationFailed && note.labels.length !== 1 ? null : note.labels[0]) ?? null;
   const shown = mode === 'edit' ? (draft ?? []) : blocks;
+  const hasSavedBody = blocks.length > 0;
+  const generationReason = note.generation_failure
+    ? GENERATION_FAILURE_COPY[note.generation_failure.kind]
+    : null;
+  const startEditing = () => {
+    setDraft((previous) => previous ?? blocks);
+    setMode('edit');
+  };
 
   return (
     <ReaderFrame>
@@ -410,11 +429,7 @@ export default function NoteReaderPage({
             type="button"
             className="nt-mode-btn"
             aria-pressed={mode === 'edit'}
-            onClick={() => {
-              // 进入编辑态时一次性快照服务端块；已在编辑中则保持现有草稿。
-              setDraft((d) => d ?? note.body_blocks?.content ?? []);
-              setMode('edit');
-            }}
+            onClick={startEditing}
           >
             <Pencil size={14} aria-hidden="true" />
             编辑
@@ -527,6 +542,42 @@ export default function NoteReaderPage({
           )}
 
           {mode === 'read' && <NoteKnownIssues summary={note.verification_summary} />}
+
+          {generationFailed && (
+            <section className="nt-generation-state" role="status" aria-label="自动整理状态">
+              <p className="nt-generation-title">
+                {hasSavedBody ? '自动整理没有完成' : '自动整理没有完成，当前没有可阅读材料'}
+              </p>
+              {hasSavedBody && (
+                <p className="nt-generation-copy">
+                  {note.generation_failure?.kind === 'learner_edited'
+                    ? '下面保留的是你编辑过的正文。'
+                    : '下面保存的是已有材料整理，不是 AI 生成的笔记。'}
+                </p>
+              )}
+              {generationReason && <p className="nt-generation-copy">{generationReason}</p>}
+              <div className="nt-generation-actions">
+                {hasSavedBody && mode === 'read' && (
+                  <Button size="sm" variant="secondary" onClick={startEditing}>
+                    <Pencil size={14} aria-hidden="true" />
+                    编辑这份材料整理
+                  </Button>
+                )}
+                {note.labels.length > 0 && (
+                  <Button
+                    size="sm"
+                    variant="quiet"
+                    onClick={() =>
+                      navigate(entryLabel ? `/knowledge/${entryLabel.id}` : '/knowledge')
+                    }
+                  >
+                    <ArrowLeft size={14} aria-hidden="true" />
+                    返回知识
+                  </Button>
+                )}
+              </div>
+            </section>
+          )}
 
           {mode === 'edit' && draft ? (
             <NoteEditor
