@@ -16,7 +16,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, tool_operation } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { COPILOT_REPLY_ACTION, COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
-import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
+import { allowedEventIds, eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { projectLearnerToolInput } from '@/kernel/learning-content';
 import { type CopilotPrimaryView, parseCopilotPrimaryView } from '../primary-view-contract';
 import { type CopilotPublicProse, parseCopilotPublicProse } from '../public-prose-contract';
@@ -29,6 +29,7 @@ import {
   deriveCopilotRunStatus,
 } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
+import { type CopilotHelpReturnTarget, readHelpReturnTargets } from './help-return';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 import {
   publicProseFailureForReason,
@@ -65,6 +66,7 @@ export interface CopilotTurn {
   /** Accepted ask/chip owner of an AI reply; independent of revert eligibility. */
   run_id?: string;
   retryable?: boolean;
+  help_return_target?: CopilotHelpReturnTarget;
   // session_id + reply_event_id let the Dock anchor a corrective chip after a
   // refresh; both are present only on AI turns.
   session_id?: string;
@@ -450,6 +452,27 @@ async function projectCopilotTurnRows(
         ]),
       ]);
   const repliedRunIds = new Set(replyParentIds);
+  // Public prose reads FAILED with the canonical terminal predicate, excluding retry-attempt errors.
+  const failedRunIds = [...publicByRun]
+    .filter(
+      ([runId, prose]) =>
+        !replacedRuns.has(runId) && (prose.status === 'failed' || prose.status === 'interrupted'),
+    )
+    .map(([runId]) => runId);
+  const [helpReturnByRun, helpReturnReplyIds] = await Promise.all([
+    readHelpReturnTargets(dbArg, sessionId, failedRunIds),
+    allowedEventIds(
+      dbArg,
+      rows
+        .filter(
+          (row) =>
+            row.action === COPILOT_REPLY_ACTION &&
+            row.caused_by_event_id &&
+            failedRunIds.includes(row.caused_by_event_id),
+        )
+        .map((row) => row.id),
+    ),
+  ]);
 
   // 受限根策略投影到回复 turn：answer_only 根回 answer_only，crisis 根回 crisis。
   const restrictedRootPolicies = new Map(
@@ -549,6 +572,10 @@ async function projectCopilotTurnRows(
     if (statuses.get(row.id)?.state === 'retracted') continue;
     const payload = (row.payload ?? {}) as Record<string, unknown>;
     if (row.action === COPILOT_REPLY_ACTION) {
+      const helpReturnTarget =
+        row.caused_by_event_id && helpReturnReplyIds.has(row.id)
+          ? helpReturnByRun.get(row.caused_by_event_id)
+          : undefined;
       const storedProse = parseCopilotPublicProse(payload.public_prose);
       let publicProse =
         storedProse ??
@@ -587,7 +614,9 @@ async function projectCopilotTurnRows(
           : (replyText(payload) ??
             (publicProse?.status === 'completed'
               ? '成功回复正文缺失，暂时无法恢复完整回答。'
-              : null));
+              : helpReturnTarget
+                ? ''
+                : null));
       if (text === null) continue;
       const skillTurn = replySkillTurn(payload);
       const skillContext = replySkillContext(payload);
@@ -619,6 +648,7 @@ async function projectCopilotTurnRows(
       if (!forModel && payload.confirmation !== undefined)
         turn.confirmation = await readConfirmationProjection(dbArg, payload.confirmation);
       if (!forModel && publicProse) turn.public_prose = publicProse;
+      if (helpReturnTarget) turn.help_return_target = helpReturnTarget;
       if (skillTurn) turn.skill_turn = skillTurn;
       if (skillContext) turn.skill_context = skillContext;
       if (primaryView) turn.primary_view = primaryView;
@@ -640,12 +670,13 @@ async function projectCopilotTurnRows(
       // No reply marker yet: expose only committed public progress under the
       // accepted root identity. Never synthesize a completed answer from deltas.
       const progress = publicByRun.get(row.id);
+      const helpReturnTarget = helpReturnByRun.get(row.id);
       if (
         !forModel &&
         !replacedRuns.has(row.id) &&
         !repliedRunIds.has(row.id) &&
         progress &&
-        (progress.last_event_id > 0 || progress.status === 'completed')
+        (progress.last_event_id > 0 || progress.status === 'completed' || helpReturnTarget)
       ) {
         turns.push({
           role: 'ai',
@@ -654,6 +685,7 @@ async function projectCopilotTurnRows(
               ? '成功回复正文缺失，暂时无法恢复完整回答。'
               : progress.text,
           public_prose: progress,
+          ...(helpReturnTarget ? { help_return_target: helpReturnTarget } : {}),
           derivation_policy: readDerivationPolicy(payload),
           at: row.created_at.toISOString(),
           event_id: `copilot_public_prose_${row.id}`,
@@ -694,8 +726,8 @@ async function projectCopilotTurnRows(
 
 /**
  * Returns the most recent turns oldest→newest, capped at `limit` (default 20, max 100).
- * Rows without usable text are dropped: replay is best-effort prefill, never the
- * source of truth.
+ * Rows without usable text or an authorized help return target are dropped:
+ * replay is best-effort prefill, never the source of truth.
  */
 export async function getRecentCopilotTurns(
   dbArg: DbLike,

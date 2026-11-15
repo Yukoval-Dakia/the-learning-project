@@ -13447,6 +13447,11 @@ export interface operations {
                             /** @enum {string} */
                             derivation_policy?: "allow" | "answer_only" | "crisis";
                             event_id: string;
+                            help_return_target?: {
+                                id: string;
+                                /** @enum {string} */
+                                kind: "question";
+                            };
                             primary_view?: {
                                 ref: {
                                     id: string;

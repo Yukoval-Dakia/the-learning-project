@@ -39,10 +39,16 @@ export interface ReplaySkillContext {
 // Live delivery and persisted replay share the same pure product contract.
 export type ReplayPrimaryView = CopilotPrimaryView;
 
+export interface HelpReturnTarget {
+  kind: 'question';
+  id: string;
+}
+
 export interface ReplayTurn {
   confirmation?: unknown;
   /** The server's word: this failed turn can be sent again in place. */
   retryable?: boolean;
+  help_return_target?: HelpReturnTarget;
   public_prose?: PublicProse;
   role: ReplayTurnRole;
   derivation_policy?: DerivationPolicyT;
@@ -69,6 +75,7 @@ export interface ReplayTurn {
 export interface ReplayChatMessage {
   confirmation?: ConfirmationProjection;
   retryable?: boolean;
+  help_return_target?: HelpReturnTarget;
   confirmationIncompatible?: boolean;
   public_prose?: PublicProse;
   id: string;
@@ -119,7 +126,7 @@ export interface ReplaySubagentRun {
  * Maps the GET /api/copilot/turns response (oldest→newest) into the drawer's
  * ChatMessage list. The turn's event_id is reused as the stable message id
  * (replayed messages are addressable; live messages keep their nextId()). Empty
- * / malformed turns (no text) are dropped — replay is best-effort prefill.
+ * failures retain an authorized return target; other unusable turns are dropped.
  * Skill-turn fields are validated by the shared reply projection when present.
  */
 export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
