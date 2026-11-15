@@ -10,7 +10,12 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
 import type { MasteryDecayBucket } from '@/core/mastery-freshness';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
-import type { ReviewTimingJson } from '@/core/schema/learner-judgment';
+import type {
+  AbilityClaim,
+  EvidenceAge,
+  LearnerJudgment,
+  ReviewTimingJson,
+} from '@/core/schema/learner-judgment';
 import type { RetentionReading } from '@/core/schema/scheduling-state';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
@@ -117,6 +122,25 @@ export interface KnowledgeNodePage {
   // 'unknown' when there is no evidenced ability. That is not the untrained label.
   mastery_decay_bucket: MasteryDecayBucket;
   review_timing: ReviewTimingJson;
+  // Narrow wire projection of the focal item in the same readLearnerJudgments
+  // batch that already feeds mastery/retention. Only the canonical fields the
+  // page needs ride the wire; would_change_it/patterns/corrections stay
+  // server-side while they remain unknown.
+  judgment: {
+    ability_claim: AbilityClaim;
+    uncertainty: {
+      evidence_age: EvidenceAge;
+      component_disagreement: LearnerJudgment['uncertainty']['component_disagreement'];
+    };
+    judgement: string;
+    batch: {
+      version: 'v0-incumbent';
+      calibration: 'uncalibrated';
+      // Evaluation instant (the readLearnerJudgments as_of), not a historical
+      // cutoff or input watermark.
+      as_of: string;
+    };
+  };
   subject_profile: SlimSubjectProfile;
   children: NodePageChild[];
   mesh_neighbors: NodePageMeshNeighbor[];
@@ -438,6 +462,19 @@ export async function loadKnowledgeNodePage(
     last_evidence_at: nodeLastEvidenceAt ? nodeLastEvidenceAt.toISOString() : null,
     mastery_decay_bucket: focalJudgment.review_timing.freshness.decay_bucket,
     review_timing: reviewTimingJson(focalJudgment.review_timing),
+    judgment: {
+      ability_claim: focalJudgment.ability_claim,
+      uncertainty: {
+        evidence_age: focalJudgment.uncertainty.evidence_age,
+        component_disagreement: focalJudgment.uncertainty.component_disagreement,
+      },
+      judgement: focalJudgment.judgement,
+      batch: {
+        version: judgmentBatch.version,
+        calibration: judgmentBatch.calibration,
+        as_of: judgmentBatch.as_of.toISOString(),
+      },
+    },
     subject_profile: toSlimSubjectProfile(profile),
     children,
     mesh_neighbors: meshNeighbors,
