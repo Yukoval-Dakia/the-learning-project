@@ -280,6 +280,8 @@ export const IssuanceStateSchema = z.object({
       idempotency_key: z.string(),
       response_set: ResponseSet,
       group_evidence: z.array(GroupEvidence),
+      /** 该提交在 effective head 上当前生效的 evaluation；无生效评估时为 null。 */
+      effective_evaluation_id: z.string().min(1).nullable(),
     }),
   ),
   settled: IssuanceJudgeSettledSchema.optional(),

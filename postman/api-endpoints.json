@@ -1439,7 +1439,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "返回 issuance/practice_dto/draft/submissions；已接收 submission 带原始 response_set/group_evidence/idempotency_key，恢复不泄漏候选反馈。不存在返回404。practice_dto=null 时 unavailable_reason 给出 typed 收回原因（公共枚举，如 human_review/missing_referenced_figure），已有提交不受影响"
+        "notes": "返回 issuance/practice_dto/draft/submissions；已接收 submission 带原始 response_set/group_evidence/idempotency_key，以及该提交在 effective head 上当前生效的 effective_evaluation_id（无生效评估时为 null），恢复不泄漏候选反馈。不存在返回404。practice_dto=null 时 unavailable_reason 给出 typed 收回原因（公共枚举，如 human_review/missing_referenced_figure），已有提交不受影响"
       }
     ]
   },
