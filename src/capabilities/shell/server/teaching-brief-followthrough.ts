@@ -1,5 +1,5 @@
-import { and, desc, eq, gte, inArray, lte } from 'drizzle-orm';
-import { isLearnerLocalDay, learnerLocalDay } from '@/core/learner-day';
+import { and, desc, eq, gte, inArray, lt, lte, or } from 'drizzle-orm';
+import { isLearnerLocalDay, learnerDayWindowUtc, learnerLocalDay } from '@/core/learner-day';
 import { BRIEF_SEEN_ACTION, PRIMARY_ACTION_STARTED_ACTION } from '@/core/schema/conjecture';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -7,7 +7,8 @@ import { getCorrectionStatuses } from '@/kernel/events';
 import { allowedEventIds } from '@/kernel/events/derivation-policy';
 import { loadSettledKnowledgeAnswerCounts } from '@/kernel/read-models/learner-activity';
 
-// Two distinct learner days distinguish repeated exposure from a single visit.
+// Only completed learner days count, so today's automatic seen cannot change
+// the primary between delivery and acknowledgement.
 const SEEN_WITHOUT_ACTION_DAYS = 2;
 const INTERACTION_SCAN_LIMIT = 200;
 
@@ -54,6 +55,8 @@ export async function loadOutcomeFollowthrough(
   ) {
     return unchanged;
   }
+  const today = learnerLocalDay(now);
+  const rankingCutoff = learnerDayWindowUtc(today, today).from;
   const rows = await db
     .select({
       id: event.id,
@@ -70,6 +73,9 @@ export async function loadOutcomeFollowthrough(
         eq(event.subject_id, input.briefId),
         eq(event.caused_by_event_id, input.briefId),
         inArray(event.action, [BRIEF_SEEN_ACTION, PRIMARY_ACTION_STARTED_ACTION]),
+        // Exclude today's seen before LIMIT too: writing it must not truncate
+        // the scan and change the ranking of an already-delivered primary.
+        or(eq(event.action, PRIMARY_ACTION_STARTED_ACTION), lt(event.created_at, rankingCutoff)),
         gte(event.created_at, input.resultAt),
         lte(event.created_at, now),
       ),
