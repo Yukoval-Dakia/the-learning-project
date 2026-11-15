@@ -47,6 +47,7 @@ import {
   PresentationBlocks,
   parsePresentation,
 } from './blocks/PresentationBlocks';
+import { PaperPrintView } from './PaperPrintView';
 import { PfRetro } from './PfRetro';
 import type { PfToast } from './PracticeFacePage';
 import {
@@ -1925,6 +1926,7 @@ function PaperVisit({
             返回卷架
           </Button>
           <h1>{detail.title}</h1>
+          <PaperPrintView paper={detail} onUnavailable={(message) => addToast(message, 'info')} />
         </div>
         <p role="status">{positionCopy}。只恢复服务器已确认保存的草稿与位置。</p>
         <nav className="pf-pp-index" aria-label="选择题目">
@@ -1967,6 +1969,7 @@ function PaperVisit({
             retrying={retrying}
           />
         )}
+        <PaperPrintView paper={detail} onUnavailable={(message) => addToast(message, 'info')} />
       </div>
 
       <p className="pf-pp-note" role="status">
