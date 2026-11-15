@@ -27,6 +27,7 @@ import {
 import { type SealedReplyGrounding, sealHelpExplanation } from '@/ai/help-reply-grounding';
 import type { RunTaskResult } from '@/ai/task-result';
 import type { MaterializeAskCheckParams } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
+import type { TeachingTurnInput } from '@/capabilities/copilot/tasks/teaching-turn';
 import type { Db } from '@/db/client';
 import { runAgentTask } from '@/server/ai/runner';
 import {
@@ -133,12 +134,13 @@ export async function runTeachingSkill(
 
   // Single-turn: the Copilot session carries no teach_message history, so the
   // structured contract is preserved but prior turns are not replayed.
-  const input = {
+  const input: TeachingTurnInput = {
     learning_item: context.learning_item,
     parent_hub_summary: context.parent_hub_summary,
     atomic_sections: context.atomic_sections,
     atomic_body_text: context.atomic_body_text,
     curriculum: context.curriculum,
+    learner_picture: context.learner_picture,
     messages: [{ role: 'user' as const, text_md: userMessage }],
   };
 

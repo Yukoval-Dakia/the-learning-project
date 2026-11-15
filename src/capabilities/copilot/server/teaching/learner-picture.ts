@@ -1,9 +1,9 @@
-import { loadMisconceptionsForKc } from '@/capabilities/knowledge/public';
 import { A5_BANDS, UNKNOWN_BAND_LABEL, masteryBandView } from '@/core/mastery-band';
-import type { Db, Tx } from '@/db/client';
+import type { Tx } from '@/db/client';
 import { readLearnerProfilesAsBatch } from '@/kernel/learner-profile/read';
 import { readCauseJudgment } from '@/kernel/read-models/cause-judgment';
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
+import { listDerivableActiveMisconceptionsForKcs } from '@/kernel/read-models/failure-learning-context';
 import type { TeachingLearnerPicture } from '../../tasks/teaching-turn';
 
 // The caller owns the read-only repeatable-read snapshot, including KC selection.
@@ -21,8 +21,7 @@ export async function loadTeachingLearnerPicture(
     }),
     readCauseJudgment(tx, { knowledge_ids: [firstKnowledgeId], as_of: asOf }),
     getFailureAttemptsForDerivation(tx, { limit: 200 }),
-    // This read-only public port types its query handle as Db; all reads stay on tx.
-    loadMisconceptionsForKc(tx as unknown as Db, firstKnowledgeId),
+    listDerivableActiveMisconceptionsForKcs(tx, [firstKnowledgeId]),
   ]);
   const ability = profiles.items.find((item) => item.knowledge_id === firstKnowledgeId)?.ability;
   const mastery = ability?.kind === 'available' ? masteryBandView(ability.reading) : null;
@@ -49,15 +48,12 @@ export async function loadTeachingLearnerPicture(
           !failure.referenced_knowledge_ids.includes(firstKnowledgeId) ||
           !answer ||
           failure.answer_image_refs.length > 0 ||
-          /!?\[[^\]]*\]\s*[\[(]|https?:|data:|attachment:|<[^>]+>/i.test(answer)
+          /!?\[[^\]]*\]\s*[[(]|https?:|data:|attachment:|<[^>]+>/i.test(answer)
         )
           return [];
         return [{ answer_excerpt: answer.slice(0, 400), at: failure.created_at.toISOString() }];
       })
       .slice(0, 2),
-    active_misconceptions: misconceptions
-      .filter((row) => row.segment === 'confirmed' && row.status === 'active')
-      .slice(0, 5)
-      .map((row) => row.label.slice(0, 120)),
+    active_misconceptions: misconceptions.slice(0, 5).map((row) => row.title.slice(0, 120)),
   };
 }
