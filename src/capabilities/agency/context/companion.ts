@@ -14,6 +14,7 @@ import { readCompanionAgentNotes, renderAgentNotes } from './agent-notes';
 import { type TrimUnit, trimUnitsToBudget } from './budget';
 import { readContractSection } from './contract';
 import { DELTA_SCAN_LIMIT, readDeltaSection, shanghaiLabel } from './delta';
+import { renderMemoryEvidence } from './evidence-narrative';
 import { DELTA_FALLBACK_LOOKBACK_MS, readSteadySection } from './steady';
 import type { ContractSection, DeltaSection, DueItemLine, SteadySection } from './types';
 
@@ -101,7 +102,7 @@ export function buildCompanionUnits(input: {
 }): TrimUnit[] {
   const { steady, curriculum, delta, contract, agentNotes } = input;
   const masteryMd = [contract.masteryMd, contract.causesMd].filter(Boolean).join('\n') || null;
-  const portraitMd = steady.portraitMd ? `画像：${steady.portraitMd}` : null;
+  const portraitMd = renderMemoryEvidence(steady.portraitMd);
   const signalsMd =
     contract.signalsMd.length > 0 ? `判读备注：${contract.signalsMd.join('')}` : null;
   const overnightMd = steady.overnightMd ? `昨夜交班：${steady.overnightMd}` : null;
