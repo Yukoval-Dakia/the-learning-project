@@ -16,6 +16,8 @@ interface NonDueSelectionInputs<Signal extends NonDueSelectionSignal> {
   max: number;
   dailyBudgetMinutes: number | undefined;
   questionMinutes: number | undefined;
+  /** Server-owned frozen subject/kind prices, assembled with the stream inputs. */
+  questionMinutesByQuestion?: Readonly<Record<string, number>>;
   targetCount: number | undefined;
   /** Preference order for the deterministic non-due floor. Omitted → no floor. */
   floorCandidateRefIds?: readonly string[];
@@ -60,6 +62,7 @@ export function planNonDueSelection<Signal extends NonDueSelectionSignal>({
   max,
   dailyBudgetMinutes,
   questionMinutes,
+  questionMinutesByQuestion,
   targetCount,
   floorCandidateRefIds,
 }: NonDueSelectionInputs<Signal>): {
@@ -81,19 +84,41 @@ export function planNonDueSelection<Signal extends NonDueSelectionSignal>({
     questionMinutes,
   });
   const questionCost = estimateStreamItemMinutes('question', questionMinutes);
+  const minutesOf = (signal: Signal): number =>
+    pricedStreamItemMinutes(
+      {
+        item_kind: 'question',
+        estimatedMinutes: questionMinutesByQuestion?.[signal.refId],
+      },
+      questionMinutes,
+    );
   const dueMinutes = dueDrafts.reduce(
     (sum, item) => sum + pricedStreamItemMinutes(item, questionMinutes),
     0,
   );
-  const floorMinutes = floorPassthrough.length * questionCost;
+  const floorMinutes =
+    questionMinutesByQuestion === undefined
+      ? floorPassthrough.length * questionCost
+      : floorPassthrough.reduce((sum, signal) => sum + minutesOf(signal), 0);
   const remainingAfterDue =
     dailyBudgetMinutes === undefined
       ? Number.POSITIVE_INFINITY
       : Math.max(0, dailyBudgetMinutes - dueMinutes - floorMinutes);
-  const recallLimit = Number.isFinite(remainingAfterDue)
-    ? Math.floor(remainingAfterDue / questionCost)
-    : allRecallLocked.length;
-  const recallLocked = allRecallLocked.slice(0, recallLimit);
+  const recallLocked: Signal[] = [];
+  if (questionMinutesByQuestion === undefined) {
+    const recallLimit = Number.isFinite(remainingAfterDue)
+      ? Math.floor(remainingAfterDue / questionCost)
+      : allRecallLocked.length;
+    recallLocked.push(...allRecallLocked.slice(0, recallLimit));
+  } else {
+    let remaining = remainingAfterDue;
+    for (const signal of allRecallLocked) {
+      const cost = minutesOf(signal);
+      if (cost > remaining) break;
+      recallLocked.push(signal);
+      remaining -= cost;
+    }
+  }
   const recallLockedRefs = new Set(recallLocked.map((s) => s.refId));
   // Floor refs stay samplable so the provider path still runs. Misses are backfilled.
   const samplable = samplablePool;
@@ -103,19 +128,37 @@ export function planNonDueSelection<Signal extends NonDueSelectionSignal>({
   // reserve sampler capacity.
   const fixedCount = dueDrafts.length + recallLocked.length + floorPassthrough.length;
   const nonDueBudget = Math.max(0, max - fixedCount);
-  const fixedMinutes = dueDrafts.some((item) => item.estimatedMinutes !== undefined)
-    ? dueMinutes + (recallLocked.length + floorPassthrough.length) * questionCost
-    : fixedCount * questionCost;
-  const timeQuestionBudget =
-    dailyBudgetMinutes === undefined
-      ? nonDueBudget
-      : Math.max(
-          0,
-          Math.floor(
-            (dailyBudgetMinutes - fixedMinutes) /
-              estimateStreamItemMinutes('question', questionMinutes),
-          ),
-        );
+  const fixedMinutes =
+    questionMinutesByQuestion !== undefined
+      ? dueMinutes + floorMinutes + recallLocked.reduce((sum, signal) => sum + minutesOf(signal), 0)
+      : dueDrafts.some((item) => item.estimatedMinutes !== undefined)
+        ? dueMinutes + (recallLocked.length + floorPassthrough.length) * questionCost
+        : fixedCount * questionCost;
+  let timeQuestionBudget = nonDueBudget;
+  if (dailyBudgetMinutes !== undefined && questionMinutesByQuestion === undefined) {
+    timeQuestionBudget = Math.max(
+      0,
+      Math.floor(
+        (dailyBudgetMinutes - fixedMinutes) /
+          estimateStreamItemMinutes('question', questionMinutes),
+      ),
+    );
+  }
+  if (questionMinutesByQuestion !== undefined && dailyBudgetMinutes !== undefined) {
+    let remaining = Math.max(0, dailyBudgetMinutes - fixedMinutes);
+    const floorRefs = new Set(floorPassthrough.map((signal) => signal.refId));
+    // Bound cardinality by actual costs without reordering the sampler's signal/weight pool.
+    const prices = samplable
+      .filter((signal) => !floorRefs.has(signal.refId))
+      .map(minutesOf)
+      .sort((a, b) => a - b);
+    timeQuestionBudget = 0;
+    for (const cost of prices) {
+      if (cost > remaining) break;
+      remaining -= cost;
+      timeQuestionBudget++;
+    }
+  }
 
   // The experiment target can lower the capacity/time bound; omission keeps that bound.
   const boundedNonDueBudget = Math.min(nonDueBudget, timeQuestionBudget);

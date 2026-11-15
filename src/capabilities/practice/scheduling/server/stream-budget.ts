@@ -63,6 +63,8 @@ export interface TimeBudgetResult<T> {
 export interface TimeBudgetOptions {
   /** Withhold this many question slots from due items even when this list has no non-due rows. */
   reserveQuestionSlots?: number;
+  /** Exact server-owned cost of the non-due floor reserved before its rows are assembled. */
+  reserveQuestionMinutes?: number;
 }
 
 const NON_DUE_FLOOR_RATIO = 0.15;
@@ -144,6 +146,12 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
       Math.max(0, floor - preferred.length) * questionCost,
     remaining,
   );
+  if (options?.reserveQuestionMinutes !== undefined) {
+    protectedRemaining = Math.min(
+      Math.max(protectedRemaining, options.reserveQuestionMinutes),
+      remaining,
+    );
+  }
   let flexible = remaining - protectedRemaining;
 
   for (const index of preferred) {

@@ -30,6 +30,7 @@ import {
   estimateStreamItemMinutes,
   fitStreamToTimeBudget,
   nonDueQuestionFloor,
+  pricedStreamItemMinutes,
 } from './stream-budget';
 import {
   type ComposerInputs,
@@ -166,11 +167,28 @@ export async function composeSoftmaxStream(
           inputs.dailyBudgetMinutes / estimateStreamItemMinutes('question', inputs.questionMinutes),
         );
   const reserveQuestionSlots = nonDueQuestionFloor(questionSlots, floorCandidateRefIds.length);
+  const reservation =
+    inputs.questionMinutesByQuestion === undefined
+      ? { reserveQuestionSlots }
+      : {
+          reserveQuestionMinutes: floorCandidateRefIds.slice(0, reserveQuestionSlots).reduce(
+            (sum, id) =>
+              sum +
+              pricedStreamItemMinutes(
+                {
+                  item_kind: 'question',
+                  estimatedMinutes: inputs.questionMinutesByQuestion?.[id],
+                },
+                inputs.questionMinutes,
+              ),
+            0,
+          ),
+        };
   const dueFit = fitStreamToTimeBudget(
     allDueDrafts,
     inputs.dailyBudgetMinutes,
     inputs.questionMinutes,
-    { reserveQuestionSlots },
+    reservation,
   );
   const dueDrafts = dueFit.kept;
 
@@ -238,6 +256,7 @@ export async function composeSoftmaxStream(
       max,
       dailyBudgetMinutes: inputs.dailyBudgetMinutes,
       questionMinutes: inputs.questionMinutes,
+      questionMinutesByQuestion: inputs.questionMinutesByQuestion,
       targetCount: config.targetCount,
       floorCandidateRefIds,
     });
