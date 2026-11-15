@@ -8,6 +8,7 @@ import type { CopilotClient } from '../copilot-client';
 import { handleOpenRequest, initializeFromStorage } from './arrivals';
 import { type CompanionCtx, createInternals, makeUpdateMessages } from './companion-context';
 import { type CompanionState, initialCompanionState } from './companion-state';
+import { createConversationDrafts } from './conversation-drafts';
 import { type RunTracker, createRunTracker } from './run-tracker';
 import { type TurnActions, createTurnActions } from './turn-actions';
 import { type TurnSender, createTurnSender } from './turn-sender';
@@ -42,6 +43,7 @@ export function createCompanionController(deps: {
     queryClient: deps.queryClient,
     instance: deps.instance,
     internals,
+    drafts: createConversationDrafts(store),
     updateMessages: makeUpdateMessages(store, internals),
   } as CompanionCtx;
   ctx.sessions = createVisitSessions(ctx);

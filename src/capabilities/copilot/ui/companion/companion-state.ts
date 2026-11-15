@@ -162,6 +162,7 @@ export function isRecoveringSession(s: CompanionState, sessionId: string | null)
 }
 
 export function selectionValidated(s: CompanionState): boolean {
+  if (s.creatingSession || !s.currentSessionId) return false;
   if (s.selectionOrigin !== 'automatic') return true;
   if (isRecoveringSession(s, s.currentSessionId)) return true;
   const fresh = visitFreshSessions(s);
