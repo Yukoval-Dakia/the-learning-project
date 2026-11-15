@@ -51,7 +51,7 @@ export function difficultyWord(difficulty: number): string {
 export const HOLD_WORDS: Readonly<Record<string, { title: string; why: string }>> = {
   awaiting_admission: { title: '还在检查', why: '刚收进来，检查完就会出给你。' },
   admission_failed: { title: '检查没通过', why: '题目或答案有问题，改好后可以重新核验。' },
-  source_check_failed: { title: '出处没确认', why: '找不到可靠的出处，可以再查一次。' },
+  source_check_failed: { title: '来源核对未通过', why: '这次来源核对没有通过，暂不出题。' },
   verify_hold: { title: '等你复核', why: '答案可能有错，你看过之后可以恢复出题。' },
   retraction_hold: { title: '正在撤下', why: '这道题会被撤下；不需要的话可以删除。' },
   no_input_renderer: { title: '这里还没法作答', why: '这种作答方式还不支持，暂时不出。' },
