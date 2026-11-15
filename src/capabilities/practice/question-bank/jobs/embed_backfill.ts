@@ -2,17 +2,8 @@
 // NULL or stamped behind EMBED_VERSION. A rerun with no matching rows is a no-op;
 // bumping EMBED_VERSION re-embeds older rows in the background.
 //
-// Provider failure leaves rows untouched and fails the job, so pg-boss retries on
-// the next run. Question insert never calls this job, so ingestion is unaffected.
-//
-// Edits that change embed source text NULL the embedding — question writes and KC
-// reparents — so this job re-embeds them with fresh text and a fresh content hash.
-//
-// YUK-1603 — every embed write stamps embed_source_revision (the row revision the
-// vector was computed from) under a revision CAS, so a late vector can never
-// overwrite a newer revision's result; a provider-free currency sweep re-stamps
-// provenance that merely fell behind and re-embeds rows whose content drifted
-// under a surviving vector.
+// Question vectors share paid receipts with publication delivery; unknown sends
+// wait for reconciliation rather than paying again on the next nightly run.
 
 import { and, eq, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -22,9 +13,17 @@ import {
   knowledgeEmbedText,
   questionEmbedText,
 } from '@/core/embed-source';
+import { lockPaidEffectControlFamily } from '@/core/paid-work/server/paid-effect-control';
+import {
+  markPaidEffectUnknown,
+  readPaidEffect,
+  recordPaidEffectApplication,
+  recordPaidEffectResult,
+  reservePaidEffect,
+} from '@/core/paid-work/server/paid-effect-store';
 import type { Db } from '@/db/client';
 import { isEmbedRevisionCurrent } from '@/db/embed-currency';
-import { knowledge, question } from '@/db/schema';
+import { knowledge, question, question_group_lifecycle } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 import {
@@ -69,9 +68,10 @@ export async function embedQuestionTextForIngest(
     choices_md: string[] | null;
   },
   providerAttempt: EmbedProviderAttemptOptions,
+  embedFn: typeof embedMany = embedMany,
 ): Promise<number[]> {
-  const [vector] = await embedMany([questionEmbedText(q)], providerAttempt);
-  if (vector == null || vector.length !== EMBED_DIMS) {
+  const [vector] = await embedFn([questionEmbedText(q)], providerAttempt);
+  if (!vector || vector.length !== EMBED_DIMS || vector.some((v) => !Number.isFinite(v))) {
     throw new Error('ingest embed returned no usable vector');
   }
   return vector;
@@ -106,6 +106,162 @@ export function questionVectorInvalidReason(row: {
   if (!isEmbedRevisionCurrent(row)) return 'revision_mismatch';
   if (row.embed_content_hash !== embedHash(questionEmbedText(row))) return 'hash_mismatch';
   return null;
+}
+
+/** One currency-aware question operation for publication and nightly reconciliation. */
+export async function runQuestionEmbedding(
+  db: Db,
+  questionId: string,
+  providerAttempt: EmbedProviderAttemptOptions,
+  embedFn: typeof embedMany = embedMany,
+  publishedRevision?: string,
+): Promise<'embedded' | 'skipped' | 'held'> {
+  const derivationAllowed = sourceAllowsDerivationSql({ kind: 'question', id: question.id });
+  const publicationCurrent =
+    publishedRevision === undefined
+      ? sql`true`
+      : sql`exists (
+    select 1 from ${question_group_lifecycle}
+    where ${question_group_lifecycle.group_id} = ${question.id}
+      and ${question_group_lifecycle.current_revision_id} = ${publishedRevision}
+      and ${question_group_lifecycle.scoring_admission_state} = 'admitted'
+      and not ${question_group_lifecycle.withdrawn}
+      and not ${question_group_lifecycle.suspended}
+  )`;
+  const [row] = await db
+    .select()
+    .from(question)
+    .where(and(eq(question.id, questionId), derivationAllowed, publicationCurrent))
+    .limit(1);
+  if (
+    !row ||
+    questionVectorInvalidReason({ ...row, dimension: row.embedding?.length ?? null }) === null
+  ) {
+    return 'skipped';
+  }
+  const text = questionEmbedText(row);
+  const sourceCurrent = and(
+    eq(question.id, row.id),
+    eq(question.version, row.version),
+    sql`${question.prompt_md} IS NOT DISTINCT FROM ${row.prompt_md}`,
+    sql`${question.reference_md} IS NOT DISTINCT FROM ${row.reference_md}`,
+    sql`${question.choices_md} IS NOT DISTINCT FROM ${row.choices_md === null ? null : JSON.stringify(row.choices_md)}::jsonb`,
+    derivationAllowed,
+    publicationCurrent,
+  );
+  // Delivery ids never enter paid identity: publication retries and the next
+  // night's sweep reuse the same receipt, even after queue retention expires.
+  const deliveryId = providerAttempt.operationAnchor ?? `question-embed:${row.id}:${row.version}`;
+  const effect = await reservePaidEffect(
+    db,
+    {
+      family: 'embed_backfill',
+      entityId: row.id,
+      entityRevision: String(row.version),
+      unit: 'question_embedding',
+      input: { text, model: EMBED_MODEL, embed_version: EMBED_VERSION, dimensions: EMBED_DIMS },
+    },
+    {
+      backend: 'pg-boss',
+      deliveryId,
+      leaseExpiresAt: providerAttempt.deadlineAt,
+    },
+  );
+  if (effect.kind === 'held') return 'held';
+  if (effect.kind === 'winner') {
+    try {
+      const vector = await embedQuestionTextForIngest(
+        row,
+        {
+          ...providerAttempt,
+          beforeSend: async () => {
+            await providerAttempt.beforeSend?.();
+            const [current] = await db
+              .select({ id: question.id })
+              .from(question)
+              .where(sourceCurrent)
+              .limit(1);
+            if (!current) throw new Error('question embedding source no longer authorized/current');
+          },
+        },
+        embedFn,
+      );
+      await db.transaction((tx) =>
+        recordPaidEffectResult(
+          tx,
+          effect.identity,
+          deliveryId,
+          { vector },
+          { fence: effect.fence },
+        ),
+      );
+    } catch (error) {
+      // Includes an uncertain receipt commit. The store refuses to erase a known
+      // result; a committed receipt can still be replayed after this job fails.
+      await db.transaction(async (tx) => {
+        await lockPaidEffectControlFamily(tx, effect.identity.family);
+        if ((await readPaidEffect(tx, effect.identity))?.state === 'sending') {
+          await markPaidEffectUnknown(
+            tx,
+            effect.identity,
+            deliveryId,
+            'question_embedding_unresolved',
+            { fence: effect.fence },
+          );
+        }
+      });
+      throw error;
+    }
+  }
+  return db.transaction(async (tx) => {
+    await lockPaidEffectControlFamily(tx, effect.identity.family);
+    const receipt = await readPaidEffect(tx, effect.identity);
+    const vector = (receipt?.result as { vector?: number[] } | null)?.vector;
+    if (!vector || vector.length !== EMBED_DIMS || vector.some((v) => !Number.isFinite(v))) {
+      throw new Error('question embedding receipt has no usable vector');
+    }
+    const stamp = questionEmbedStamp(row, vector);
+    if (!stamp) throw new Error('question embedding receipt has invalid dimensions');
+    // Publication locks question then lifecycle. Keep the same order, and hold
+    // both through vector application so a lifecycle-only withdrawal cannot race.
+    await tx
+      .select({ id: question.id })
+      .from(question)
+      .where(eq(question.id, row.id))
+      .for('update');
+    await tx
+      .select({ id: question_group_lifecycle.group_id })
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, row.id))
+      .for('share');
+    const [current] = await tx.select().from(question).where(sourceCurrent).limit(1);
+    let embedded = false;
+    if (
+      current &&
+      questionVectorInvalidReason({ ...current, dimension: current.embedding?.length ?? null }) !==
+        null
+    ) {
+      const written = await tx
+        .update(question)
+        .set(stamp)
+        .where(
+          and(
+            sourceCurrent,
+            sql`${question.embed_content_hash} IS NOT DISTINCT FROM ${current.embed_content_hash}`,
+          ),
+        )
+        .returning({ id: question.id });
+      embedded = written.length > 0;
+    }
+    if (receipt?.state === 'receipt_ready') {
+      await recordPaidEffectApplication(tx, effect.identity, {
+        question_id: row.id,
+        version: row.version,
+        outcome: embedded ? 'embedded' : 'skipped',
+      });
+    }
+    return embedded ? 'embedded' : 'skipped';
+  });
 }
 
 // Each getEffectiveDomain call walks up to 32 ancestors with serial SELECTs, so resolving
@@ -279,37 +435,9 @@ export async function runEmbedBackfill(
     id: question.id,
   });
   const qs = await db.select().from(question).where(and(qStale, qDerivationAllowed)).limit(limit);
-  if (qs.length > 0) {
-    const texts = qs.map((q) => questionEmbedText(q));
-    const vecs = await embedFn(texts, providerAttempt);
-    for (let i = 0; i < qs.length; i++) {
-      // A content edit during the provider call invalidates this result even if the
-      // row still needs an embedding; match the selected source null-safely. The
-      // revision CAS additionally rejects the write when a non-embed field changed,
-      // so a late vector can never land as the current revision's result.
-      const sourceStillCurrent = and(
-        eq(question.id, qs[i].id),
-        qStale,
-        qDerivationAllowed,
-        eq(question.version, qs[i].version),
-        sql`${question.prompt_md} IS NOT DISTINCT FROM ${qs[i].prompt_md}`,
-        sql`${question.reference_md} IS NOT DISTINCT FROM ${qs[i].reference_md}`,
-        sql`${question.choices_md} IS NOT DISTINCT FROM ${qs[i].choices_md === null ? null : JSON.stringify(qs[i].choices_md)}::jsonb`,
-        sql`${question.embed_content_hash} IS NOT DISTINCT FROM ${qs[i].embed_content_hash}`,
-      );
-      const written = await db
-        .update(question)
-        .set({
-          embedding: vecs[i],
-          embed_model: EMBED_MODEL,
-          embed_version: EMBED_VERSION,
-          embed_content_hash: embedHash(texts[i]),
-          embed_source_revision: qs[i].version,
-        })
-        .where(sourceStillCurrent)
-        .returning({ id: question.id });
-      total += written.length;
-    }
+  for (const row of qs) {
+    const outcome = await runQuestionEmbedding(db, row.id, providerAttempt, embedFn);
+    if (outcome === 'embedded') total += 1;
   }
 
   const kStale = or(

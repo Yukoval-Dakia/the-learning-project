@@ -66,6 +66,15 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
         load: () =>
           import('./server/admission/enqueue').then((m) => m.buildQuestionAdmissionSubscriber),
       },
+      {
+        id: 'practice.question-publication-embed',
+        version: 1,
+        actions: ['experimental:assessment_publish'],
+        load: () =>
+          import('./server/publication-embed-enqueue').then(
+            (m) => m.buildPublicationEmbedSubscriber,
+          ),
+      },
     ],
   },
   api: {
@@ -276,6 +285,12 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
         eligibility: nightlyEligibility('hygiene_embed'),
         queue: 'llm',
         load: () => import('./jobs/embed_backfill').then((m) => m.buildEmbedBackfillHandler),
+      },
+      {
+        name: 'question_publication_embed',
+        queue: 'llm',
+        notify: true,
+        load: () => import('./jobs/publication_embed').then((m) => m.buildPublicationEmbedHandler),
       },
       // YUK-489 (P4a) — reference-answer backfill. P3 decoupled cold-start-bridge ③
       // (reference generation) from KC tagging: a prompt-only OCR question persists
