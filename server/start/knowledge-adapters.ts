@@ -51,11 +51,11 @@ export const readStartKnowledgeMisconceptions = async (id: string) => {
   }
 };
 
-export const readStartKnowledgeNodePage = async (id: string) => {
+export const readStartKnowledgeNodePage = async (id: string, timelineCursor?: string) => {
   try {
     const { readLearnerKnowledgeNodePage } = await import('@/capabilities/knowledge/public');
     const { db } = await import('@/db/client');
-    return await readLearnerKnowledgeNodePage(db, { id });
+    return await readLearnerKnowledgeNodePage(db, { id }, { timeline_cursor: timelineCursor });
   } catch (error) {
     throw errorResponse(error);
   }

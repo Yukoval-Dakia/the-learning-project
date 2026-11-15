@@ -130,9 +130,11 @@ export type NodePageChild = KnowledgeNodePage['children'][number];
 export type NodePageBacklink = KnowledgeNodePage['backlinks'][number];
 export type NodePageTimelineEntry = KnowledgeNodePage['timeline'][number];
 
-export const getNodePage = (id: string) =>
+export const getNodePage = (id: string, timelineCursor?: string) =>
   apiOperationJson('getKnowledgeNode', {
-    url: `/api/knowledge/${encodeURIComponent(id)}`,
+    url: `/api/knowledge/${encodeURIComponent(id)}${
+      timelineCursor ? `?${new URLSearchParams({ timeline_cursor: timelineCursor })}` : ''
+    }`,
     method: 'GET',
   });
 

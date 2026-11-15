@@ -5,7 +5,8 @@
 // Backlink filtering matches the backlink route so a retracted or archived source
 // never renders as a live link.
 
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { z } from 'zod';
 
 import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
 import type { MasteryDecayBucket } from '@/core/mastery-freshness';
@@ -19,6 +20,8 @@ import type {
 import type { RetentionReading } from '@/core/schema/scheduling-state';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
+import { filterActiveRows } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import {
   type BacklinksByArtifactType,
   groupBacklinksByArtifactType,
@@ -26,8 +29,11 @@ import {
   resolveOwningLearningItemIds,
 } from '@/kernel/read-models/artifact-backlinks';
 import { getArtifactCorrectionStates } from '@/kernel/read-models/artifact-corrections';
+import {
+  nativeAttemptOutcome,
+  resolveVerdictsForNativeAttempts,
+} from '@/kernel/read-models/assessment-verdict';
 import { getRepresentativeKcBeta } from '@/kernel/read-models/kc-beta';
-import { recentNativeAttemptsForKnowledge } from '@/kernel/read-models/knowledge-activity';
 import {
   abilityReadingsByIdOrFail,
   readLearnerJudgments,
@@ -46,6 +52,141 @@ import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profil
 const CROSS_LINK_REF_KIND = 'cross_link';
 const NOTE_ATOMIC_TYPE = 'note_atomic';
 const TIMELINE_LIMIT = 30;
+const ActivityCursor = z
+  .object({
+    knowledge_id: z.string().min(1),
+    created_at: z.string().datetime({ precision: 6 }),
+    event_id: z.string().min(1),
+  })
+  .strict();
+
+async function readNodeActivityPage(
+  db: Db,
+  knowledgeId: string,
+  historyIds: string[],
+  cursor?: string,
+) {
+  let position: z.infer<typeof ActivityCursor> | undefined;
+  if (cursor) {
+    try {
+      if (!/^[A-Za-z0-9_-]+$/.test(cursor)) throw new Error('invalid cursor encoding');
+      position = ActivityCursor.parse(JSON.parse(Buffer.from(cursor, 'base64url').toString()));
+      if (position.knowledge_id !== knowledgeId) throw new Error('cursor belongs to another node');
+    } catch {
+      throw new ApiError('validation_error', 'invalid activity cursor', 400);
+    }
+  }
+  const answerHistoryMatch = sql.join(
+    historyIds.map(
+      (id) => sql`${event.payload}->'referenced_knowledge_ids' @> ${JSON.stringify([id])}::jsonb`,
+    ),
+    sql` OR `,
+  );
+  const receiptScopeMatch = sql.join(
+    historyIds.map(
+      (id) =>
+        sql`receipt.payload @> ${JSON.stringify({
+          learning_scope: { questions: [{ knowledge_ids: [id] }] },
+        })}::jsonb`,
+    ),
+    sql` OR `,
+  );
+  const nativeMatch = and(
+    eq(event.actor_kind, 'user'),
+    eq(event.action, 'experimental:assessment_attempt'),
+    eq(event.subject_kind, 'question'),
+    sql`EXISTS (
+      SELECT 1 FROM ${event} AS receipt
+      WHERE receipt.action = 'experimental:assessment_submission'
+        AND receipt.subject_kind = 'submission'
+        AND ${event.payload}->>'submission_id' = receipt.subject_id
+        AND (${receiptScopeMatch})
+    )`,
+  );
+  const wanted = new Set(historyIds);
+  const accepted: Array<{
+    entry: NodePageTimelineEntry;
+    position: z.infer<typeof ActivityCursor>;
+  }> = [];
+  while (accepted.length <= TIMELINE_LIMIT) {
+    const candidates = await db
+      .select({
+        event_id: event.id,
+        action: event.action,
+        subject_kind: event.subject_kind,
+        actor_kind: event.actor_kind,
+        outcome: event.outcome,
+        created_at: event.created_at,
+        direct_match: sql<boolean>`(${answerHistoryMatch})`,
+        cursor_timestamp: sql<string>`to_char(${event.created_at} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+      })
+      .from(event)
+      .where(
+        and(
+          or(sql`(${answerHistoryMatch})`, nativeMatch),
+          position
+            ? sql`(${event.created_at}, ${event.id} COLLATE "C") <
+                (${position.created_at}::timestamptz, ${position.event_id}::text COLLATE "C")`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(event.created_at), sql`${event.id} COLLATE "C" DESC`)
+      .limit(TIMELINE_LIMIT + 1);
+    if (candidates.length === 0) break;
+    const nativeIds = candidates.filter((row) => !row.direct_match).map((row) => row.event_id);
+    const nativeRows = nativeIds.length
+      ? await filterActiveRows(
+          db,
+          await db.select().from(event).where(inArray(event.id, nativeIds)),
+        )
+      : [];
+    const verdicts = await resolveVerdictsForNativeAttempts(db, nativeRows);
+    for (const row of candidates) {
+      let outcome: string | null = row.outcome;
+      if (!row.direct_match) {
+        const verdict = verdicts.get(row.event_id);
+        if (!verdict || !verdict.knowledge_ids.some((id) => wanted.has(id))) continue;
+        const resolved = nativeAttemptOutcome(verdict);
+        outcome =
+          resolved === 'success' || resolved === 'failure' || resolved === 'partial'
+            ? resolved
+            : null;
+      }
+      accepted.push({
+        entry: {
+          event_id: row.event_id,
+          action: row.action,
+          subject_kind: row.subject_kind,
+          actor_kind: row.actor_kind,
+          outcome,
+          created_at: row.created_at.toISOString(),
+        },
+        position: {
+          knowledge_id: knowledgeId,
+          created_at: row.cursor_timestamp,
+          event_id: row.event_id,
+        },
+      });
+      if (accepted.length > TIMELINE_LIMIT) break;
+    }
+    const last = candidates[candidates.length - 1];
+    position = {
+      knowledge_id: knowledgeId,
+      created_at: last.cursor_timestamp,
+      event_id: last.event_id,
+    };
+    if (candidates.length < TIMELINE_LIMIT + 1) break;
+  }
+  const hasMore = accepted.length > TIMELINE_LIMIT;
+  const page = accepted.slice(0, TIMELINE_LIMIT);
+  return {
+    timeline: page.map((row) => row.entry),
+    timeline_has_more: hasMore,
+    timeline_next_cursor: hasMore
+      ? Buffer.from(JSON.stringify(page[page.length - 1].position)).toString('base64url')
+      : null,
+  };
+}
 
 export interface NodePagePrimaryAtomic {
   id: string;
@@ -152,6 +293,8 @@ export interface KnowledgeNodePage {
   backlinks: NodePageBacklink[];
   backlinks_by_type: BacklinksByArtifactType<NodePageBacklink>;
   timeline: NodePageTimelineEntry[];
+  timeline_has_more: boolean;
+  timeline_next_cursor: string | null;
 }
 
 /**
@@ -161,6 +304,7 @@ export interface KnowledgeNodePage {
 export async function loadKnowledgeNodePage(
   db: Db,
   knowledgeId: string,
+  timelineCursor?: string,
 ): Promise<KnowledgeNodePage | null> {
   if (!isLearnerVisibleKnowledgeId(knowledgeId)) return null;
   // Mastery is overlaid from the mastery_state projection, so last_evidence_at is the
@@ -278,12 +422,6 @@ export async function loadKnowledgeNodePage(
   // Answer events keep the knowledge id they were written with, so the survivor
   // page reads every id in its merged_from closure.
   const answerHistoryIds = [...(await loadMergedKnowledgeClosure(db)).closure(knowledgeId)];
-  const answerHistoryMatch = sql.join(
-    answerHistoryIds.map(
-      (id) => sql`${event.payload}->'referenced_knowledge_ids' @> ${JSON.stringify([id])}::jsonb`,
-    ),
-    sql` OR `,
-  );
   // Primary atomic = newest non-archived note_atomic containing this node.
   const atomicPromise = db
     .select({
@@ -305,35 +443,19 @@ export async function loadKnowledgeNodePage(
     .orderBy(desc(artifact.created_at))
     .limit(1)
     .execute();
-  const timelinePromise = db
-    .select({
-      event_id: event.id,
-      action: event.action,
-      subject_kind: event.subject_kind,
-      actor_kind: event.actor_kind,
-      outcome: event.outcome,
-      created_at: event.created_at,
-    })
-    .from(event)
-    .where(answerHistoryMatch)
-    .orderBy(desc(event.created_at))
-    .limit(TIMELINE_LIMIT)
-    .execute();
-  const nativeTimelinePromise = recentNativeAttemptsForKnowledge(db, knowledgeId, TIMELINE_LIMIT);
+  const timelinePromise = readNodeActivityPage(db, knowledgeId, answerHistoryIds, timelineCursor);
   const notesPromise = notesForKnowledge(db, knowledgeId);
   const interactivePromise = interactiveForKnowledge(db, knowledgeId);
   const profilePromise = resolveSubjectProfileForKnowledgeIds(db, [knowledgeId]);
   await Promise.all([
     atomicPromise,
     timelinePromise,
-    nativeTimelinePromise,
     notesPromise,
     interactivePromise,
     profilePromise,
   ]);
   const atomicRows = await atomicPromise;
-  const timelineRows = await timelinePromise;
-  const nativeTimeline = await nativeTimelinePromise;
+  const timelinePage = await timelinePromise;
   const notes = await notesPromise;
   const interactiveArtifacts = await interactivePromise;
   const profile = await profilePromise;
@@ -401,32 +523,6 @@ export async function loadKnowledgeNodePage(
     }
   }
 
-  const timeline: NodePageTimelineEntry[] = [
-    ...timelineRows.map((r) => ({
-      event_id: r.event_id,
-      action: r.action,
-      subject_kind: r.subject_kind,
-      actor_kind: r.actor_kind,
-      outcome: r.outcome,
-      created_at: r.created_at.toISOString(),
-    })),
-    ...nativeTimeline.map((hit) => ({
-      event_id: hit.event_id,
-      action: hit.action,
-      subject_kind: hit.subject_kind,
-      actor_kind: hit.actor_kind,
-      outcome: hit.outcome,
-      created_at: hit.created_at.toISOString(),
-    })),
-  ]
-    .filter(
-      (row, index, rows) => rows.findIndex((other) => other.event_id === row.event_id) === index,
-    )
-    .sort(
-      (a, b) => b.created_at.localeCompare(a.created_at) || b.event_id.localeCompare(a.event_id),
-    )
-    .slice(0, TIMELINE_LIMIT);
-
   // A missing evidenced reading is insufficient evidence or a non-evaluable role,
   // not a cold-start low score. The decay bucket stays unknown, not untrained.
   const nodeEvidenceCount = nodeMastery?.evidence_count ?? 0;
@@ -483,7 +579,7 @@ export async function loadKnowledgeNodePage(
     interactive_artifacts: interactiveArtifacts,
     backlinks,
     backlinks_by_type: groupBacklinksByArtifactType(backlinks),
-    timeline,
+    ...timelinePage,
   };
 }
 
