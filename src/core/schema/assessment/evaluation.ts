@@ -20,6 +20,7 @@ import {
 import { gradeBlankExactUnit, gradeSelectUnit } from './grade';
 import { type EvaluationInputMember, combineEvaluationMembers } from './group-input';
 import {
+  type AcceptedLearnerProcessT,
   type AggregateOutcomeT,
   type EvaluationProvenanceT,
   EvaluationRecord,
@@ -31,6 +32,7 @@ import {
   ScoringUnitResult,
   type ScoringUnitResultT,
   type SubmissionRecordT,
+  acceptedProcessEventId,
   aggregateUnitResults,
 } from './judgment';
 import { GraderKcMasteryEvidence } from './kc-mastery-evidence';
@@ -168,6 +170,8 @@ export interface ModelExecutorRequest {
   response_slots: ResponseSlotT[];
   /** 该 unit 声明读取的槽位响应（已按 spec 校验过）。 */
   slot_responses: SlotResponseT[];
+  /** Immutable learner-authored process, scoped to this unit's original members. */
+  learner_processes?: AcceptedLearnerProcessT[];
   /** Whole-submission image totals survive per-unit slot/evidence projection; never sent to the model. */
   submission_images?: { count: number; bytes: number };
   /** Server-verified photo evidence; excluded from model wire. */
@@ -613,8 +617,11 @@ function unjudgeableMismatch(unit: ScoringUnitT, detail: string): ScoringUnitRes
 function collectKnownEvidenceIds(
   groupEvidence: readonly GroupEvidenceT[],
   slotResponses: readonly SlotResponseT[],
+  learnerProcesses: readonly AcceptedLearnerProcessT[],
 ): Set<string> {
-  const ids = new Set<string>();
+  const ids = new Set(
+    learnerProcesses.map((process) => acceptedProcessEventId(process.submission_id)),
+  );
   for (const entry of slotResponses) {
     if (entry.kind === 'open') {
       for (const evidence of entry.evidence) ids.add(evidence.evidence_id);
@@ -817,6 +824,25 @@ export async function evaluateSubmissionCore(
   for (const unit of inScopeUnits) {
     const unitId = unit.scoring_unit_id;
     const slotIds = [...new Set([...unit.slot_refs, ...unit.evidence_slot_refs])];
+    const unitSlotIds = new Set(slotIds);
+    const contextPartIds = new Set(
+      slotIds.length === 0
+        ? issuedPartIds
+        : spec.slots.filter((slot) => unitSlotIds.has(slot.slot_id)).map((slot) => slot.part_id),
+    );
+    const learnerProcesses =
+      assignmentByUnit.get(unitId)?.kind === 'model_executor' &&
+      ['rule_reference', 'holistic_level', 'rubric'].includes(unit.criterion.kind)
+        ? (input.member_inputs ?? [])
+            .flatMap((member) =>
+              member.learner_process && member.issued_part_ids.some((id) => contextPartIds.has(id))
+                ? [member.learner_process]
+                : [],
+            )
+            .sort((a, b) =>
+              a.submission_id < b.submission_id ? -1 : a.submission_id > b.submission_id ? 1 : 0,
+            )
+        : [];
     const entries = slotIds
       .map((slotId) => entryBySlot.get(slotId))
       .filter((entry): entry is SlotResponseT => entry != null);
@@ -828,7 +854,8 @@ export async function evaluateSubmissionCore(
 
     // Scoped original evidence can supply a model-evaluated answer without a text entry.
     const evidenceOnlyModelAnswer =
-      unitGroupEvidence.length > 0 && assignmentByUnit.get(unitId)?.kind === 'model_executor';
+      (unitGroupEvidence.length > 0 || learnerProcesses.length > 0) &&
+      assignmentByUnit.get(unitId)?.kind === 'model_executor';
     const missingSlotIds = slotIds.filter((slotId) => !entryBySlot.has(slotId));
     if (missingSlotIds.length > 0 && !evidenceOnlyModelAnswer) {
       unitResults.push(
@@ -841,7 +868,8 @@ export async function evaluateSubmissionCore(
     if (
       entries.length > 0 &&
       entries.every(isBlankSlotResponse) &&
-      unitGroupEvidence.length === 0
+      unitGroupEvidence.length === 0 &&
+      learnerProcesses.length === 0
     ) {
       if (basis.blank_scores_zero) {
         unitResults.push(
@@ -1060,12 +1088,6 @@ export async function evaluateSubmissionCore(
 
     // A slot reference identifies its question conditions, not just an answer.
     // Group-only units consume the issued group context; unissued parts stay out.
-    const unitSlotIds = new Set(slotIds);
-    const contextPartIds = new Set(
-      slotIds.length === 0
-        ? issuedPartIds
-        : spec.slots.filter((slot) => unitSlotIds.has(slot.slot_id)).map((slot) => slot.part_id),
-    );
     const questionParts = revision.structure.parts.filter((part) =>
       contextPartIds.has(part.part_id),
     );
@@ -1089,6 +1111,7 @@ export async function evaluateSubmissionCore(
         question_parts: questionParts,
         response_slots: spec.slots.filter((slot) => contextPartIds.has(slot.part_id)),
         slot_responses: entries,
+        ...(learnerProcesses.length > 0 ? { learner_processes: learnerProcesses } : {}),
         ...(submissionImageSummary.count > 0 ? { submission_images: submissionImageSummary } : {}),
         group_evidence: unitGroupEvidence,
         materials: [...contextMaterialIds]
@@ -1137,7 +1160,7 @@ export async function evaluateSubmissionCore(
         ? citationsResolve(
             outcome.evidence_citations,
             new Set(slotIds),
-            collectKnownEvidenceIds(unitGroupEvidence, entries),
+            collectKnownEvidenceIds(unitGroupEvidence, entries, learnerProcesses),
           )
         : null;
     if (citationIssue != null) {

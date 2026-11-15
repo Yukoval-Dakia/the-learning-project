@@ -2,7 +2,7 @@
 // 设计基准 docs/design/loom-refresh/project/screen-knowledge.jsx（ScreenKnowledge）：
 // 树/图谱双视图（「树是骨架（parent/child），mesh 是 5 类 typed 关系。
 // 点节点看详情抽屉；图可平移缩放。」）+ AI 提议横幅 + 树行
-//（MasteryDial + decay 非颜色标签 + evidence/mesh 计数）+ NodeDrawer。
+//（MasteryDial + 作答依据时效标签 + evidence/mesh 计数）+ NodeDrawer。
 // 「集中审批」进入现有收件箱；没有已交付 write path 的「新建节点」不展示假入口。
 // M3E 呈现（YUK-1473）：外壳 UiNextRoot.kn-page + main.un-m3e-bridge，样式在 knowledge-m3e.css，
 // 记录见 docs/design/2026-11-03-knowledge-m3e.md。
@@ -43,9 +43,8 @@ import {
   getTreeForSubject,
 } from './knowledge-api';
 import { useKnowledgeClient } from './knowledge-client';
-import { isKnowledgeContainer } from './knowledge-node-kind';
 import { MasteryDial } from './MasteryDial';
-import { NodeDrawer, decayCue } from './NodeDrawer';
+import { NodeDrawer } from './NodeDrawer';
 
 const LazyMeshGraph = lazy(async () => {
   const { MeshGraph } = await import('./MeshGraph');
@@ -108,6 +107,14 @@ function countSentence(loaded: boolean, nodeCount: number, edgeCount: number): s
   if (!loaded) return ' ';
   return `共 ${nodeCount} 个知识点 · ${edgeCount} 条关系`;
 }
+
+const EVIDENCE_TIMING_CUES = {
+  untrained: { label: '暂无作答依据', icon: 'history', tone: 'neutral' },
+  fresh: { label: '作答依据还新', icon: 'check', tone: 'good' },
+  mild: { label: '作答依据渐旧', icon: 'history', tone: 'hard' },
+  stale: { label: '作答依据已旧', icon: 'alert', tone: 'again' },
+  unknown: { label: '作答依据时效未知', icon: 'history', tone: 'neutral' },
+};
 
 // Subject filter: one chip per subject plus 全部; a single choice, announced with aria-pressed
 // (click-only buttons, same as the old filter tabs).
@@ -201,8 +208,9 @@ export default function KnowledgePage({
   const ordered = useMemo(() => dfsOrder(nodes), [nodes]);
 
   const treeRow = (n: KnowledgeTreeNode & { depth: number }) => {
-    const cue = decayCue(n.mastery);
-    const isContainer = isKnowledgeContainer(n);
+    const cue = EVIDENCE_TIMING_CUES[n.review_timing?.freshness.decay_bucket ?? 'unknown'];
+    const isContainer = n.role === 'container';
+    const isEvaluable = n.role === 'kc';
     const meshCount = edges.filter(
       (e) => e.from_knowledge_id === n.id || e.to_knowledge_id === n.id,
     ).length;
@@ -211,7 +219,7 @@ export default function KnowledgePage({
         <button
           type="button"
           className="kn-tree-row"
-          data-hot={cue.tone === 'again' && !isContainer ? '' : undefined}
+          data-hot={cue.tone === 'again' && isEvaluable ? '' : undefined}
           data-container={isContainer ? '' : undefined}
           style={{ '--kn-depth': n.depth } as CSSProperties}
           onClick={() => setPicked(n)}
@@ -221,7 +229,7 @@ export default function KnowledgePage({
               └
             </span>
           )}
-          {isContainer ? (
+          {!isEvaluable ? (
             <span className="kn-container-ic" aria-hidden="true">
               <Layers size={17} />
             </span>
@@ -234,11 +242,21 @@ export default function KnowledgePage({
           >
             {n.name}
           </span>
-          {isContainer ? <span className="kn-tag">学科容器</span> : <DecayChip cue={cue} />}
+          {isEvaluable ? (
+            <DecayChip cue={cue} />
+          ) : (
+            <span className="kn-tag">
+              {isContainer
+                ? '容器 · 不评掌握'
+                : n.role === 'goal'
+                  ? '目标 · 不评掌握'
+                  : '节点角色未知'}
+            </span>
+          )}
           <span className="kn-tree-end">
             {/* A5 S1 (YUK-354) — 离散档 BandChip：档 + 区间 + 来源 + 低置信，定性表达 p(L) 轴。
                 前置 MasteryDial(tone 色环)保留——tone 颜色与 band 档正交（⑥ + 阶段4 红线）。 */}
-            {!isContainer && <BandChip input={n} />}
+            {isEvaluable && <BandChip input={n} />}
             {!isContainer && (
               <span className="kn-tree-meta un-num">{n.evidence_count} 条学习依据</span>
             )}

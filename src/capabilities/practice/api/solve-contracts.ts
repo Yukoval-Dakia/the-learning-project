@@ -4,6 +4,10 @@ import { MAX_HINT_COUNT, MAX_HINT_INDEX } from '@/core/schema/event/known';
 import { CreateSubmissionBodySchema } from './assessment-contracts';
 
 export const SolveSessionParamsSchema = z.object({ sid: z.string().trim().min(1) });
+export const ReadHintsQuerySchema = z
+  .object({ issuance_id: z.string().min(1), question_id: z.string().min(1) })
+  .strict();
+export type ReadHintsQueryT = z.infer<typeof ReadHintsQuerySchema>;
 export const RestoreHintsBodySchema = z
   .object({ issuance_id: z.string().min(1), question_id: z.string().min(1) })
   .strict();
@@ -19,6 +23,7 @@ export const HintHistoryResponseSchema = z.object({
     }),
   ),
 });
+export type HintHistoryResponseT = z.infer<typeof HintHistoryResponseSchema>;
 export const QuestionSolveParamsSchema = z.object({
   id: z.string().trim().min(1),
   sid: z.string().trim().min(1),

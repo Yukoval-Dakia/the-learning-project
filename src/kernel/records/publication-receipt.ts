@@ -200,7 +200,9 @@ export async function readTaskRunPublications(
 export async function readDemandPublications(
   db: Db | Tx,
   demandId: string,
+  options: { requestId?: string } = {},
 ): Promise<readonly PublicationReceiptT[]> {
+  const requestId = options.requestId;
   const rows = await db
     .select({ payload: event.payload, taskRunId: event.task_run_id })
     .from(event)
@@ -210,7 +212,9 @@ export async function readDemandPublications(
         eq(event.outcome, 'success'),
         sql`(
           ${event.payload}->'publication'->>'demand_id' = ${demandId}
-          OR (
+          ${
+            requestId == null
+              ? sql`OR (
             ${event.payload}->'publication' IS NULL
             AND ${event.task_run_id} IN (
               SELECT legacy.task_run_id FROM event legacy
@@ -218,8 +222,11 @@ export async function readDemandPublications(
                 AND legacy.payload->'data'->'ticket'->>'demand_id' = ${demandId}
                 AND legacy.task_run_id IS NOT NULL
             )
-          )
-        )`,
+          )`
+              : sql``
+          }
+        )
+        ${requestId == null ? sql`` : sql`AND ${event.payload}->'publication'->>'request_id' = ${requestId}`}`,
       ),
     )
     .orderBy(event.created_at, event.id);

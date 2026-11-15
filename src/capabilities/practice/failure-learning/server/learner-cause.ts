@@ -34,6 +34,7 @@ type AttemptCauseOptionsCurrent = {
   source: 'user' | 'agent';
   primary_category: string;
   label: string;
+  note: string | null;
 };
 
 type CauseTarget = {
@@ -205,10 +206,17 @@ async function currentCause(
       : (selected.effective.payload as { cause?: { primary_category?: unknown } }).cause
           ?.primary_category;
   if (typeof primaryCategory !== 'string' || primaryCategory.length === 0) return null;
+  const userNote =
+    selected.effective.action === 'experimental:user_cause' &&
+    selected.effective.actor_kind === 'user' &&
+    selected.effective.actor_ref === 'self'
+      ? selected.effective.payload.user_notes
+      : null;
   return {
     source: selected.effective.action === 'experimental:user_cause' ? 'user' : 'agent',
     primary_category: primaryCategory,
     label: causeLabel(target.profile, primaryCategory),
+    note: typeof userNote === 'string' ? userNote : null,
   };
 }
 

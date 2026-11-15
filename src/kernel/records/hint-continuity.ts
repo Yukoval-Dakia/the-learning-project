@@ -1,4 +1,4 @@
-import { and, desc, eq, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { type HelpProviderFault, isHelpProviderFault } from '@/ai/help-provider-fault';
 import { canonicalHash } from '@/core/migration/canonical';
 import { HintPublication, type HintPublicationT } from '@/core/schema/event/assistance-publication';
@@ -8,7 +8,7 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { issuanceRowToContract } from './assessment-issuance';
 import { loadIssuanceStudyCoordinate, recordStudyAssistanceExposure } from './study-reference';
-import { lockStudySources, studyMaterialAssetIds } from './study-sources';
+import { lockStudySources, readStudySources, studyMaterialAssetIds } from './study-sources';
 
 type Coordinate = { issuanceId: string; questionId: string };
 export type StoredHint = { id: string; publication: HintPublicationT };
@@ -114,6 +114,7 @@ async function sequenceClaim(
   binding: string,
   sources: string,
   rung: number,
+  sameIssuanceOnly = false,
 ) {
   const [claim] = await tx
     .select({ id: event.id })
@@ -121,6 +122,7 @@ async function sequenceClaim(
     .where(
       and(
         eq(event.action, 'experimental:hint_generation_claim'),
+        sameIssuanceOnly ? eq(event.subject_id, input.issuanceId) : undefined,
         sql`${event.payload}->>'binding_digest' = ${binding}`,
         sql`${event.payload}->>'source_digest' = ${sources}`,
         sql`${event.payload}->>'question_id' = ${input.questionId}`,
@@ -129,6 +131,65 @@ async function sequenceClaim(
     )
     .limit(1);
   return claim;
+}
+
+/** A snapshot read never restores another issuance or records a new exposure. */
+export async function readIssuedHints(db: Db, input: Coordinate) {
+  return db.transaction(
+    async (tx) => {
+      const coordinate = await loadIssuanceStudyCoordinate(tx, input.issuanceId, input.questionId);
+      if (coordinate.status === 'not_found')
+        throw new ApiError('not_found', 'issuance not found', 404);
+      if (coordinate.status === 'coordinate_mismatch')
+        throw new ApiError('coordinate_mismatch', 'issued coordinate differs', 409);
+      if (coordinate.status !== 'assistable')
+        throw new ApiError('study_restricted', 'issued help is unavailable', 409);
+      const sources = await readStudySources(
+        tx,
+        coordinate.revision.revision_id,
+        coordinate.revision.group_id,
+        coordinate.revision.structure.parts.map((part) => part.part_id),
+        studyMaterialAssetIds(coordinate.revision.structure.materials),
+      );
+      const binding = canonicalHash(issuanceRowToContract(coordinate.issuance).binding);
+      const sourceDigest = canonicalHash(sources);
+      const state = await readHints(tx, input, binding, sourceDigest);
+      const [pending] = await tx
+        .select({ id: event.id })
+        .from(event)
+        .where(
+          and(
+            eq(event.subject_id, input.issuanceId),
+            inArray(event.id, [
+              claimId(input, state.hints.length),
+              exposureId(input, state.hints.length),
+            ]),
+          ),
+        );
+      const sequencePending = await sequenceClaim(
+        tx,
+        input,
+        binding,
+        sourceDigest,
+        state.hints.length,
+        true,
+      );
+      return {
+        status: state.legacy
+          ? 'legacy_body_unavailable'
+          : pending || sequencePending
+            ? 'outcome_unknown'
+            : state.hints.length
+              ? 'ready'
+              : 'empty',
+        issuance_id: input.issuanceId,
+        revision_id: coordinate.revision.revision_id,
+        hints: state.hints,
+        next_rung: state.hints.length,
+      };
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
 }
 
 export async function restoreIssuedHints(db: Db, input: Coordinate) {

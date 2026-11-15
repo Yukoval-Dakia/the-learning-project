@@ -20,7 +20,9 @@ import {
   resolveVerdictsForAttempts,
   resolveVerdictsForNativeAttempts,
 } from '@/kernel/read-models/assessment-verdict';
+import type { PaperTaskRef } from '../../api/paper-contracts';
 import { PaperAssessmentBinding, paperBindingId } from './assessment/paper-issuance';
+import { paperTaskRef } from './task-continuation';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Shared knowledge name resolver (used by practice-read + paper-detail)
@@ -133,6 +135,7 @@ export interface PracticePaperItem {
   session: {
     id: string;
     status: string;
+    task_ref: PaperTaskRef;
     /** answered-so-far = COUNT(DISTINCT slot) WHERE submitted (no double-count on re-submit) */
     pos: number;
     /** right/wrong distribution from the latest judge per slot */
@@ -241,14 +244,14 @@ export async function getPracticeList(
     )
     .orderBy(desc(learning_session.created_at));
 
-  const sessionByPaper = new Map<string, { id: string; status: string }>();
+  const sessionByPaper = new Map<string, { id: string; status: string; task_ref: PaperTaskRef }>();
   // Keyed by session_id for the right/wrong visibility gate lookup (r.session_id
   // from the rwRows query is a session id, not an artifact id).
   const sessionStatusById = new Map<string, string>();
   for (const s of sessionRows) {
     if (!s.artifact_id) continue;
     if (!sessionByPaper.has(s.artifact_id)) {
-      sessionByPaper.set(s.artifact_id, { id: s.id, status: s.status });
+      sessionByPaper.set(s.artifact_id, { id: s.id, status: s.status, task_ref: paperTaskRef(s) });
       sessionStatusById.set(s.id, s.status);
     }
   }
@@ -443,6 +446,7 @@ export async function getPracticeList(
         ? {
             id: session.id,
             status: session.status,
+            task_ref: session.task_ref,
             pos: posBySession.get(session.id) ?? 0,
             right: rightWrongBySession.get(session.id)?.right ?? 0,
             partial: rightWrongBySession.get(session.id)?.partial ?? 0,

@@ -540,7 +540,7 @@ export async function requestReviewAdviceLifecycle(
     identity.question_id,
     request.assessment,
     context.signal,
-    replay,
+    { ...replay, capture: request.commit },
   );
   const state = projectReviewAnswerAdviceState({
     identity,

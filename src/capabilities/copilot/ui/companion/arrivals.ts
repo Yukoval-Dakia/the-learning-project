@@ -32,7 +32,7 @@ export function initializeFromStorage(ctx: CompanionCtx) {
       doubtful: true,
       error: RESTORED_PENDING_COPY,
     })),
-    currentSessionId: recoverySessionId,
+    ...ctx.drafts.select(recoverySessionId),
     selectionOrigin: 'recovery',
     optimisticSession: {
       id: recoverySessionId,
@@ -88,11 +88,6 @@ export function handleOpenRequest(
     void ctx.sender.send(prefill);
     return;
   }
-  // Compose handoffs never auto-send, and a cold open cannot send yet: append to the draft, so
-  // nothing the learner typed is lost. A draft that is still exactly the last handed sentence
-  // holds nothing of theirs, so the new one replaces it (改 then 撤回 is one ask, not two).
-  const draft = ctx.get().draft;
-  const untouched = draft.trim() === '' || draft === internals.handedDraft;
-  internals.handedDraft = prefill;
-  ctx.set({ draft: untouched ? prefill : `${draft}\n${prefill}` });
+  // Compose handoffs never auto-send; only an untouched handoff in this draft can be replaced.
+  ctx.drafts.handoff(prefill);
 }

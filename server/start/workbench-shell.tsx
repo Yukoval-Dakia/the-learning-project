@@ -35,6 +35,12 @@ const failedTurnReferenceClient = {
       init: { cache: 'no-store' },
     }),
   revealReference: startStudyReferenceClient,
+  readHints: (questionId: string, issuanceId: string) =>
+    apiOperationJson('readHintHistory', {
+      url: `/api/hint-history?issuance_id=${encodeURIComponent(issuanceId)}&question_id=${encodeURIComponent(questionId)}`,
+      method: 'GET',
+      init: { cache: 'no-store' },
+    }),
   restoreHints: startHintHistoryClient,
 };
 

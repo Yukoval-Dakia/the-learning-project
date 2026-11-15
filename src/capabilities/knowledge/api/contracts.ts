@@ -28,6 +28,11 @@ export const KnowledgeTreeNodeSchema = z.object({
   last_evidence_at: z.string().nullable(),
   last_active_at: z.string(),
   effective_domain: z.string().nullable(),
+  review_timing: z
+    .object({
+      freshness: ReviewTimingJsonSchema.shape.freshness.pick({ decay_bucket: true }),
+    })
+    .nullable(),
 });
 
 export const KnowledgeTreeResponseSchema = z.object({ rows: z.array(KnowledgeTreeNodeSchema) });

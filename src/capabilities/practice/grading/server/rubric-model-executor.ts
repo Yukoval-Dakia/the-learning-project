@@ -24,6 +24,7 @@ import type {
   RubricCriterionT,
 } from '@/core/schema/assessment';
 import { isOriginalEvidenceQuote } from '@/core/schema/assessment/evidence-quote';
+import { acceptedProcessEventId } from '@/core/schema/assessment/judgment';
 import { AssessmentRubricDecision } from '@/core/schema/assessment/model-decision';
 import type { Db } from '@/db/client';
 import {
@@ -117,6 +118,7 @@ function citationProblem(
       .map((item) => item.evidence_id),
   );
   const evidenceIds = new Set([
+    ...(request.learner_processes ?? []).map((p) => acceptedProcessEventId(p.submission_id)),
     ...request.slot_responses.flatMap((entry) =>
       entry.kind === 'open' ? entry.evidence.map((item) => item.evidence_id) : [],
     ),

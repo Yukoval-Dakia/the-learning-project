@@ -23,8 +23,10 @@ import {
   updateThetaPrecision,
 } from '@/core/theta';
 import {
+  type StructuralGuessing,
   THETA_GRID_ENABLED,
   type ThetaGridPosterior,
+  choicesToGuess,
   gridUpdate,
   uniformPrior,
 } from '@/core/theta-grid';
@@ -211,6 +213,8 @@ export interface UpdateThetaForAttemptInput {
    * synchronous/paper behavior of resolving the current knowledge tree inside this tx.
    */
   abilityGlobalByKnowledgeId?: AbilityGlobalByKnowledgeId;
+  /** Sealed native single-choice contribution; absent keeps legacy 1PL credit. */
+  guessing?: StructuralGuessing;
 }
 
 /**
@@ -347,10 +351,15 @@ export async function updateThetaForAttempt(
   // The credit formula is unchanged under A2; only the θ input becomes effectiveTheta.
   const rtMs = input.responseTimeMs;
   const useSrt = !perKc && SRT_ENABLED && typeof rtMs === 'number' && Number.isFinite(rtMs);
+  const guessRate =
+    states.length === 1 && input.guessing?.version === 1
+      ? choicesToGuess(input.guessing.choiceCount)
+      : 0;
   let credits: number[];
   if (perKc) {
     credits = states.map(
-      (s, i) => weightOf(s.id) * (outcomeOf(s.id) - expectedScore(effectiveThetas[i] ?? 0, b)),
+      (s, i) =>
+        weightOf(s.id) * (outcomeOf(s.id) - expectedScore(effectiveThetas[i] ?? 0, b, guessRate)),
     );
   } else if (useSrt) {
     const d = resolveSrtTimeLimit(input.difficulty); // seconds (module const)
@@ -364,9 +373,9 @@ export async function updateThetaForAttempt(
     const pItem = effectiveThetas.reduce((acc, th) => acc * expectedScore(th, b), 1);
     const timeWeight = SRT_FISHER_WEIGHT_ENABLED ? 4 * pItem * (1 - pItem) : 1;
     const srt = srtOutcome(input.outcome === 1, d, tSeconds, timeWeight); // ∈ [0,1]
-    credits = conjunctiveCreditsContinuous(effectiveThetas, b, srt);
+    credits = conjunctiveCreditsContinuous(effectiveThetas, b, srt, guessRate);
   } else {
-    credits = conjunctiveCredits(effectiveThetas, b, input.outcome);
+    credits = conjunctiveCredits(effectiveThetas, b, input.outcome, guessRate);
   }
 
   // 4 + 5. Per-KC offset update + upsert: θ_KC += k · bWeight · credit_k.

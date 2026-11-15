@@ -14,13 +14,17 @@ import type { Db, Tx } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { type DrawingStatus, drawing } from '@/db/schema';
 import { getR2 } from '@/kernel/object-storage';
-import { lockDerivationSources } from '@/kernel/read-models/usage-policy';
 import { persistImmutableAsset } from '@/kernel/records/asset-store';
 import { ChatGPTOAuthFileError } from '@/server/ai/chatgpt-oauth-store';
 import { classifyLoginFailure } from '@/server/ai/login-failure';
 import { TaskConfigError } from '@/server/ai/providers';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { getStartedBoss } from '@/server/boss/client';
+import {
+  DrawingImageInputError,
+  loadDrawingImageBytes,
+  loadDrawingImageInput,
+} from '../server/drawing-image-input';
 import {
   DRAWING_JOB_NAME,
   DRAWING_LOGIN_RETRY_MS,
@@ -293,42 +297,39 @@ async function processDrawing(
   }
 
   try {
+    const input = await loadDrawingImageInput(db, row);
     const runText = makeRunTaskTextFn(db);
-    const result = await runText(
-      DRAWING_TASK_KIND,
-      { brief: row.brief, alt: row.alt, ...(row.caption ? { caption: row.caption } : {}) },
-      {
-        // Literal wire assert: closes the gap between the claim-time resolve
-        // and the actual provider request (a repin mid-run cannot slip through).
-        beforeProviderQuery: async ({ provider, model }) => {
-          if (provider !== SOL_LANE.provider || model !== SOL_LANE.model) {
-            throw new TaskConfigError(
-              `DrawingTask wire pair '${provider}/${model}' is not ${SOL_LANE.provider}/${SOL_LANE.model} — refusing to send.`,
-            );
-          }
-          // Last fence before the brief leaves the process: provider admission
-          // can park this delivery for minutes after the claim-time gate, and
-          // a multi-query run re-checks before every send. The row must still
-          // be this delivery's running version, inside its clock, authorized.
-          const [current] = await db.select().from(drawing).where(eq(drawing.id, row.id));
-          if (!current || current.version !== row.version || current.status !== 'running') {
-            throw new DrawingAbortedError('cancelled');
-          }
-          if (current.expires_at.getTime() <= Date.now()) {
-            await transition(db, current, 'expired', { error_kind: 'expired' });
-            throw new DrawingAbortedError('expired');
-          }
-          if (!(await drawingSourcesAuthorized(db, current))) {
-            await expireDrawing(
-              db,
-              current,
-              'a bound source stopped allowing derivation or changed usage epoch before send',
-            );
-            throw new DrawingAbortedError('expired');
-          }
-        },
+    const result = await runText(DRAWING_TASK_KIND, input, {
+      // Literal wire assert: closes the gap between the claim-time resolve
+      // and the actual provider request (a repin mid-run cannot slip through).
+      beforeProviderQuery: async ({ provider, model }) => {
+        if (provider !== SOL_LANE.provider || model !== SOL_LANE.model) {
+          throw new TaskConfigError(
+            `DrawingTask wire pair '${provider}/${model}' is not ${SOL_LANE.provider}/${SOL_LANE.model} — refusing to send.`,
+          );
+        }
+        // Last fence before the brief leaves the process: provider admission
+        // can park this delivery for minutes after the claim-time gate, and
+        // a multi-query run re-checks before every send. The row must still
+        // be this delivery's running version, inside its clock, authorized.
+        const [current] = await db.select().from(drawing).where(eq(drawing.id, row.id));
+        if (!current || current.version !== row.version || current.status !== 'running') {
+          throw new DrawingAbortedError('cancelled');
+        }
+        if (current.expires_at.getTime() <= Date.now()) {
+          await transition(db, current, 'expired', { error_kind: 'expired' });
+          throw new DrawingAbortedError('expired');
+        }
+        if (!(await drawingSourcesAuthorized(db, current))) {
+          await expireDrawing(
+            db,
+            current,
+            'a bound source stopped allowing derivation or changed usage epoch before send',
+          );
+          throw new DrawingAbortedError('expired');
+        }
       },
-    );
+    });
     row = (await transition(db, row, 'running', { sol_task_run_id: result.task_run_id })) ?? row;
     let output: ReturnType<typeof parseDrawingOutput>;
     try {
@@ -357,8 +358,12 @@ async function processDrawing(
             drawing_id: row.id,
           },
           authorize: async (atx) => {
-            for (const source of row.sources) await lockDerivationSources(atx, source);
-            if (!(await drawingSourcesAuthorized(atx, row))) {
+            if (
+              !(await drawingSourcesAuthorized(atx, row, {
+                lockSources: true,
+                verifyImageBytes: (manifest) => loadDrawingImageBytes(atx, manifest),
+              }))
+            ) {
               throw new DrawingAuthorizationError(
                 'a bound source stopped allowing derivation or changed usage epoch during generation',
               );
@@ -392,6 +397,10 @@ async function processDrawing(
   } catch (error) {
     // The pre-send fence wrote its own closure — do not overwrite it.
     if (error instanceof DrawingAbortedError) return;
+    if (error instanceof DrawingImageInputError) {
+      await transition(db, row, 'failed', { error_kind: error.code, error_detail: error.message });
+      return;
+    }
     const login =
       classifyLoginFailure(error) ??
       (error instanceof ChatGPTOAuthFileError ? { kind: 'credential' as const } : undefined);

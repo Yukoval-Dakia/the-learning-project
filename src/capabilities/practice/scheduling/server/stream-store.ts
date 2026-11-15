@@ -8,7 +8,14 @@ import { newId } from '@/core/ids';
 import { StreamComposeControlPayload } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
-import { event, knowledge, learning_session, practice_stream_item, question } from '@/db/schema';
+import {
+  assessment_issuance,
+  event,
+  knowledge,
+  learning_session,
+  practice_stream_item,
+  question,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
@@ -22,7 +29,6 @@ import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessmen
 import type { RefillDeps } from '../../public';
 import {
   DEFAULT_SELECTION_POLICY,
-  DEFAULT_TEMPERATURE,
   type SelectionPolicyConfig,
 } from '../../server/selection-constants';
 import {
@@ -30,38 +36,37 @@ import {
   startReviewSession,
   transitionReviewSessionState,
 } from '../../session/public';
-import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
+import type { CollectedSignal } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { completeDailyStreamIfDone } from './daily-stream-close';
 import { attachPaperQuestionCounts } from './paper-rank';
-import { readQuestionPace } from './question-pace';
+import { readQuestionPacesForStreamItems } from './question-pace';
 import { selectScopedKnowledgeFill } from './scoped-fill';
 import {
   type SelectionObservationInput,
   recordSelectionObservation,
 } from './selection-observations';
-import { sampleByWeight } from './selection-sampler';
-import { statisticalWeights } from './selection-weights';
 import {
   type ComposeSoftmaxDeps,
   type ComposeSoftmaxResult,
   composeSoftmaxStream,
 } from './softmax-selection';
 import { withdrawStalePendingDueLines } from './stale-due-lines';
-import { planStoredStreamBudgetTrim, storedStreamExceedsBudget } from './stored-stream-budget';
-import { estimateStreamItemMinutes } from './stream-budget';
+import { planStoredStreamBudgetTrim } from './stored-stream-budget';
 import { carryForwardOpenStreamItems } from './stream-carry-forward';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
-import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
-import { presentNonDueQuestion } from './stream-item-presentation';
+import {
+  collectComposerInputs,
+  resolveDailyPracticeBudget,
+  resolveScopedPracticeBudget,
+} from './stream-inputs';
 import { type StreamMixNote, streamMixNote, writeStreamMixNote } from './stream-mix-note';
-import { planStreamReplacement, prepareStreamReplacement } from './stream-replacement-plan';
-import { readStreamSelectionCandidates } from './stream-selection-candidates';
 import {
   type StreamScope,
   type StreamView,
   buildStreamView,
   filterProspectiveStreamQuestions,
+  readStreamBudget,
 } from './stream-view';
 import {
   isUploadPracticeRow,
@@ -77,6 +82,11 @@ export {
   collectComposerInputs,
   resolveDailyPracticeBudget,
 } from './stream-inputs';
+
+// reRankAfterAnswer moved to stream-rerank.ts; the legacy call below imports it
+// directly (a re-export here would be a pass-through shell).
+import { reRankAfterAnswer } from './stream-rerank';
+
 export type { StreamScope, StreamView } from './stream-view';
 export { getStreamViewItem } from './stream-view';
 
@@ -347,7 +357,7 @@ async function materializePreparedCollect(
  * and must never roll back or fail the stream.
  */
 async function writeObservationsBestEffort(
-  db: Db,
+  db: DbLike,
   observations: SelectionObservationInput[],
 ): Promise<void> {
   for (const obs of observations) {
@@ -813,17 +823,7 @@ async function getKnowledgeScopedStream(
       : [];
   }
 
-  const [dailyBudget, questionPace] = await Promise.all([
-    resolveDailyPracticeBudget(db),
-    readQuestionPace(db),
-  ]);
-  const budget = {
-    pace: dailyBudget.pace,
-    minutes: Math.min(
-      dailyBudget.minutes,
-      SCOPED_QUESTION_LIMIT * estimateStreamItemMinutes('question', questionPace.minutes),
-    ),
-  };
+  const budget = await resolveScopedPracticeBudget(db, rows, SCOPED_QUESTION_LIMIT);
   const scope: StreamScope = {
     kind: 'knowledge',
     id: knowledgeId,
@@ -837,7 +837,6 @@ async function getKnowledgeScopedStream(
     rows,
     budget,
     scope,
-    questionMinutes: questionPace.minutes,
     openingLine: scopedOpeningLine(knowledgeRow.name, rows.length, preparing),
   });
 }
@@ -857,8 +856,12 @@ async function trimStoredPendingItemsToBudget(
       .orderBy(asc(practice_stream_item.position));
 
     const { rows: eligible, recoveryRowIds } = await filterProspectiveStreamQuestions(tx, current);
+    const paces = await readQuestionPacesForStreamItems(
+      tx,
+      await attachPaperQuestionCounts(tx, eligible),
+    );
     const deleteIds = planStoredStreamBudgetTrim({
-      rows: await attachPaperQuestionCounts(tx, eligible),
+      rows: paces.items,
       recoveryRowIds,
       budgetMinutes,
       questionMinutes,
@@ -966,20 +969,19 @@ export async function getStream(
       .orderBy(asc(practice_stream_item.position));
   }
 
-  const [budget, questionPace] = await Promise.all([
+  const [budget, gated] = await Promise.all([
     resolveDailyPracticeBudget(db),
-    readQuestionPace(db),
+    filterProspectiveStreamQuestions(db, rows),
   ]);
-  const gated = await filterProspectiveStreamQuestions(db, rows);
   rows = gated.rows;
-  const exceedsBudget = storedStreamExceedsBudget({
-    rows: await attachPaperQuestionCounts(db, rows),
-    recoveryRowIds: gated.recoveryRowIds,
-    budgetMinutes: budget.minutes,
-    questionMinutes: questionPace.minutes,
-  });
-  if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && exceedsBudget) {
-    rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes, questionPace.minutes);
+  const streamBudget = await readStreamBudget(db, rows, gated.recoveryRowIds, budget.minutes);
+  if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && streamBudget.exceedsBudget) {
+    rows = await trimStoredPendingItemsToBudget(
+      db,
+      date,
+      budget.minutes,
+      streamBudget.questionMinutes,
+    );
   }
 
   rows = (await filterProspectiveStreamQuestions(db, rows)).rows;
@@ -988,7 +990,6 @@ export async function getStream(
     date,
     rows,
     budget,
-    questionMinutes: questionPace.minutes,
     scope: null,
     // Templated opening; composer_nightly may replace it with AI text.
     openingLine:
@@ -1041,11 +1042,9 @@ async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<
  * Advance an item's schedule row. Answer facts are written by the submit route; this
  * only moves the daily-stream row.
  *
- * After a question item reaches `done`, rerank pending non-due items touching its KCs with
- * the updated θ̂. Rerank is best-effort and synchronous: it uses only the statistical
- * sampler (no LLM) and is wrapped in try/catch so a failure cannot roll back the committed
- * transition or turn the PATCH into a 500. It is skipped under the legacy policy, whose
- * deterministic compose must not be perturbed.
+ * Native question rerank is owned by settlement delivery. Legacy answers retain
+ * synchronous statistical rerank after `done`; errors cannot undo the transition.
+ * The legacy selection policy always retains deterministic compose.
  */
 export async function advanceStreamItem(
   db: Db,
@@ -1054,77 +1053,93 @@ export async function advanceStreamItem(
   // Injected rng for deterministic Poisson sampling in tests.
   rerankDeps: { rng?: () => number } = {},
 ): Promise<StreamItemRow | null> {
-  const [row] = await db
-    .select()
-    .from(practice_stream_item)
-    .where(eq(practice_stream_item.id, id))
-    .limit(1);
-  if (!row) return null;
-  // Already there: a second tab, a page behind the server, or a lost receipt asks again. The answer
-  // is the row as it stands, with no second transition and none of its side effects.
-  if (row.status === next) return row;
-  if (!LEGAL_TRANSITIONS[row.status].includes(next)) {
-    throw new ApiError('conflict', `illegal stream transition ${row.status} -> ${next}`, 409);
-  }
-  if (row.source === 'intervention') {
-    if (next === 'skipped') {
-      throw new ApiError(
-        'conflict',
-        'intervention diagnostics cannot be skipped before completion',
-        409,
-      );
+  const transition = await db.transaction(async (tx) => {
+    // Carry admission keeps the row's date stable until its partition is locked.
+    // The same partition lock keeps rerank from replacing a concurrently started row.
+    await lockPracticeStreamCarryAdmission(tx);
+    const [row] = await tx
+      .select()
+      .from(practice_stream_item)
+      .where(eq(practice_stream_item.id, id))
+      .limit(1);
+    if (!row) return null;
+    await lockPracticeStreamPartition(tx, row.date, row.session_id);
+    // Already there: a second tab, a page behind the server, or a lost receipt asks again. The answer
+    // is the row as it stands, with no second transition and none of its side effects.
+    if (row.status === next) return { row, changed: false };
+    if (!LEGAL_TRANSITIONS[row.status].includes(next)) {
+      throw new ApiError('conflict', `illegal stream transition ${row.status} -> ${next}`, 409);
     }
-    if (next === 'done') {
-      const [attempt] = await db
-        .select({ id: event.id })
-        .from(event)
-        .where(
-          and(
-            eq(event.action, 'experimental:assessment_attempt'),
-            eq(event.subject_kind, 'question'),
-            eq(event.subject_id, row.ref_id),
-            sql`${event.payload}->>'issuance_id' = ${`iss_stream_${row.id}`}`,
-          ),
-        )
-        .orderBy(desc(event.created_at), desc(event.id))
-        .limit(1);
-      const recorded = attempt ? await loadNativeInterventionDiagnosticState(db, attempt.id) : null;
-      if (!recorded) {
+    if (row.source === 'intervention') {
+      if (next === 'skipped') {
         throw new ApiError(
           'conflict',
-          'intervention diagnostics can be completed only after a recorded attempt',
+          'intervention diagnostics cannot be skipped before completion',
           409,
         );
       }
+      if (next === 'done') {
+        const [attempt] = await tx
+          .select({ id: event.id })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:assessment_attempt'),
+              eq(event.subject_kind, 'question'),
+              eq(event.subject_id, row.ref_id),
+              sql`${event.payload}->>'issuance_id' = ${`iss_stream_${row.id}`}`,
+            ),
+          )
+          .orderBy(desc(event.created_at), desc(event.id))
+          .limit(1);
+        const recorded = attempt
+          ? await loadNativeInterventionDiagnosticState(tx, attempt.id)
+          : null;
+        if (!recorded) {
+          throw new ApiError(
+            'conflict',
+            'intervention diagnostics can be completed only after a recorded attempt',
+            409,
+          );
+        }
+      }
     }
-  }
-  const [updated] = await db
-    .update(practice_stream_item)
-    .set({ status: next, updated_at: new Date() })
-    .where(eq(practice_stream_item.id, id))
-    .returning();
-  if (!updated) return null;
+    const [updated] = await tx
+      .update(practice_stream_item)
+      .set({ status: next, updated_at: new Date() })
+      .where(eq(practice_stream_item.id, id))
+      .returning();
+    return updated ? { row: updated, changed: true } : null;
+  });
+  if (!transition) return null;
+  if (!transition.changed) return transition.row;
+  const updated = transition.row;
 
   await completeScopedSessionIfDone(db, updated);
   await completeDailyStreamIfDone(db, updated);
 
-  // Rerank only completed question items, and only under the softmax policy: the legacy
-  // path must stay deterministic, so its stream must not be randomly reshuffled.
-  const policyForRerank = resolveSelectionPolicy().policy;
+  // Native answers rerank from their committed settlement, including when PATCH
+  // arrives first. Legacy answers retain the existing completion path.
   if (
-    policyForRerank === 'softmax_mfi' &&
+    resolveSelectionPolicy().policy === 'softmax_mfi' &&
     updated.status === 'done' &&
     updated.item_kind === 'question'
   ) {
     try {
-      await reRankAfterAnswer(db, {
-        date: updated.date,
-        sessionId: updated.session_id,
-        answeredQuestionId: updated.ref_id,
-        rng: rerankDeps.rng,
-      });
+      const [nativeIssuance] = await db
+        .select({ id: assessment_issuance.issuance_id })
+        .from(assessment_issuance)
+        .where(eq(assessment_issuance.issuance_id, `iss_stream_${updated.id}`))
+        .limit(1);
+      if (!nativeIssuance) {
+        await reRankAfterAnswer(db, {
+          date: updated.date,
+          sessionId: updated.session_id,
+          answeredQuestionId: updated.ref_id,
+          rng: rerankDeps.rng,
+        });
+      }
     } catch (err) {
-      // Rerank is a convenience layer; failure must not undo the committed transition.
       console.error('[stream-store] reRankAfterAnswer failed (post-commit, best-effort)', {
         streamItemId: updated.id,
         refId: updated.ref_id,
@@ -1132,6 +1147,7 @@ export async function advanceStreamItem(
       });
     }
   }
+
   return updated;
 }
 
@@ -1242,255 +1258,6 @@ export async function recomposeStream(
   // 事务已提交（流已稳）——锁外 best-effort 写观测和积压说明。
   await writeObservationsBestEffort(db, observations);
   if (mixNote) await writeStreamMixNoteBestEffort(db, date, mixNote);
-  return added;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Post-answer incremental rerank (softmax_mfi only).
-// ═══════════════════════════════════════════════════════════════════════════
-// Answering moves θ̂ for the question's knowledge_ids, which changes the MFI weight
-// p(1−p), p=σ(θ̂−b), of pending non-due diagnostic items. Rerank those items with the
-// fresh θ̂ using the statistical sampler only: no whole-stream rebuild and no LLM call
-// (LLM item weights are not persisted, so recomputing mfiScore is the cheapest correct
-// weight).
-// Scope and shape:
-// - The candidate pool is the full eligible non-due pool (same variant/new_check sources
-// as compose), excluding frozen refs. targetCount is the number of replaceable pending
-// slots, not the pool size, so sampling is real IPPS (π_i < 1).
-// - Only items touching the answered question's KCs are reranked. Unrelated pending
-// items, paper rows, recall-locked rows, and done/in_progress/skipped rows stay
-// frozen: not deleted, not moved, not re-sampled. Pending decay rows whose card is
-// no longer due today, or whose knowledge was settled after the row was written,
-// are removed first; the decay rows that remain stay frozen.
-// - A row whose snapshot is not recall-locked but whose fresh classification is recall
-// stays in place (fail-closed); never drop it into a freed slot.
-// - Sample sizes fluctuate. Delete only slots that will actually be refilled
-// (min(new refs, replaceable slots), lowest position first) and keep the rest, so the
-// stream never shrinks or leaves position holes.
-// - Record π_i only for rows that really inserted (post-commit, best-effort); kept slots
-// reuse their original observation.
-// - Reuse the `stream:compose:<date>` advisory lock, so rerank never races compose.
-// - Frozen and kept rows keep their exact positions; new items fill freed slots first,
-// then append after max(position). This deliberately differs from materializeStream's
-// full renumber, which recompose semantics allow.
-
-/** 从 practice_stream_item.signals 快照读 recallLocked。 */
-function rowIsRecallLocked(signals: unknown): boolean {
-  return (signals as { recallLocked?: unknown } | null)?.recallLocked === true;
-}
-
-/**
- * 作答后有界增量重排（hybrid 运行时）。**永不 throw 出 compose 逻辑级别**——纯统计 sampler，
- * 无 LLM。若无受影响待做项（θ̂ 移动不触及任何待做非到期诊断项）→ no-op（不动流、不写观测）。
- *
- * @param opts.answeredQuestionId 刚推进到 done 的题——其 knowledge_ids = affectedKnowledgeIds。
- * @param opts.rng 注入 rng（测试确定化）；省略 → sampleByWeight 默认 Math.random。
- * @returns 本轮新物化（重抽样落库）的非到期项数；no-op 时 0。
- */
-export async function reRankAfterAnswer(
-  db: Db,
-  opts: {
-    date: string;
-    sessionId?: string | null;
-    answeredQuestionId: string;
-    rng?: () => number;
-  },
-): Promise<number> {
-  const { date, sessionId, answeredQuestionId } = opts;
-
-  // 受影响 KC = 刚答完那题的 knowledge_ids。空则没有 θ̂ 锚点，不重排非到期行；
-  // 过期的待做到期行仍先撤下。
-  const [answered] = await db
-    .select({ knowledge_ids: question.knowledge_ids })
-    .from(question)
-    .where(eq(question.id, answeredQuestionId))
-    .limit(1);
-  const affectedKnowledgeIds = new Set((answered?.knowledge_ids ?? []).filter(Boolean));
-
-  const { added, observations } = await db.transaction(async (tx) => {
-    // Same key as every compose path, so rerank cannot race lazy/recompose/nightly.
-    await lockPracticeStreamPartition(tx, date, sessionId);
-    // Pending decay rows that are no longer due today, or whose knowledge was settled
-    // after the row was written, leave before rerank. The decay rows that remain,
-    // plus paper, recall-locked, and completed/in-progress/skipped rows, stay frozen.
-    await withdrawStalePendingDueLines(tx, date, sessionId);
-
-    const rows = await tx
-      .select()
-      .from(practice_stream_item)
-      .where(streamPartitionPredicate(date, sessionId))
-      .orderBy(asc(practice_stream_item.position));
-    if (affectedKnowledgeIds.size === 0 || rows.length === 0) {
-      return { added: 0, observations: [] } satisfies ComposeOutcome;
-    }
-
-    // Rerank scope: pending question items from variant/new_check whose snapshot is not
-    // recall-locked. Frontier items are sampled at compose time but excluded here:
-    // frontier signals structural reachability, not θ̂ diagnostics, so answering must
-    // not churn them. Changing either side must preserve that split.
-    const allPendingNonDue = rows.filter(
-      (r) =>
-        r.status === 'pending' &&
-        r.item_kind === 'question' &&
-        (r.source === 'variant' || r.source === 'new_check') &&
-        !rowIsRecallLocked(r.signals) &&
-        !isUploadPracticeRow(r),
-    );
-    // 无待做非到期诊断行 → no-op（不动流、不写观测）。
-    if (allPendingNonDue.length === 0)
-      return { added: 0, observations: [] } satisfies ComposeOutcome;
-
-    // Narrow scope to rows touching the answered question's KCs. Answering KC-A must not
-    // churn an unrelated KC-B slot; untouched pending rows stay frozen.
-    const pendingNonDueQids = [...new Set(allPendingNonDue.map((r) => r.ref_id))];
-    const pendingQRows =
-      pendingNonDueQids.length === 0
-        ? []
-        : await tx
-            .select({ id: question.id, knowledge_ids: question.knowledge_ids })
-            .from(question)
-            .where(inArray(question.id, pendingNonDueQids));
-    const pendingKidsByQid = new Map(pendingQRows.map((q) => [q.id, q.knowledge_ids ?? []]));
-    const pendingNonDue = allPendingNonDue.filter((r) =>
-      (pendingKidsByQid.get(r.ref_id) ?? []).some((k) => affectedKnowledgeIds.has(k)),
-    );
-    // 答完题的 KC 不触及任何待做非到期行 → 无可重排的 slot → no-op（不 churn 无关 slot）。
-    if (pendingNonDue.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
-
-    // Candidate pool is the full eligible non-due pool from compose; due and paper rows
-    // stay frozen.
-    const composerInputs = await collectComposerInputs(tx, date);
-    const poolRaws = [
-      ...composerInputs.variantItems.map((v) => ({
-        questionId: v.questionId,
-        source: 'variant' as const,
-        knowledgeLabel: v.knowledgeLabel,
-      })),
-      ...composerInputs.newCheckItems.map((n) => ({
-        questionId: n.questionId,
-        source: 'new_check' as const,
-        knowledgeLabel: n.knowledgeLabel,
-      })),
-    ];
-
-    // Everything outside the affected pending non-due scope is frozen: excluded from the
-    // pool and never moved or re-sampled.
-    const pendingNonDueRefs = new Set(pendingNonDue.map((r) => r.ref_id));
-    const frozenRefs = new Set(
-      rows.filter((r) => !pendingNonDueRefs.has(r.ref_id)).map((r) => r.ref_id),
-    );
-
-    // Exclude frozen refs and dedup in memory; the unique index is the backstop.
-    const seenPool = new Set<string>();
-    const eligibleRaws = poolRaws.filter(
-      (r) =>
-        !frozenRefs.has(r.questionId) && !seenPool.has(r.questionId) && seenPool.add(r.questionId),
-    );
-    if (eligibleRaws.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
-
-    const candidateInputs = await readStreamSelectionCandidates(
-      tx,
-      eligibleRaws.map((r) => ({ questionId: r.questionId, role: r.source })),
-    );
-
-    // Rerank only when the eligible pool touches an affected KC.
-    const poolTouchesAffected = candidateInputs.some((candidate) =>
-      (candidate.knowledgeIds ?? []).some((k) => affectedKnowledgeIds.has(k)),
-    );
-    if (!poolTouchesAffected) return { added: 0, observations: [] } satisfies ComposeOutcome;
-
-    // Fresh θ̂: collectCandidateSignals reads current mastery_state.
-    const sourceByRef = new Map(eligibleRaws.map((r) => [r.questionId, r.source]));
-    const labelByRef = new Map(eligibleRaws.map((r) => [r.questionId, r.knowledgeLabel]));
-    const signals: CollectedSignal[] = await collectCandidateSignals(tx, candidateInputs);
-    const signalByRef = new Map(signals.map((s) => [s.refId, s]));
-
-    const basis = prepareStreamReplacement(rows, pendingNonDue, signals);
-    if (basis === null) return { added: 0, observations: [] } satisfies ComposeOutcome;
-
-    // Statistical sampler with fresh θ̂. targetCount is the replaceable slot count, not the
-    // pool size, so sampling is real IPPS (π_i < 1).
-    const weighted = statisticalWeights(basis.samplable);
-    const sampled =
-      weighted.length === 0
-        ? []
-        : sampleByWeight(weighted, {
-            temperature: DEFAULT_TEMPERATURE,
-            targetCount: basis.targetCount,
-            rng: opts.rng,
-          });
-
-    const plan = planStreamReplacement(basis, sampled);
-    if (plan === null) return { added: 0, observations: [] } satisfies ComposeOutcome;
-
-    // Delete only slots that will be refilled; frozen and kept rows stay untouched.
-    await tx
-      .delete(practice_stream_item)
-      .where(
-        and(
-          streamPartitionPredicate(date, sessionId),
-          inArray(practice_stream_item.id, plan.deleteIds),
-        ),
-      );
-
-    // Fill vacated positions first, then append after max(position). Skip refs kept in the
-    // stream, and record π_i only for rows that actually insert.
-    const maxPosition = rows.reduce((m, r) => Math.max(m, r.position), 0);
-    let tailPos = maxPosition + 1;
-    let slot = 0;
-    const now = new Date();
-    const observations: SelectionObservationInput[] = [];
-    let added = 0;
-    for (const s of plan.insertCandidates) {
-      const pos = slot < plan.vacatedPositions.length ? plan.vacatedPositions[slot] : tailPos++;
-      slot++;
-      const signal = signalByRef.get(s.refId);
-      const presentation = presentNonDueQuestion(sourceByRef.get(s.refId), labelByRef.get(s.refId));
-      const newRowId = newId();
-      const inserted = await tx
-        .insert(practice_stream_item)
-        .values({
-          id: newRowId,
-          date,
-          session_id: sessionId ?? null,
-          position: pos,
-          item_kind: 'question' as const,
-          ref_id: s.refId,
-          source: presentation.source,
-          status: 'pending' as const,
-          // Rerank changes order only; keep the original reasoning template.
-          reasoning: presentation.reasoning,
-          added_by: 'composer_live' as const,
-          signals: toSignalsJson(signal),
-          created_at: now,
-          updated_at: now,
-        })
-        // Swallowed inserts report nothing, so they are neither counted nor observed.
-        .onConflictDoNothing()
-        .returning({ id: practice_stream_item.id });
-      // A swallowed row did not occupy the slot; let the next pick use it.
-      if (inserted.length === 0) {
-        slot--; // 没真占用空位，让回 slot 游标（下一个抽中项可填这个 position）。
-        continue;
-      }
-      added++;
-      observations.push({
-        date,
-        streamItemId: newRowId,
-        refKind: 'question',
-        refId: s.refId,
-        policy: 'softmax_mfi',
-        selected: true,
-        inclusionProbability: s.inclusionProbability,
-        signals: toSignalsJson(signal),
-      });
-    }
-
-    return { added, observations };
-  });
-
-  // Best-effort observations after commit.
-  await writeObservationsBestEffort(db, observations);
   return added;
 }
 

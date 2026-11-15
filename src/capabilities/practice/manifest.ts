@@ -14,6 +14,7 @@ import {
   CreateSolveSubmissionBodySchema,
   HintHistoryResponseSchema,
   HintRequestResponseSchema,
+  ReadHintsQuerySchema,
   RestoreHintsBodySchema,
   SolveSessionCreatedSchema,
   SolveSessionParamsSchema,
@@ -68,12 +69,31 @@ export const practiceCapability = defineCapability({
       ...fromOwnerParts((part) => part.events?.actions),
     ],
   },
-  subscriptions: { handlers: fromOwnerParts((part) => part.subscriptions?.handlers) },
+  subscriptions: {
+    handlers: [
+      ...fromOwnerParts((part) => part.subscriptions?.handlers),
+      {
+        id: 'practice.settlement-stream-rerank',
+        version: 1,
+        actions: ['experimental:assessment_settlement'],
+        load: () => import('./scheduling/public').then((m) => m.buildSettlementRerankSubscriber),
+      },
+    ],
+  },
   api: {
     // M2-T1 (YUK-316)：18 条路由全部带 load 懒加载 thunk（M1 配方）。[id]/[sid]
     // 段由 server/app.ts 的 toHonoPath 转 :id/:sid 并把捕获参数透传 handler。
     // 注：/api/practice/[id]/answer 实际是 POST（P2a 声明误写 PUT，壳与包从来是 POST）。
     routes: [
+      {
+        method: 'GET',
+        path: '/api/hint-history',
+        operationId: 'readHintHistory',
+        request: { query: ReadHintsQuerySchema },
+        responses: { 200: HintHistoryResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/resource-routes').then((m) => m.readHintHistoryResource),
+      },
       {
         method: 'POST',
         path: '/api/hint-history/restorations',

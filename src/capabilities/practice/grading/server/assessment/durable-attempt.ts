@@ -73,6 +73,7 @@ export async function dispatchNativeAttempt(
     'durable_judge_run',
     questionId,
     request,
+    options.capture,
   );
   const { submission } = prepared;
   const runId = nativeJudgeRunId(submission.submission_id);

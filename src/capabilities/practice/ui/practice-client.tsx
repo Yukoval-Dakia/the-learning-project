@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { type ReactNode, createContext, useContext, useMemo } from 'react';
 import type { ApiOperationJsonResponse } from '@/ui/lib/api';
 import {
   advanceStreamItem,
@@ -11,8 +11,12 @@ import {
   getQuestionFull,
   getStream,
   issueAssessment,
+  pausePaperTask,
+  readHints,
   recomposeStream,
+  recordPaperCurrentStep,
   restoreHints,
+  resumePaperTask,
   revealStudyReference,
   saveResponseDraft,
   solveHint,
@@ -23,11 +27,15 @@ import {
 } from './practice-api';
 
 export type PracticeClient = {
+  readHints: typeof readHints;
   restoreHints: typeof restoreHints;
   submitPaperSlot: typeof submitPaperSlot;
   endPaperSession: typeof endPaperSession;
   startPaperSession: typeof startPaperSession;
   getPaperDetail: typeof getPaperDetail;
+  resumePaperTask: typeof resumePaperTask;
+  pausePaperTask: typeof pausePaperTask;
+  recordPaperCurrentStep: typeof recordPaperCurrentStep;
   solveStart: typeof solveStart;
   solveHint: typeof solveHint;
   revealStudyReference: typeof revealStudyReference;
@@ -46,11 +54,15 @@ export type PracticeClient = {
   readJudgeRunStatus?: (runId: string) => Promise<ApiOperationJsonResponse<'getJudgeRunStatus'>>;
 };
 const httpPracticeClient: PracticeClient = {
+  readHints,
   restoreHints,
   submitPaperSlot,
   endPaperSession,
   startPaperSession,
   getPaperDetail,
+  resumePaperTask,
+  pausePaperTask,
+  recordPaperCurrentStep,
   solveStart,
   solveHint,
   revealStudyReference,
@@ -67,7 +79,27 @@ const httpPracticeClient: PracticeClient = {
   submitReview,
 };
 const PracticeClientContext = createContext<PracticeClient | undefined>(undefined);
-export const PracticeClientProvider = PracticeClientContext.Provider;
+export function PracticeClientProvider({
+  value,
+  children,
+}: {
+  value: Partial<PracticeClient>;
+  children: ReactNode;
+}) {
+  const client = useMemo<PracticeClient>(
+    () => ({
+      ...httpPracticeClient,
+      ...value,
+      // Artifact-only Start readers cannot resolve a clicked session occurrence.
+      getPaperDetail: (artifactId, taskRef) =>
+        taskRef
+          ? getPaperDetail(artifactId, taskRef)
+          : (value.getPaperDetail ?? getPaperDetail)(artifactId),
+    }),
+    [value],
+  );
+  return <PracticeClientContext.Provider value={client}>{children}</PracticeClientContext.Provider>;
+}
 export function usePracticeClient(): PracticeClient {
   return useContext(PracticeClientContext) ?? httpPracticeClient;
 }

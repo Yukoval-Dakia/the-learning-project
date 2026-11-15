@@ -31,7 +31,11 @@ import {
   projectIssuedScoringBasis,
 } from '@/core/schema/assessment/evaluation';
 import { GroupInputContractError } from '@/core/schema/assessment/group-input';
-import type { EvaluationRecordT } from '@/core/schema/assessment/judgment';
+import {
+  type AcceptedLearnerProcessT,
+  EvaluationInputSnapshot,
+  type EvaluationRecordT,
+} from '@/core/schema/assessment/judgment';
 import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
 import {
   type AssessmentVerdict,
@@ -57,6 +61,7 @@ import {
   getEffectiveTruths,
   newerEventRow,
 } from '@/kernel/events';
+import { loadAcceptedProcesses } from '@/kernel/records/assessment-accepted-process';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -509,6 +514,10 @@ export async function resolveVerdictsForGroups(
     );
   }
   const activeActivationRows = await filterActiveRows(db, activationRows);
+  const acceptedProcesses = await loadAcceptedProcesses(
+    db,
+    submissions.map((sub) => sub.submission_id),
+  );
   return projectGroupVerdicts({
     groupIds: uniqueIds,
     heads,
@@ -518,6 +527,7 @@ export async function resolveVerdictsForGroups(
     issuances: issuanceRows,
     activeActivations: activeActivationRows,
     settlements: settlementRows,
+    acceptedProcesses,
   });
 }
 
@@ -534,6 +544,7 @@ export function projectGroupVerdicts(input: {
   issuances: (typeof assessment_issuance.$inferSelect)[];
   activeActivations: Pick<EventRow, 'subject_id' | 'payload'>[];
   settlements: Pick<EventRow, 'id' | 'created_at' | 'payload'>[];
+  acceptedProcesses?: ReadonlyMap<string, AcceptedLearnerProcessT | null>;
 }): Map<string, GroupVerdict> {
   const {
     heads,
@@ -570,18 +581,30 @@ export function projectGroupVerdicts(input: {
     const revision = anchorRow && revisionById.get(anchorRow.revision_id);
     if (!anchorRow || !revision) return undefined;
     try {
+      const rawSnapshot = row.provenance?.input_snapshot;
+      const parsedSnapshot = EvaluationInputSnapshot.safeParse(rawSnapshot);
+      if (rawSnapshot != null && !parsedSnapshot.success) return undefined;
+      const snapshot = parsedSnapshot.success ? parsedSnapshot.data : undefined;
       const members = groupMembers.map((sub) => {
         const issuance = issuanceById.get(sub.issuance_id);
         if (!issuance)
           throw new GroupInputContractError('invalid_group_input', 'missing member issuance');
-        return evaluationMemberFromRows(sub, issuance);
+        return evaluationMemberFromRows(
+          sub,
+          issuance,
+          snapshot?.version === 2 ? input.acceptedProcesses?.get(sub.submission_id) : undefined,
+        );
       });
       const anchor = members.find(
         (member) => member.submission.submission_id === row.submission_id,
       );
       if (!anchor) return undefined;
-      const actual = freezeEvaluationInput(anchor.submission, revision, members);
-      const snapshot = row.provenance?.input_snapshot;
+      const actual = freezeEvaluationInput(
+        anchor.submission,
+        revision,
+        members,
+        snapshot?.version ?? 1,
+      );
       if (snapshot == null ? members.length !== 1 : !matchesEvaluationInput(snapshot, actual))
         return undefined;
       return projectIssuedScoringBasis(revision, actual.issued_part_ids);

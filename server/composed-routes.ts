@@ -5,16 +5,24 @@ import type { ApiRouteDecl, CapabilityManifest, RouteHandler } from '@/kernel/ma
 
 const composedRouteLoaders: Readonly<Record<string, () => Promise<RouteHandler>>> = {
   getWorkbenchSummary: async () => {
-    const [{ loadWorkbenchSummary }, { queryReviewDue }, { db }, { errorResponse }] =
-      await Promise.all([
-        import('@/capabilities/shell/public'),
-        import('@/capabilities/practice/scheduling/public'),
-        import('@/db/client'),
-        import('@/kernel/http'),
-      ]);
+    const [
+      { loadWorkbenchSummary },
+      { queryReviewDue },
+      { readReviewSessionRefs },
+      { db },
+      { errorResponse },
+    ] = await Promise.all([
+      import('@/capabilities/shell/public'),
+      import('@/capabilities/practice/scheduling/public'),
+      import('@/capabilities/practice/public'),
+      import('@/db/client'),
+      import('@/kernel/http'),
+    ]);
     return async () => {
       try {
-        return Response.json(await loadWorkbenchSummary(db, { queryReviewDue }));
+        return Response.json(
+          await loadWorkbenchSummary(db, { queryReviewDue, readReviewSessionRefs }),
+        );
       } catch (err) {
         return errorResponse(err);
       }

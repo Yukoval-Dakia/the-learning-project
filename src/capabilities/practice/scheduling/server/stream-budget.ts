@@ -40,10 +40,17 @@ export interface BudgetableStreamItem {
   source: string;
   /** Answerable slots. Prices a paper; questions ignore it. */
   questionCount?: number;
+  /** A scoped estimate supplied by the question-pace owner. */
+  estimatedMinutes?: number;
 }
 
-function pricedMinutes(item: BudgetableStreamItem, questionMinutes: number): number {
-  return estimateStreamItemMinutes(item.item_kind, questionMinutes, item.questionCount);
+export function pricedStreamItemMinutes(
+  item: Pick<BudgetableStreamItem, 'item_kind' | 'questionCount' | 'estimatedMinutes'>,
+  questionMinutes: number = DEFAULT_QUESTION_MINUTES,
+): number {
+  return item.item_kind === 'question' && item.estimatedMinutes !== undefined
+    ? item.estimatedMinutes
+    : estimateStreamItemMinutes(item.item_kind, questionMinutes, item.questionCount);
 }
 
 export interface TimeBudgetResult<T> {
@@ -82,6 +89,7 @@ function isNewLearningSource(source: string): boolean {
  * 干预交付是承重产品动作，即使使当天流超过自述预算也不可静默丢弃。
  * 最终输出恢复原意图序，所以 legacy 的 variant 穿插仍保持。
  * 没有分钟预算时保留全部输入（旧调用方）。
+ * 扣除已用题价后的内部余额可以是小数；自述日预算仍由 dailyPracticeBudgetMinutes 决定。
  */
 export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   items: readonly T[],
@@ -92,13 +100,16 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   if (budgetMinutes === undefined) {
     return {
       kept: [...items],
-      estimatedMinutes: items.reduce((sum, item) => sum + pricedMinutes(item, questionMinutes), 0),
+      estimatedMinutes: items.reduce(
+        (sum, item) => sum + pricedStreamItemMinutes(item, questionMinutes),
+        0,
+      ),
       deferredDueCount: 0,
       truncated: false,
     };
   }
-  if (!Number.isInteger(budgetMinutes) || budgetMinutes < 1) {
-    throw new Error(`daily practice budget must be a positive integer (got ${budgetMinutes})`);
+  if (!Number.isFinite(budgetMinutes) || budgetMinutes <= 0) {
+    throw new Error(`stream budget must be finite and positive (got ${budgetMinutes})`);
   }
 
   const questionCost = estimateStreamItemMinutes('question', questionMinutes);
@@ -108,7 +119,7 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   for (const [index, item] of items.entries()) {
     if (item.source !== 'intervention') continue;
     selectedIndexes.add(index);
-    remaining = Math.max(0, remaining - pricedMinutes(item, questionMinutes));
+    remaining = Math.max(0, remaining - pricedStreamItemMinutes(item, questionMinutes));
   }
 
   const newLearningIndexes: number[] = [];
@@ -125,19 +136,27 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
     slots,
     Math.max(nonDueQuestionFloor(slots, preferred.length), options?.reserveQuestionSlots ?? 0),
   );
-  let protectedRemaining = Math.min(floor * questionCost, remaining);
+  let protectedRemaining = Math.min(
+    preferred.slice(0, floor).reduce((sum, index) => {
+      const cost = pricedStreamItemMinutes(items[index], questionMinutes);
+      return cost <= remaining - sum ? sum + cost : sum;
+    }, 0) +
+      Math.max(0, floor - preferred.length) * questionCost,
+    remaining,
+  );
   let flexible = remaining - protectedRemaining;
 
   for (const index of preferred) {
-    if (protectedRemaining < questionCost) break;
+    const cost = pricedStreamItemMinutes(items[index], questionMinutes);
+    if (protectedRemaining < cost) break;
     selectedIndexes.add(index);
-    protectedRemaining -= questionCost;
+    protectedRemaining -= cost;
   }
 
   let deferredDueCount = 0;
   for (const [index, item] of items.entries()) {
     if (item.source !== 'decay' || selectedIndexes.has(index)) continue;
-    const cost = pricedMinutes(item, questionMinutes);
+    const cost = pricedStreamItemMinutes(item, questionMinutes);
     if (cost <= flexible) {
       selectedIndexes.add(index);
       flexible -= cost;
@@ -151,7 +170,7 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
     if (selectedIndexes.has(index) || item.source === 'decay' || item.source === 'intervention') {
       continue;
     }
-    const cost = pricedMinutes(item, questionMinutes);
+    const cost = pricedStreamItemMinutes(item, questionMinutes);
     if (cost <= leftover) {
       selectedIndexes.add(index);
       leftover -= cost;
@@ -161,7 +180,10 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   const kept = items.filter((_, index) => selectedIndexes.has(index));
   return {
     kept,
-    estimatedMinutes: kept.reduce((sum, item) => sum + pricedMinutes(item, questionMinutes), 0),
+    estimatedMinutes: kept.reduce(
+      (sum, item) => sum + pricedStreamItemMinutes(item, questionMinutes),
+      0,
+    ),
     deferredDueCount,
     truncated: kept.length < items.length,
   };

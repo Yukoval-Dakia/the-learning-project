@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DerivationPolicy } from '@/core/schema/derivation-policy';
+import { AbilityClaimSchema, EvidenceAgeSchema } from '@/core/schema/learner-judgment';
 import { NudgeKind, SuggestionKind } from '@/kernel/capability-contract-schemas';
 import { ApiErrorResponseSchema, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { ConfirmationOccurrence } from '../confirmation-contract';
@@ -246,6 +247,17 @@ const EntityCardLastPracticeSchema = z.object({
   outcome: z.enum(['correct', 'partial', 'wrong']).nullable(),
 });
 
+const EntityCardJudgmentSchema = z.object({
+  ability_claim: AbilityClaimSchema,
+  uncertainty: z.object({ evidence_age: EvidenceAgeSchema }),
+  judgement: z.string(),
+  batch: z.object({
+    calibration: z.literal('uncalibrated'),
+    // Evaluation instant, not an input watermark or historical cutoff.
+    as_of: z.string().datetime(),
+  }),
+});
+
 // The card body is read from the owning data at request time; a gone target is a
 // normal answer, not an error, and never carries the hidden name or content.
 export const EntityCardResponseSchema = z.union([
@@ -255,6 +267,8 @@ export const EntityCardResponseSchema = z.union([
     state: z.literal('ok'),
     name: z.string(),
     mastery_band: z.number().int().min(0).max(3).nullable(),
+    // Older card responses omit the canonical projection.
+    judgment: EntityCardJudgmentSchema.nullable().optional(),
     last_practice: EntityCardLastPracticeSchema.nullable(),
   }),
   z.object({
