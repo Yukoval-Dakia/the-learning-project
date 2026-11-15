@@ -4,6 +4,9 @@ import {
   type PracticeClient,
   PracticeClientProvider,
   loadPracticeFacePage,
+  pausePaperTask,
+  recordPaperCurrentStep,
+  resumePaperTask,
 } from '@/capabilities/practice/ui-public';
 import { startIssuanceCreateClient } from '../issuance-create-client';
 import { startIssuanceStateClient } from '../issuance-state-client';
@@ -38,6 +41,9 @@ const practiceClient: PracticeClient = {
   recomposeStream: startPracticeRecomposeClient,
   getPapers: startPaperListClient,
   getPaperDetail: startPaperDetailClient,
+  resumePaperTask,
+  pausePaperTask,
+  recordPaperCurrentStep,
   startPaperSession: startPaperSessionClient,
   submitPaperSlot: startPaperSubmissionClient,
   endPaperSession: endPaperSessionClient,

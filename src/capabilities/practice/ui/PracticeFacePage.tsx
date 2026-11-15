@@ -13,6 +13,7 @@ import { prefersReducedMotion, useSharedMorph } from '@/ui-next/public';
 import './practice-face-m3e.css';
 import './practice-paper-m3e.css';
 
+import type { PaperTaskRef } from '../session/public';
 import { PfPaper } from './PfPaper';
 import { PfRetro } from './PfRetro';
 import { PfShelf } from './PfShelf';
@@ -47,8 +48,8 @@ export interface PfToast {
 type Mode =
   | { kind: 'list' }
   | { kind: 'solo'; item: StreamItem }
-  | { kind: 'paper'; artifactId: string }
-  | { kind: 'retro'; artifactId: string };
+  | { kind: 'paper'; artifactId: string; taskRef?: PaperTaskRef }
+  | { kind: 'retro'; artifactId: string; taskRef?: PaperTaskRef };
 
 interface StreamActionFailure {
   message: string;
@@ -156,24 +157,49 @@ export default function PracticeFacePage({
     [setQuery],
   );
   const paperParam = getQuery('paper');
-  const [mode, setMode] = useState<Mode>(() =>
-    paperParam === null ? { kind: 'list' } : { kind: 'paper', artifactId: paperParam },
-  );
-  const [followedPaper, setFollowedPaper] = useState(paperParam);
-  // Reconcile before children commit: a late read from the previous paper must not mount it.
-  if (paperParam !== followedPaper) {
-    setFollowedPaper(paperParam);
-    setMode(paperParam === null ? { kind: 'list' } : { kind: 'paper', artifactId: paperParam });
+  const sessionParam = getQuery('session');
+  const occurrenceParam = getQuery('occurrence');
+  const paperView = getQuery('paper_view');
+  const taskRef: PaperTaskRef | undefined =
+    sessionParam !== null || occurrenceParam !== null
+      ? {
+          kind: 'paper_review',
+          session_id: sessionParam ?? '',
+          occurrence_ref: occurrenceParam ?? '',
+        }
+      : undefined;
+  const paperIdentity = JSON.stringify([paperParam, sessionParam, occurrenceParam, paperView]);
+  const requestedPaperMode = (): Mode =>
+    paperParam === null
+      ? { kind: 'list' }
+      : { kind: paperView === 'retro' ? 'retro' : 'paper', artifactId: paperParam, taskRef };
+  const [mode, setMode] = useState<Mode>(requestedPaperMode);
+  const [followedPaper, setFollowedPaper] = useState(paperIdentity);
+  if (paperIdentity !== followedPaper) {
+    setFollowedPaper(paperIdentity);
+    setMode(requestedPaperMode());
   }
   const openPaper = useCallback(
-    (artifactId: string) => {
+    (artifactId: string, ref?: PaperTaskRef, retro = false) => {
       const search = new URLSearchParams(window.location.search);
       search.delete('item');
       search.set('paper', artifactId);
+      for (const key of ['session', 'occurrence', 'paper_view']) search.delete(key);
+      if (ref) {
+        search.set('session', ref.session_id);
+        search.set('occurrence', ref.occurrence_ref);
+      }
+      if (retro) search.set('paper_view', 'retro');
       navigate(`/practice?${search}`);
     },
     [navigate],
   );
+  const leavePaper = () => {
+    const search = new URLSearchParams(window.location.search);
+    for (const key of ['paper', 'session', 'occurrence', 'paper_view']) search.delete(key);
+    navigate(`/practice?${search}`);
+    setMode({ kind: 'list' });
+  };
   const [toasts, setToasts] = useState<PfToast[]>([]);
   const [actionFailure, setActionFailure] = useState<StreamActionFailure | null>(null);
 
@@ -295,8 +321,7 @@ export default function PracticeFacePage({
     if (!nextScope && getQuery('view') === 'shelf') nextView = 'shelf';
     setScopeKnowledgeId(nextScope);
     setView(nextView);
-    const paper = getQuery('paper');
-    setMode(paper === null ? { kind: 'list' } : { kind: 'paper', artifactId: paper });
+    if (getQuery('paper') === null) setMode({ kind: 'list' });
     setActionFailure(null);
   }, [getQuery]);
 
@@ -782,24 +807,42 @@ export default function PracticeFacePage({
     body = (
       <PfPaper
         // key=artifactId：换卷即换一次作答 visit（YUK-1483），草稿/计时/session 不跨卷残留。
-        key={mode.artifactId}
+        key={`${mode.artifactId}:${mode.taskRef?.session_id}:${mode.taskRef?.occurrence_ref}`}
         artifactId={mode.artifactId}
+        taskRef={mode.taskRef}
         onExit={(info) => {
-          if (new URLSearchParams(window.location.search).get('paper') !== paperParam) return;
-          setQuery('paper', null);
-          setMode({ kind: 'list' });
+          if (
+            JSON.stringify(
+              ['paper', 'session', 'occurrence', 'paper_view'].map((key) =>
+                new URLSearchParams(window.location.search).get(key),
+              ),
+            ) !== paperIdentity
+          )
+            return;
+          leavePaper();
           void refreshStream();
           const n = info?.unsavedFailures ?? 0;
           addToast(
-            n > 0 ? `已退出——有 ${n} 处草稿未保存` : '进度已保留——卷在流里等你回来。',
+            n > 0
+              ? `已退出——有 ${n} 处草稿未保存${info?.positionUnconfirmed ? '，位置也未确认保存' : ''}`
+              : info?.positionUnconfirmed
+                ? '已退出，位置未确认保存；重新打开只恢复服务器已确认的版本。'
+                : '已退出，重新打开将读取服务器已保存的版本。',
             'info',
             n > 0 ? 'alert' : 'clock',
           );
         }}
-        onSubmitted={() => {
-          if (new URLSearchParams(window.location.search).get('paper') !== paperParam) return;
+        onSubmitted={(submittedRef) => {
+          if (
+            JSON.stringify(
+              ['paper', 'session', 'occurrence', 'paper_view'].map((key) =>
+                new URLSearchParams(window.location.search).get(key),
+              ),
+            ) !== paperIdentity
+          )
+            return;
           void qc.invalidateQueries({ queryKey: streamQueryKey, refetchType: 'none' });
-          setMode({ kind: 'retro', artifactId: mode.artifactId });
+          openPaper(mode.artifactId, submittedRef ?? mode.taskRef, true);
         }}
         addToast={addToast}
       />
@@ -807,10 +850,11 @@ export default function PracticeFacePage({
   } else if (mode.kind === 'retro') {
     body = (
       <PfRetro
+        key={`${mode.artifactId}:${mode.taskRef?.session_id}:${mode.taskRef?.occurrence_ref}`}
         artifactId={mode.artifactId}
+        taskRef={mode.taskRef}
         onBack={() => {
-          setQuery('paper', null);
-          setMode({ kind: 'list' });
+          leavePaper();
           switchView('shelf');
         }}
       />
@@ -827,7 +871,7 @@ export default function PracticeFacePage({
         {view === 'shelf' ? (
           <PfShelf
             openPaper={openPaper}
-            openRetro={(artifactId) => setMode({ kind: 'retro', artifactId })}
+            openRetro={(artifactId, ref) => openPaper(artifactId, ref, true)}
           />
         ) : (
           <PfStream

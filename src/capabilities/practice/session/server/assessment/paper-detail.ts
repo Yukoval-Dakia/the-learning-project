@@ -1,6 +1,6 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { EvaluationRecord, projectPracticeIssuance } from '@/core/schema/assessment';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   answer,
   type artifact,
@@ -29,7 +29,7 @@ import type { PaperAssessmentBindingT } from './paper-issuance';
 
 /** All slots and disclosure rules come from the immutable opening receipt. */
 export async function getFrozenPaperDetail(
-  db: Db,
+  db: Db | Tx,
   paper: typeof artifact.$inferSelect,
   binding: PaperAssessmentBindingT,
   sessionStatus: string,

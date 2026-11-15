@@ -20,6 +20,11 @@ import {
 import { createAnswerDraft } from '../api/paper-answer-route';
 import { createPaperReviewSession } from '../api/paper-session-create';
 import { createPaperSubmission } from '../api/paper-submit-route';
+import {
+  GET as readContinuation,
+  PATCH as navigatePaper,
+  POST as resumePaper,
+} from '../api/task-continuation';
 import { PATCH as transitionReview } from '../api/review-session-detail';
 import { submitNativePaperAttempt } from './assessment/paper-attempt';
 import { readPaperAssessmentBinding } from './assessment/paper-issuance';
@@ -218,12 +223,28 @@ describe('paper opening freezes actual assessment occurrences', () => {
     ).toEqual(q.responseSet('a+b'));
   });
 
-  it('reopening creates a new occurrence atomically; pause/resume retains the original', async () => {
+  // @invariant concurrency: Exact occurrence navigation is serial, replayable and cannot replace a newer position
+  // @fails-if stale commands overwrite navigation, failed commands commit, or reopening reuses the old binding
+  it('retains the exact occurrence through resume and rejects superseded navigation and reopened refs', async () => {
     const db = testDb(),
       q = await seedFrozenSolveQuestion(testDb());
-    const paperId = await paper([q.id]);
+    const secondQuestion = await seedFrozenSolveQuestion(db);
+    const paperId = await paper([q.id, secondQuestion.id]);
     const { sessionId } = await createPaperReviewSession(paperId);
     const first = await readPaperAssessmentBinding(db, sessionId);
+    const ref = (await getPaperDetail(db, paperId))?.continuation?.task_ref;
+    if (!ref || !first) throw new Error('initial occurrence absent');
+    const command = (id: string, revision: number, step?: string, action = 'resume') =>
+      new Request('http://localhost/continuation', {
+        method: step ? 'PATCH' : 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          task_ref: ref,
+          expected_revision: revision,
+          command_id: id,
+          ...(step ? { step_issuance_id: step } : { action }),
+        }),
+      });
     const transition = (status: string) =>
       transitionReview(
         new Request('http://localhost/session', {
@@ -234,9 +255,39 @@ describe('paper opening freezes actual assessment occurrences', () => {
         { id: sessionId },
       );
     expect((await transition('paused')).status).toBe(200);
-    expect((await transition('started')).status).toBe(200);
+    expect((await resumePaper(command('resume', 0), { id: sessionId })).status).toBe(200);
+    const navigate = (id: string, revision: number, step: string) =>
+      navigatePaper(command(id, revision, step), { id: sessionId });
+    const step = first.slots[1].issuance_id;
+    expect((await navigate('move', 1, step)).status).toBe(200);
+    const replay = await navigate('move', 1, step);
+    expect(await replay.json()).toMatchObject({
+      continuation: { revision: 2, current_step: { issuance_id: step } },
+    });
+    expect((await navigate('move', 1, first.slots[0].issuance_id)).status).toBe(409);
+    const raced = await Promise.all([
+      navigate('tab-a', 2, step),
+      navigate('tab-b', 2, first.slots[0].issuance_id),
+    ]);
+    expect(raced.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect((await navigate('move', 1, step)).status).toBe(409);
+    expect((await navigate('foreign-step', 3, 'not-issued-here')).status).toBe(409);
+    const read = () =>
+      readContinuation(
+        new Request(`http://localhost/continuation?occurrence_ref=${ref.occurrence_ref}`),
+        { id: sessionId },
+      );
+    expect(await (await read()).json()).toMatchObject({
+      continuation: { task_ref: ref, revision: 3 },
+    });
+    expect(
+      (await resumePaper(command('pause', 3, undefined, 'pause'), { id: sessionId })).status,
+    ).toBe(200);
+    expect((await resumePaper(command('resume-again', 4), { id: sessionId })).status).toBe(200);
+    expect(
+      (await resumePaper(command('late-pause', 3, undefined, 'pause'), { id: sessionId })).status,
+    ).toBe(409);
     expect(await readPaperAssessmentBinding(db, sessionId)).toEqual(first);
-    if (!first) throw new Error('initial binding absent');
     await submitNativePaperAttempt(db, {
       sessionId,
       paperArtifactId: paperId,
@@ -246,6 +297,7 @@ describe('paper opening freezes actual assessment occurrences', () => {
     });
     expect((await transition('abandoned')).status).toBe(200);
     expect((await transition('started')).status).toBe(200);
+    expect((await read()).status).toBe(409);
     const second = await readPaperAssessmentBinding(db, sessionId);
     expect(second?.slots[0].issuance_id).not.toBe(first?.slots[0].issuance_id);
     expect(second?.slots[0].evaluation_group_id).not.toBe(first?.slots[0].evaluation_group_id);
@@ -269,5 +321,12 @@ describe('paper opening freezes actual assessment occurrences', () => {
       .set({ status: 'completed' })
       .where(eq(learning_session.id, sessionId));
     expect(await getQuestionTimeline(db, q.id)).toMatchObject([{ outcome: 'pending' }]);
+    const completedRef = reopenedDetail?.continuation?.task_ref;
+    if (!completedRef) throw new Error('completed occurrence absent');
+    const newer = await createPaperReviewSession(paperId);
+    expect(newer.sessionId).not.toBe(sessionId);
+    const historical = await getPaperDetail(db, paperId, completedRef);
+    expect(historical?.session).toMatchObject({ id: sessionId, status: 'completed' });
+    expect(historical?.continuation?.target).toBe('retro');
   });
 });

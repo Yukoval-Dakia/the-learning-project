@@ -13,6 +13,8 @@ import {
 import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
 import { answer, artifact, learning_session, question } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
+import type { PaperContinuation, PaperTaskRef } from '../../api/paper-contracts';
 import {
   type JudgeVerdictProjection,
   resolveVerdictsForAttempts,
@@ -134,6 +136,7 @@ export interface PaperDetailSection {
 }
 
 export interface PaperDetailResult {
+  continuation?: PaperContinuation;
   artifact_id: string;
   title: string;
   generation_status: string;
@@ -186,7 +189,15 @@ export interface PaperDetailResult {
 export async function getPaperDetail(
   db: Db,
   paperArtifactId: string,
+  taskRef?: PaperTaskRef,
 ): Promise<PaperDetailResult | null> {
+  if (taskRef) {
+    const { readPaperTaskContinuation } = await import('./task-continuation');
+    const result = await readPaperTaskContinuation(db, taskRef);
+    if (result.artifact_id !== paperArtifactId)
+      throw new ApiError('coordinate_mismatch', '指定会话不属于这份卷', 409);
+    return result;
+  }
   // 1) Paper artifact.
   const artifactRows = await db
     .select()
@@ -266,8 +277,11 @@ export async function getPaperDetail(
     const { readPaperAssessmentBinding } = await import('./assessment/paper-issuance');
     const binding = await readPaperAssessmentBinding(db, sessionInfo.id);
     if (binding) {
-      const { getFrozenPaperDetail } = await import('./assessment/paper-detail');
-      return getFrozenPaperDetail(db, artifactRow, binding, sessionInfo.status);
+      const { paperTaskRef, readPaperTaskContinuation } = await import('./task-continuation');
+      return readPaperTaskContinuation(
+        db,
+        paperTaskRef({ id: binding.session_id, started_at: new Date(binding.started_at) }),
+      );
     }
   }
 

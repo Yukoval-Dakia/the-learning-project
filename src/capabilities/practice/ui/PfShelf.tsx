@@ -18,6 +18,7 @@ import {
 import { useState } from 'react';
 import { Button, Chip, ChipToggle } from '@/ui-next/public';
 
+import type { PaperTaskRef } from '../session/public';
 import type { PaperListItem } from './practice-api';
 import { usePracticeClient } from './practice-client';
 
@@ -46,8 +47,8 @@ function paperFoot(
   p: PaperListItem,
   isGen: boolean,
   isDone: boolean,
-  openPaper: (artifactId: string) => void,
-  openRetro: (artifactId: string) => void,
+  openPaper: (artifactId: string, taskRef?: PaperTaskRef) => void,
+  openRetro: (artifactId: string, taskRef?: PaperTaskRef) => void,
 ) {
   const sess = p.session;
   if (isGen) {
@@ -65,7 +66,11 @@ function paperFoot(
     return (
       <>
         <span className="pf-paper-when">已完成</span>
-        <Button variant="secondary" onClick={() => openRetro(p.artifact_id)}>
+        <Button
+          variant="secondary"
+          disabled={!p.session?.task_ref}
+          onClick={() => openRetro(p.artifact_id, p.session?.task_ref ?? undefined)}
+        >
           复盘 · 逐题与去向
           <ArrowRight size={18} aria-hidden="true" />
         </Button>
@@ -80,12 +85,16 @@ function paperFoot(
           8 题≈12 分钟，即 1.5 分钟/题）。FOLLOW-UP（phase-deferred）：补 paper 读模型
           est 真值后接真值，见报告。在做态仍显 draft（恢复优先于估时）。 */}
       <span className="pf-paper-when">
-        {sess ? 'draft · 可恢复' : `约 ${Math.ceil(p.total_slots * 1.5)} 分钟`}
+        {sess ? '读取此会话已保存的版本' : `约 ${Math.ceil(p.total_slots * 1.5)} 分钟`}
       </span>
       {/* Resuming is the one filled action; a fresh start stays outlined, as in the queue. */}
-      <Button variant={sess ? 'primary' : 'secondary'} onClick={() => openPaper(p.artifact_id)}>
+      <Button
+        variant={sess ? 'primary' : 'secondary'}
+        disabled={sess !== null && !sess.task_ref}
+        onClick={() => openPaper(p.artifact_id, p.session?.task_ref ?? undefined)}
+      >
         {sess ? <RotateCcw size={18} aria-hidden="true" /> : <Zap size={18} aria-hidden="true" />}
-        {sess ? '继续' : '开始'}
+        {sess && !sess.task_ref ? '此会话缺少恢复身份' : sess ? '继续' : '开始'}
       </Button>
     </>
   );
@@ -95,8 +104,8 @@ export function PfShelf({
   openPaper,
   openRetro,
 }: {
-  openPaper: (artifactId: string) => void;
-  openRetro: (artifactId: string) => void;
+  openPaper: (artifactId: string, taskRef?: PaperTaskRef) => void;
+  openRetro: (artifactId: string, taskRef?: PaperTaskRef) => void;
 }) {
   const { getPapers } = usePracticeClient();
   const papersQ = useQuery({ queryKey: ['papers'], queryFn: getPapers });
@@ -178,7 +187,7 @@ export function PfShelf({
               <span style={{ width: `${(sess.pos / Math.max(p.total_slots, 1)) * 100}%` }} />
             </div>
             <span className="pf-paper-prog-label">
-              已答 {sess.pos}/{p.total_slots} · 草稿已存
+              已答 {sess.pos}/{p.total_slots}
             </span>
           </div>
         )}

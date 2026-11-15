@@ -40,6 +40,8 @@ import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Button } from '@/ui-next/public';
+import type { PaperTaskRef } from '../session/public';
+import { PfRetro } from './PfRetro';
 import { boundSlots, entriesForSubmit } from './blocks/envelope';
 import {
   type EntriesUpdate,
@@ -60,6 +62,7 @@ import { usePracticeClient } from './practice-client';
 // YUK-784 — 采集判据与装配复用 PfSolo 先例（YUK-444 / #1069），不在本面重写判据：
 // shouldOfferProcessBox 决定过程框挂不挂，buildCaptureFields 负责 trim 判空 + 防御性截断
 // +「空值不发字段」。两者随 PfSolo 的提交引擎移到 use-practice-submit（YUK-1473）。
+import { usePaperContinuation } from './use-paper-continuation';
 import { buildCaptureFields, shouldOfferProcessBox } from './use-practice-submit';
 
 // YUK-1573 — the server refuses opening / handing in a whole paper whose issued slots this
@@ -340,10 +343,10 @@ function restorePaperDraft(slots: readonly PaperSlot[]) {
 
 interface PfPaperProps {
   artifactId: string;
-  // unsavedFailures lets the host tell an honest exit story: 0 → 「进度已保留」, >0 → a
-  // non-blaming 「有 N 处草稿未保存」instead of a false success promise.
-  onExit: (info?: { unsavedFailures: number }) => void;
-  onSubmitted: () => void;
+  taskRef?: PaperTaskRef;
+  // Draft and navigation receipts settle independently; exit must report both.
+  onExit: (info?: { unsavedFailures: number; positionUnconfirmed?: boolean }) => void;
+  onSubmitted: (taskRef?: PaperTaskRef) => void;
   addToast: (text: string, tone?: PfToast['tone'], icon?: string) => void;
 }
 
@@ -355,10 +358,10 @@ interface PfPaperProps {
 // the visit and never overwrite local edits.
 export function PfPaper(props: PfPaperProps) {
   const { getPaperDetail } = usePracticeClient();
-  const { artifactId, onExit } = props;
+  const { artifactId, taskRef, onExit } = props;
   const detailQ = useQuery({
-    queryKey: ['paper', artifactId],
-    queryFn: () => getPaperDetail(artifactId),
+    queryKey: ['paper', artifactId, taskRef?.session_id, taskRef?.occurrence_ref],
+    queryFn: () => getPaperDetail(artifactId, taskRef),
     // YUK-1488 — every entry reads the server's drafts and epochs: a cached detail from an
     // earlier visit predates the drafts that visit saved (autosave never updates the cache).
     refetchOnMount: 'always',
@@ -399,12 +402,20 @@ export function PfPaper(props: PfPaperProps) {
             返回流
           </Button>
         </div>
-        <p className="pf-m3-state">卷加载失败或没有题。</p>
+        <p className="pf-m3-state">{detailQ.error?.message ?? '卷加载失败或没有可读取的题。'}</p>
       </div>
+    );
+  if (detail.continuation?.target === 'retro')
+    return (
+      <PfRetro
+        artifactId={artifactId}
+        taskRef={detail.continuation.task_ref}
+        onBack={() => onExit()}
+      />
     );
   return (
     <PaperVisit
-      key={nativeOccurrenceId ?? ''}
+      key={detail.continuation?.task_ref.occurrence_ref ?? nativeOccurrenceId ?? ''}
       {...props}
       detail={detail}
       slots={slots}
@@ -416,6 +427,7 @@ export function PfPaper(props: PfPaperProps) {
 
 function PaperVisit({
   artifactId,
+  taskRef,
   onExit,
   onSubmitted,
   addToast,
@@ -433,6 +445,22 @@ function PaperVisit({
   const { getPaperDetail, startPaperSession, endPaperSession, submitPaperSlot } =
     usePracticeClient();
   const qc = useQueryClient();
+  const exactRef = detail.continuation?.task_ref ?? taskRef;
+  const paperQueryKey = useMemo(
+    () => ['paper', artifactId, exactRef?.session_id, exactRef?.occurrence_ref],
+    [artifactId, exactRef?.session_id, exactRef?.occurrence_ref],
+  );
+  const position = usePaperContinuation(artifactId, detail.continuation);
+  const { open: openContinuation, pause: pauseContinuation, detach: detachContinuation } = position;
+  const hasContinuation = detail.continuation !== undefined;
+  const [selected, setSelected] = useState(
+    () =>
+      !detail.continuation ||
+      slots.some(
+        (s) => s.assessment?.issuance_id === detail.continuation?.current_step?.issuance_id,
+      ),
+  );
+  const selectedRef = useRef(selected);
   const hasNativeBindings = slots.every((slot) => slot.assessment != null);
   // The visit's restored drafts, computed once at mount (pure).
   const [restored] = useState(() => restorePaperDraft(slots));
@@ -452,9 +480,16 @@ function PaperVisit({
         }),
       ),
   );
-  const [pos, setPos] = useState(0);
+  const [pos, setPos] = useState(() =>
+    Math.max(
+      0,
+      slots.findIndex(
+        (s) => s.assessment?.issuance_id === detail.continuation?.current_step?.issuance_id,
+      ),
+    ),
+  );
   // Mirror of `pos` for listeners and the session-ready callback; written by goPos.
-  const posRef = useRef(0);
+  const posRef = useRef(pos);
   const [answers, setAnswers] = useState<Record<string, string>>(restored.answers);
   const [nativeResponses, setNativeResponses] = useState<Record<string, ResponseSetT>>(
     restored.nativeResponses,
@@ -521,7 +556,10 @@ function PaperVisit({
   // 已有 session 复用；没有则在 visit 挂上页面时开卷（见 attachVisit）。
   const sessionRef = useRef<string | null>(detail.session?.id ?? null);
   const sessionOpenRef = useRef(
-    detail.session ? ['started', 'paused'].includes(detail.session.status) : false,
+    detail.session
+      ? ['started', 'paused'].includes(detail.session.status) &&
+          detail.continuation?.target !== 'readonly'
+      : false,
   );
   // This visit's single startPaperSession request (reused if React re-attaches the visit).
   const sessionStart = useRef<Promise<void> | null>(null);
@@ -593,13 +631,14 @@ function PaperVisit({
   // slots this visit mounted with.
   const [mountSlots] = useState(slots);
   const latestSlots = useCallback((): PaperSlot[] => {
-    const cached = qc.getQueryData<PaperDetail>(['paper', artifactId]);
+    const cached = qc.getQueryData<PaperDetail>(paperQueryKey);
     const fromCache = cached?.sections.flatMap((s) => s.slots) ?? [];
     return fromCache.length > 0 ? fromCache : mountSlots;
-  }, [qc, artifactId, mountSlots]);
+  }, [qc, paperQueryKey, mountSlots]);
 
   // Open the timing segment for the slot on screen (submitted slots are not timed).
   const startCurrentSegment = useCallback(() => {
+    if (!selectedRef.current) return;
     const current = latestSlots();
     const slot = current[Math.min(posRef.current, current.length - 1)];
     if (slot) startTimingSegment(slotKey(slot), Boolean(slot.slot_state.submission?.submitted));
@@ -639,7 +678,11 @@ function PaperVisit({
       if (!node) return undefined;
       componentActiveRef.current = true;
       const sid = sessionRef.current;
-      if (sid) beginTiming(sid);
+      if (hasContinuation) {
+        sessionStart.current = openContinuation().then((ok) => {
+          if (ok && sid && componentActiveRef.current) beginTiming(sid);
+        });
+      } else if (sid) beginTiming(sid);
       else
         sessionStart.current ??= startPaperSession(artifactId).then(
           (r) => {
@@ -647,7 +690,7 @@ function PaperVisit({
             sessionOpenRef.current = true;
             if (componentActiveRef.current) beginTiming(r.session_id);
             else timingMsRef.current = readPaperTiming(r.session_id, artifactId);
-            void qc.invalidateQueries({ queryKey: ['paper', artifactId] });
+            void qc.invalidateQueries({ queryKey: paperQueryKey });
           },
           (e) => {
             // The open was not accepted: let a later attach of this visit try again.
@@ -667,11 +710,16 @@ function PaperVisit({
           stopTimingSegment();
           return;
         }
-        startCurrentSegment();
+        if (hasContinuation)
+          void openContinuation().then((ok) => {
+            if (ok && componentActiveRef.current) startCurrentSegment();
+          });
+        else startCurrentSegment();
       };
       document.addEventListener('visibilitychange', onVisibilityChange);
       return () => {
         componentActiveRef.current = false;
+        detachContinuation();
         document.removeEventListener('visibilitychange', onVisibilityChange);
         stopTimingSegment();
       };
@@ -684,20 +732,30 @@ function PaperVisit({
       startCurrentSegment,
       stopTimingSegment,
       startPaperSession,
+      hasContinuation,
+      openContinuation,
+      detachContinuation,
+      paperQueryKey,
     ],
   );
 
-  const pauseCurrentSession = useCallback((keepalive = false) => {
-    const sid = sessionRef.current;
-    if (!sid || !sessionOpenRef.current) return Promise.resolve();
-    // Claim the transition before starting the request so duplicate pagehide
-    // events and the explicit exit button cannot emit parallel PATCHes.
-    sessionOpenRef.current = false;
-    return pausePaperSession(sid, { keepalive }).catch((error) => {
-      sessionOpenRef.current = true;
-      throw error;
-    });
-  }, []);
+  const pauseCurrentSession = useCallback(
+    (keepalive = false) => {
+      const sid = sessionRef.current;
+      if (!sid || !sessionOpenRef.current) return Promise.resolve();
+      // Claim the transition before starting the request so duplicate pagehide
+      // events and the explicit exit button cannot emit parallel PATCHes.
+      sessionOpenRef.current = false;
+      const paused = hasContinuation
+        ? pauseContinuation(keepalive)
+        : pausePaperSession(sid, { keepalive });
+      return paused.catch((error) => {
+        sessionOpenRef.current = true;
+        throw error;
+      });
+    },
+    [hasContinuation, pauseContinuation],
+  );
 
   // 草稿 PUT：成功清掉该 slot 的失败标记，失败则点亮——不再静默吞掉错误。返回本次是否
   // 落库（true=成功/无需保存，false=失败），供退出/关页 flush 如实计数未保存草稿。
@@ -928,8 +986,8 @@ function PaperVisit({
       let fresh: PaperDetail;
       try {
         fresh = await qc.fetchQuery({
-          queryKey: ['paper', artifactId],
-          queryFn: () => getPaperDetail(artifactId),
+          queryKey: paperQueryKey,
+          queryFn: () => getPaperDetail(artifactId, exactRef),
           staleTime: 0,
         });
       } catch (err) {
@@ -1009,8 +1067,8 @@ function PaperVisit({
     let fresh: PaperDetail;
     try {
       fresh = await qc.fetchQuery({
-        queryKey: ['paper', artifactId],
-        queryFn: () => getPaperDetail(artifactId),
+        queryKey: paperQueryKey,
+        queryFn: () => getPaperDetail(artifactId, exactRef),
         staleTime: 0,
       });
     } catch (err) {
@@ -1362,9 +1420,7 @@ function PaperVisit({
         sends.push(runSave(key, slot.question_id, slot.part_ref, answer));
       }
       if (sends.length === 0) return;
-      void Promise.allSettled(sends).then(() =>
-        qc.invalidateQueries({ queryKey: ['paper', artifactId] }),
-      );
+      void Promise.allSettled(sends).then(() => qc.invalidateQueries({ queryKey: paperQueryKey }));
     };
     if (!sessionRef.current && sessionStart.current) void sessionStart.current.then(go);
     else go();
@@ -1410,6 +1466,8 @@ function PaperVisit({
       // conservative estimate) and still exit, rather than strand the learner on the page.
       console.error('[PfPaper] exit flush failed', err);
     }
+    const positionUnconfirmed =
+      detail.continuation?.target === 'answer' && !(await position.settle());
     void pauseCurrentSession().catch(() => {});
     // Count slots left genuinely unsaved: a slot that just settled uses its real outcome; an
     // untouched slot keeps whatever standing 保存失败 flag it had. Submitted slots never count
@@ -1426,7 +1484,7 @@ function PaperVisit({
     // Never let a throwing host onExit surface as an unhandled rejection out of this async
     // handler — the exit work is already done; a bad host callback shouldn't crash it.
     try {
-      onExit({ unsavedFailures });
+      onExit({ unsavedFailures, positionUnconfirmed });
     } catch (err) {
       console.error('[PfPaper] onExit threw', err);
       // The host didn't navigate away, so unlock the page (ref + state) to let the learner
@@ -1457,6 +1515,7 @@ function PaperVisit({
   // (before this visit, here, or elsewhere), exiting, handing in (an upload started now would
   // miss the submission), or waiting on the conflict choice.
   const answerLocked =
+    !position.canEdit ||
     !hasNativeBindings ||
     submittedKeys.has(curKey) ||
     exiting ||
@@ -1642,10 +1701,19 @@ function PaperVisit({
   // Switching question closes the previous question's timing segment (persisting its time
   // once) and opens one for the new question, unless it is already submitted.
   const goPos = (n: number) => {
+    if (exitingRef.current || submittingRef.current) return;
     setConfirm(false);
     const next = Math.max(0, Math.min(slots.length - 1, n));
+    const issuance = slots[next]?.assessment?.issuance_id;
+    if (issuance && detail.continuation?.target === 'answer' && !position.navigate(issuance))
+      return;
+    selectedRef.current = true;
+    setSelected(true);
     setPos(next);
-    if (next === posRef.current) return;
+    if (next === posRef.current) {
+      if (sessionRef.current) startCurrentSegment();
+      return;
+    }
     const leaving = slots[posRef.current];
     if (leaving) {
       const leftKey = slotKey(leaving);
@@ -1666,6 +1734,7 @@ function PaperVisit({
     // Mutual exclusion with exitPaper (submittingRef/exitingRef are synchronous): a submit and
     // an exit must not both fire a terminal transition.
     if (
+      !position.canEdit ||
       !hasNativeBindings ||
       !sid ||
       submittingRef.current ||
@@ -1727,8 +1796,8 @@ function PaperVisit({
         clearTimeout(saveTimers.current[k]);
         delete saveTimers.current[k];
       }
-      await qc.invalidateQueries({ queryKey: ['paper', artifactId] });
-      onSubmitted();
+      await qc.invalidateQueries({ queryKey: paperQueryKey });
+      onSubmitted(exactRef);
     } catch (e) {
       // The page is still alive, so let a retry or explicit exit own the session.
       if (!completionCommitted) {
@@ -1757,6 +1826,43 @@ function PaperVisit({
     }
   };
 
+  const positionCopy =
+    position.status === 'saved'
+      ? '位置已保存'
+      : position.status === 'saving'
+        ? '位置未确认保存'
+        : position.status === 'paused'
+          ? '会话已暂停，再次进入后继续'
+          : position.status === 'opening'
+            ? '正在继续指定会话…'
+            : position.status === 'unrecorded'
+              ? '上次位置未记录，请选择题目'
+              : position.status === 'conflict'
+                ? '位置已冲突，请退出后重新打开；不会覆盖另一页面的位置'
+                : position.status === 'unknown'
+                  ? '位置保存结果未知，请重新打开确认服务器记录'
+                  : detail.continuation?.recovery === 'current_step_unavailable'
+                    ? '原停留题当前不可读取，此会话仅供查看'
+                    : '此会话仅供查看';
+  if (!selected)
+    return (
+      <div className="pf-pp un-m3e-bridge" ref={attachVisit}>
+        <div className="pf-pp-top" ref={attachTop}>
+          <Button variant="ghost" onClick={exitPaper}>
+            返回卷架
+          </Button>
+          <h1>{detail.title}</h1>
+        </div>
+        <p role="status">{positionCopy}。只恢复服务器已确认保存的草稿与位置。</p>
+        <div className="pf-pp-index" aria-label="选择题目">
+          {slots.map((s, i) => (
+            <Button key={slotKey(s)} variant="secondary" onClick={() => goPos(i)}>
+              第 {i + 1} 题
+            </Button>
+          ))}
+        </div>
+      </div>
+    );
   return (
     <div
       className="pf-pp un-m3e-bridge"
@@ -1768,14 +1874,17 @@ function PaperVisit({
           <ArrowLeft size={18} aria-hidden="true" />
           {exiting
             ? '保存中…'
-            : anySaveFailed || conflictNumbers.length > 0 || !hasNativeBindings
+            : anySaveFailed ||
+                conflictNumbers.length > 0 ||
+                !hasNativeBindings ||
+                position.status !== 'saved'
               ? '退出'
               : '退出 · 进度保留'}
         </Button>
         <h1 className="pf-pp-title">{detail.title}</h1>
         {/* YUK-1051 — 保存状态 chip 换成组件族 SaveStateChip（同文案/同重试交互）；
             saved 仅在 server ack 后出现的纪律由组件族承载。 */}
-        {hasNativeBindings && (
+        {hasNativeBindings && position.canEdit && (
           <SaveStateChip
             state={anySaveFailed ? 'error' : conflictNumbers.length > 0 ? 'conflict' : 'idle'}
             label={
@@ -1787,13 +1896,16 @@ function PaperVisit({
         )}
       </div>
 
+      <p className="pf-pp-note" role="status">
+        {positionCopy}。离开后只恢复服务器已确认保存的版本。
+      </p>
       <div className="pf-pp-buffer">
         <Clock size={16} aria-hidden="true" className="pf-pp-buffer-ico" />
         <span>
           {hasNativeBindings
             ? '反馈缓冲：这张卷不给即时对错——交卷后统一判分。和散题的节奏是反着的，刻意的。'
             : detail.session
-              ? '这份历史试卷缺少原始发题记录，当前只能查看。'
+              ? '当前只能查看此会话已保存的内容。'
               : '正在准备题目，请稍候。'}
         </span>
       </div>
@@ -2020,7 +2132,8 @@ function PaperVisit({
             }}
           />
         )}
-        {hasNativeBindings &&
+        {position.canEdit &&
+          hasNativeBindings &&
           !isChoice &&
           evidence.length > 0 &&
           !submittedKeys.has(curKey) &&
@@ -2037,7 +2150,8 @@ function PaperVisit({
             交卷、折叠即跳过、空值不发字段（submitAll 里 buildCaptureFields trim 判空）。与散题
             不同点：组卷面多题连续作答，采集是 per-slot 状态，换题不丢，交卷时随各自 slot 发出。
             已提交 slot / 退出 flush 期间不渲染（作答面已冻结，采集无处可挂）。 */}
-        {hasNativeBindings &&
+        {position.canEdit &&
+          hasNativeBindings &&
           shouldOfferProcessBox(isChoice) &&
           !submittedKeys.has(curKey) &&
           !exiting && (
@@ -2066,7 +2180,7 @@ function PaperVisit({
               )}
             </div>
           )}
-        {hasNativeBindings && !submittedKeys.has(curKey) && !exiting && (
+        {position.canEdit && hasNativeBindings && !submittedKeys.has(curKey) && !exiting && (
           <SelfConfidenceField
             value={selfConfidence[curKey]}
             onChange={(next) =>
@@ -2106,6 +2220,7 @@ function PaperVisit({
             <Button
               variant="primary"
               disabled={
+                !position.canEdit ||
                 !hasNativeBindings ||
                 submitting ||
                 exiting ||
@@ -2125,6 +2240,7 @@ function PaperVisit({
           <Button
             variant="primary"
             disabled={
+              !position.canEdit ||
               !hasNativeBindings ||
               submitting ||
               exiting ||

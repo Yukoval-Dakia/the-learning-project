@@ -11,8 +11,11 @@ import {
   getQuestionFull,
   getStream,
   issueAssessment,
+  pausePaperTask,
   recomposeStream,
+  recordPaperCurrentStep,
   restoreHints,
+  resumePaperTask,
   revealStudyReference,
   saveResponseDraft,
   solveHint,
@@ -28,6 +31,9 @@ export type PracticeClient = {
   endPaperSession: typeof endPaperSession;
   startPaperSession: typeof startPaperSession;
   getPaperDetail: typeof getPaperDetail;
+  resumePaperTask: typeof resumePaperTask;
+  pausePaperTask: typeof pausePaperTask;
+  recordPaperCurrentStep: typeof recordPaperCurrentStep;
   solveStart: typeof solveStart;
   solveHint: typeof solveHint;
   revealStudyReference: typeof revealStudyReference;
@@ -51,6 +57,9 @@ const httpPracticeClient: PracticeClient = {
   endPaperSession,
   startPaperSession,
   getPaperDetail,
+  resumePaperTask,
+  pausePaperTask,
+  recordPaperCurrentStep,
   solveStart,
   solveHint,
   revealStudyReference,

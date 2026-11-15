@@ -33,3 +33,11 @@ export type {
 export const loadQuestionCardBlock = () =>
   import('./ui/chat-card/QuestionCardBlock').then((module) => module.QuestionCardBlock);
 export { type LibraryClient, LibraryClientProvider } from './ui/library/library-client';
+
+export {
+  getPaperDetail,
+  resumePaperTask,
+  pausePaperTask,
+  recordPaperCurrentStep,
+} from './ui/practice-api';
+export type { PaperTaskRef } from './session/public';

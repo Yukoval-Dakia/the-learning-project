@@ -33,6 +33,12 @@ import {
   WorksheetRegionMapArchivedSchema,
   WorksheetTokenParamsSchema,
 } from '../api/worksheet-contracts';
+import {
+  PaperTaskContinuationResponseSchema,
+  ReadPaperContinuationQuerySchema,
+  RecordPaperStepBodySchema,
+  ResumePaperTaskBodySchema,
+} from './api/task-continuation-contracts';
 import { WORKSHEET_RENDER_QUEUE } from './jobs/worksheet-render-queue';
 
 export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description'> = {
@@ -71,6 +77,33 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         responses: { 200: ReviewSessionTransitionSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/review-session-detail').then((m) => m.PATCH),
+      },
+      {
+        method: 'GET',
+        path: '/api/review-sessions/[id]/continuation',
+        operationId: 'readPaperTaskContinuation',
+        request: { params: ApiIdParamsSchema, query: ReadPaperContinuationQuerySchema },
+        responses: { 200: PaperTaskContinuationResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/task-continuation').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/review-sessions/[id]/continuation',
+        operationId: 'transitionPaperTask',
+        request: { params: ApiIdParamsSchema, body: ResumePaperTaskBodySchema },
+        responses: { 200: PaperTaskContinuationResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/task-continuation').then((m) => m.POST),
+      },
+      {
+        method: 'PATCH',
+        path: '/api/review-sessions/[id]/continuation',
+        operationId: 'recordPaperCurrentStep',
+        request: { params: ApiIdParamsSchema, body: RecordPaperStepBodySchema },
+        responses: { 200: PaperTaskContinuationResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/task-continuation').then((m) => m.PATCH),
       },
       {
         method: 'POST',

@@ -6,6 +6,8 @@ export {
   earliestDailyStreamAnswerAt,
 } from './server/daily-stream-answers';
 export { getPaperDetail } from './server/paper-detail';
+export { readReviewSessionRefs } from './server/task-continuation';
+export type { PaperTaskRef, PaperContinuation } from '../api/paper-contracts';
 export { countPaperSlots, paperQuestionIds } from './server/paper-sections';
 export { createPracticePaperSubmission } from './server/paper-submission-operation';
 export { submitPaperSlot } from './server/paper-submit';

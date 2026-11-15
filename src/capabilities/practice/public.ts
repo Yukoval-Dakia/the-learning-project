@@ -215,3 +215,6 @@ export {
   selectOrphanReviewCandidates,
 } from './session/public';
 export { submitCopilotAuthoredDraft } from './supply/public';
+
+export { readReviewSessionRefs } from './session/public';
+export type { PaperTaskRef } from './session/public';
