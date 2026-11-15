@@ -29,6 +29,10 @@ import {
   EntityCardParamsSchema,
   EntityCardResponseSchema,
 } from './api/contracts';
+import {
+  FailedTurnPracticeTarget,
+  FailedTurnPracticeTargetQuery,
+} from './failed-turn-practice-target-contract';
 
 // copilot 包：单人格对话面。
 // 统一记忆读取面：inline/UI replay 走 current-session reader，durable pickup 走
@@ -101,6 +105,16 @@ export const copilotCapability = defineCapability({
         responses: { 202: CopilotDurableRunResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 202,
         load: () => import('./api/retry-run').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/copilot/runs/[id]/practice-target',
+        operationId: 'getCopilotFailedTurnPracticeTarget',
+        request: { params: CopilotRunParamsSchema, query: FailedTurnPracticeTargetQuery },
+        responses: { 200: FailedTurnPracticeTarget, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/failed-turn-practice-target').then((m) => m.GET),
       },
       {
         method: 'POST',

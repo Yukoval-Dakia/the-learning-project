@@ -16,6 +16,7 @@ import {
   question,
   question_group_lifecycle,
   question_revision,
+  source_document,
 } from '@/db/schema';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import {
@@ -44,6 +45,18 @@ const ADMITTED_EVIDENCE = {
 
 async function seedQuestion(id: string) {
   const db = testDb();
+  const sourceDocumentId = `source_${id}`;
+  await db.insert(source_document).values({
+    id: sourceDocumentId,
+    body_md: `题面 ${id}\n甲；乙；丙\n参考答案：B`,
+    source_asset_ids: [],
+    provenance: {
+      usage_policy: { derivation_policy: 'allow' },
+      usage_epoch: `epoch_${id}`,
+    },
+    created_at: NOW,
+    updated_at: NOW,
+  });
   await db.insert(question).values({
     id,
     kind: 'choice',
@@ -52,6 +65,7 @@ async function seedQuestion(id: string) {
     knowledge_ids: [],
     difficulty: 3,
     source: 'web_sourced',
+    metadata: { source_document_id: sourceDocumentId },
     variant_depth: 0,
     choices_md: ['甲', '乙', '丙'],
     created_at: NOW,

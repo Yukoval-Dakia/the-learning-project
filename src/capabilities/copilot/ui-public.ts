@@ -14,3 +14,4 @@ export {
   httpCopilotClient,
   useCopilotClient,
 } from './ui/copilot-client';
+export type { FailedTurnReferenceClient } from './ui/failed-turn-reference';

@@ -9,7 +9,11 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { type CompanionLayout, CompanionMount } from '@/capabilities/copilot/ui-public';
+import {
+  type CompanionLayout,
+  CompanionMount,
+  type FailedTurnReferenceClient,
+} from '@/capabilities/copilot/ui-public';
 import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import {
   ConfirmationAssessment,
@@ -131,6 +135,7 @@ function ShellMain({ blockedByModal, children }: ShellMainProps) {
 export function RootShell({
   confirmationClient,
   questionCardClient,
+  failedTurnReferenceClient,
   children,
   pathname,
   navigate,
@@ -139,6 +144,7 @@ export function RootShell({
 }: {
   confirmationClient?: ConfirmationDraftClient;
   questionCardClient?: QuestionCardClient;
+  failedTurnReferenceClient?: FailedTurnReferenceClient;
   children: ReactNode;
   pathname: string;
   navigate: (to: string) => void;
@@ -267,6 +273,7 @@ export function RootShell({
       <ShellMain blockedByModal={navOpen || companionModal}>{children}</ShellMain>
       <div className="un-st-companion-slot">
         <CompanionMount
+          failedTurnReferenceClient={failedTurnReferenceClient}
           confirmationRenderer={ConfirmationRenderer}
           questionCardRenderer={QuestionCardRenderer}
           readNotePage={readNotePage}
