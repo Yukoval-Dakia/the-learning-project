@@ -89,6 +89,7 @@ function isNewLearningSource(source: string): boolean {
  * 干预交付是承重产品动作，即使使当天流超过自述预算也不可静默丢弃。
  * 最终输出恢复原意图序，所以 legacy 的 variant 穿插仍保持。
  * 没有分钟预算时保留全部输入（旧调用方）。
+ * 扣除已用题价后的内部余额可以是小数；自述日预算仍由 dailyPracticeBudgetMinutes 决定。
  */
 export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   items: readonly T[],
@@ -107,8 +108,8 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
       truncated: false,
     };
   }
-  if (!Number.isInteger(budgetMinutes) || budgetMinutes < 1) {
-    throw new Error(`daily practice budget must be a positive integer (got ${budgetMinutes})`);
+  if (!Number.isFinite(budgetMinutes) || budgetMinutes <= 0) {
+    throw new Error(`stream budget must be finite and positive (got ${budgetMinutes})`);
   }
 
   const questionCost = estimateStreamItemMinutes('question', questionMinutes);
