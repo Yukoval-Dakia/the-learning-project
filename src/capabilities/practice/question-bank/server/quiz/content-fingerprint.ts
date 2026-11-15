@@ -2,10 +2,13 @@ import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
+import type { QuestionDraftDocumentT } from '@/core/schema/question-draft';
+import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';
+import { draftCanonicalIdentity } from '@/kernel/records/question-draft-contract';
 import { enrollAddedKnowledgeScheduling } from '../question-scheduling-enrollment';
 
 // Bumping this version rewrites the canonical string, so every persisted
@@ -34,6 +37,10 @@ export interface CanonicalQuestionContentInput {
    */
   composite?: boolean;
   selectStructure?: unknown[];
+  declaredParts?: {
+    promptMd: string;
+    units: CanonicalQuestionContentInput[];
+  }[];
   // Callers may carry provenance envelopes. Identity intentionally reads only the fields above.
   [key: string]: unknown;
 }
@@ -92,12 +99,48 @@ export function canonicalQuestionContent(input: CanonicalQuestionContentInput): 
     ...(input.selectStructure != null
       ? { select_structure: stableJson(input.selectStructure) }
       : {}),
+    ...(input.declaredParts != null
+      ? {
+          declared_parts: input.declaredParts.map((part) => ({
+            prompt: normalizeMarkdown(part.promptMd),
+            units: part.units.map(canonicalQuestionContent),
+          })),
+        }
+      : {}),
   });
 }
 
 /** Exact identity SHA-256. This is not the embedding freshness hash. */
 export function canonicalQuestionContentHash(input: CanonicalQuestionContentInput): string {
   return createHash('sha256').update(canonicalQuestionContent(input)).digest('hex');
+}
+
+/** Fresh sourced candidates share the published document's content policy; flat bytes stay v1. */
+export function canonicalSourcedQuestionContentHash(
+  input: Pick<SourcedQuestionT, 'prompt_md' | 'reference_md' | 'choices_md' | 'rubric_json'>,
+  document: QuestionDraftDocumentT | null,
+): string {
+  return canonicalQuestionContentHash(
+    document != null
+      ? {
+          ...draftCanonicalIdentity(document),
+          declaredParts: document.parts.map((part) => ({
+            promptMd: part.prompt_md,
+            units: part.units.map((unit) =>
+              draftCanonicalIdentity({
+                ...document,
+                parts: [{ ...part, units: [unit] }],
+              }),
+            ),
+          })),
+        }
+      : {
+          promptMd: input.prompt_md,
+          referenceMd: input.reference_md,
+          choicesMd: input.choices_md,
+          rubricJson: input.rubric_json,
+        },
+  );
 }
 
 export interface ExactQuestionDuplicate {

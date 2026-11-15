@@ -44,7 +44,11 @@ import {
 } from '@/kernel/records/asset-store';
 
 import { answerClassCompatible } from '@/subjects/question-kind';
-import { canonicalQuestionContentHash } from '../../question-bank/public';
+import {
+  canonicalSourcedQuestionContentHash,
+  declaredCandidateDocument,
+  nearDupComparableText,
+} from '../../question-bank/public';
 import { type BandLevelTarget, difficultyInBand, resolveBandLevelTarget } from './band-level';
 import {
   JYEOO_FETCH_CANARY_ACTION,
@@ -319,21 +323,21 @@ export async function canonicalJyeooQuestionHash(
   q: SourcedQuestionT,
   loaded: LoadedQuestionImages,
 ): Promise<string> {
-  if (loaded.images.length === 0) {
-    return canonicalQuestionContentHash({
-      promptMd: q.prompt_md,
-      referenceMd: q.reference_md,
-      choicesMd: q.choices_md,
-      rubricJson: q.rubric_json,
-    });
-  }
   const neutral = new Map(loaded.images.map((image) => [image.source, 'IMAGE']));
-  const canonicalTextHash = canonicalQuestionContentHash({
-    promptMd: rewriteMarkdownImageSources(q.prompt_md, neutral),
-    referenceMd: rewriteMarkdownImageSources(q.reference_md, neutral),
-    choicesMd: q.choices_md?.map((choice) => rewriteMarkdownImageSources(choice, neutral)),
-    rubricJson: q.rubric_json,
-  });
+  const content =
+    loaded.images.length === 0
+      ? q
+      : {
+          ...q,
+          prompt_md: rewriteMarkdownImageSources(q.prompt_md, neutral),
+          reference_md: rewriteMarkdownImageSources(q.reference_md, neutral),
+          choices_md: q.choices_md?.map((choice) => rewriteMarkdownImageSources(choice, neutral)),
+        };
+  const document = content.parts?.length
+    ? declaredCandidateDocument(content, 'jyeoo_fetch', content.knowledge_ids).document
+    : null;
+  const canonicalTextHash = canonicalSourcedQuestionContentHash(content, document);
+  if (loaded.images.length === 0) return canonicalTextHash;
   const digestBySource = new Map(loaded.images.map((image) => [image.source, image.sha256]));
   // Keep slot order (prompt → choices → reference). Same alt/text with different pixels
   // is a different question; swapping two figures is also a different question.
@@ -717,18 +721,29 @@ async function runJyeooFetchCandidatesCore(
         continue;
       }
 
-      // in-batch near-dup（text-only；图片题跳过文本 n-gram，靠 image-aware exact hash）。
-      if (loadedImages.images.length === 0) {
-        const overlap = maxNgramOverlap(item.q.prompt_md, batchPrompts);
-        if (overlap >= JYEOO_NEAR_DUP_THRESHOLD) {
-          counts.near_dup_in_batch += 1;
-          dropped.push({
-            sourceUrl: item.q.source_url,
-            sourceId: item.sourceId,
-            reason: 'near_dup_in_batch',
-          });
-          continue;
-        }
+      const document = item.q.parts?.length
+        ? declaredCandidateDocument(item.q, 'jyeoo_fetch', item.q.knowledge_ids).document
+        : undefined;
+      const comparable =
+        document != null
+          ? nearDupComparableText(
+              item.q.prompt_md,
+              item.q.reference_md,
+              item.q.choices_md ?? null,
+              document,
+            )
+          : item.q.prompt_md;
+      if (
+        loadedImages.images.length === 0 &&
+        maxNgramOverlap(comparable, batchPrompts) >= JYEOO_NEAR_DUP_THRESHOLD
+      ) {
+        counts.near_dup_in_batch += 1;
+        dropped.push({
+          sourceUrl: item.q.source_url,
+          sourceId: item.sourceId,
+          reason: 'near_dup_in_batch',
+        });
+        continue;
       }
 
       // 存活候选：stage 图片到 R2 + source_asset（origin='jyeoo_staged'）。
@@ -761,7 +776,7 @@ async function runJyeooFetchCandidatesCore(
         structured: media?.structured ?? null,
         stagedAssetIds: media?.assets.map((asset) => asset.id) ?? [],
       });
-      batchPrompts.push(item.q.prompt_md);
+      batchPrompts.push(comparable);
     }
     counts.candidates = candidates.length;
     budget.remainingAfter = Math.max(0, remainingBefore - counts.fetched);

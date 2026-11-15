@@ -26,7 +26,10 @@ import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { answerClassCompatible } from '@/subjects/question-kind';
-import { canonicalQuestionContentHash } from '../../question-bank/public';
+import {
+  canonicalSourcedQuestionContentHash,
+  declaredCandidateDocument,
+} from '../../question-bank/public';
 import { type BandLevelTarget, difficultyInBand } from './band-level';
 
 // 旧 sourcing.ts:109 同款常量；source_route / difficulty_evidence 的路由身份。
@@ -39,7 +42,7 @@ const WEB_FETCH_CANARY_ACTION = 'experimental:web_fetch_candidates' as const;
 export interface WebCandidate {
   candidateId: string;
   question: SourcedQuestionT;
-  /** `sha256:<canonicalQuestionContentHash(text)>`——与 commit seam 重算值 canonical-相等（dedup key）。 */
+  /** Fresh content identity; typed parts use the same document policy as publication. */
   extractionHash: string;
   /** web 无 producer 内部 id（source_url 即身份）→ 恒 null。 */
   sourceId: null;
@@ -483,15 +486,13 @@ async function runWebFetchCandidatesCore(
         detail: (e as Error).message,
       };
     }
+    const document = q.parts?.length
+      ? declaredCandidateDocument(q, SOURCING_WEB_ROUTE, knowledgeIds).document
+      : null;
     candidates.push({
       candidateId: `webcand_${anchor.id}_${candidates.length + 1}`,
       question: { ...q, knowledge_ids: knowledgeIds },
-      extractionHash: `sha256:${canonicalQuestionContentHash({
-        promptMd: q.prompt_md,
-        referenceMd: q.reference_md,
-        choicesMd: q.choices_md,
-        rubricJson: q.rubric_json,
-      })}`,
+      extractionHash: `sha256:${canonicalSourcedQuestionContentHash(q, document)}`,
       sourceId: null,
       knowledgeHints: [],
       stagedAssetIds: [],

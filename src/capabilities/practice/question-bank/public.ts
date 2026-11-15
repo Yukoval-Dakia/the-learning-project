@@ -86,10 +86,15 @@ export {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   type ExactQuestionDuplicateKnowledgeMerge,
   canonicalQuestionContentHash,
+  canonicalSourcedQuestionContentHash,
   combineExactDuplicateKnowledgeIds,
   mergeExactQuestionDuplicateKnowledgeIds,
   settleOneQuestionPageHit,
 } from './server/quiz/content-fingerprint';
+export {
+  nearDupComparableText,
+  nearDuplicateInKnowledge,
+} from './server/question-publication/submit-decision';
 export { type Demand, demandToSupplyTarget } from './server/quiz/matcher';
 export { poolFetch } from './server/quiz/pool-fetch';
 export {

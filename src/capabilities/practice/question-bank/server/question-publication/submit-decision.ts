@@ -28,12 +28,14 @@ import {
   validatePresentation,
 } from '@/core/schema/assessment/presentation';
 import { AdmissionEvidence } from '@/core/schema/assessment/publish';
+import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import type { QuestionDraftDocumentT } from '@/core/schema/question-draft';
 import type { Db, Tx } from '@/db/client';
-import { question, question_group_lifecycle, type question_revision } from '@/db/schema';
+import { question, question_group_lifecycle, question_revision } from '@/db/schema';
 import type { PublishAdmission } from '@/kernel/records/assessment-publication';
 import {
   type DraftContract,
+  draftCanonicalIdentity,
   draftDocumentToContract,
   revisionToDraftDocument,
   scoringRoundTripIsFaithful,
@@ -300,7 +302,37 @@ export function nearDupComparableText(
   promptMd: string,
   referenceMd: string | null,
   choicesMd: readonly string[] | null,
+  document?: QuestionDraftDocumentT,
 ): string {
+  if (document != null) {
+    const materialIds = new Set(document.parts.flatMap((part) => part.material_ids));
+    const materials = document.materials
+      .filter(
+        (material) => materialIds.has(material.material_id) && isPublicSharedMaterial(material),
+      )
+      .flatMap((material) => [material.content_md, material.caption, material.alt_text]);
+    const parts = document.parts.flatMap((part) => [
+      part.prompt_md,
+      ...part.units.flatMap((unit) => {
+        const identity = draftCanonicalIdentity({
+          ...document,
+          parts: [{ ...part, units: [unit] }],
+        });
+        return [
+          identity.referenceMd,
+          ...(identity.choicesMd ?? []),
+          ...identityText(identity.selectStructure),
+          ...(unit.response_spec.kind === 'blank'
+            ? [unit.response_spec.unit_hint, ...identityText(unit.response_spec.answer_shape)]
+            : []),
+        ];
+      }),
+    ]);
+    return [...materials, ...parts]
+      .filter((text): text is string => text != null && text.trim().length > 0)
+      .map((text) => text.trim())
+      .join('\n');
+  }
   const choices = (choicesMd ?? [])
     .map((choice) => choice.trim())
     .filter((choice) => choice.length > 0);
@@ -309,13 +341,21 @@ export function nearDupComparableText(
     .join('\n');
 }
 
+function identityText(value: unknown): string[] {
+  if (typeof value === 'string' || typeof value === 'number') return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(identityText);
+  if (value != null && typeof value === 'object') return Object.values(value).flatMap(identityText);
+  return [];
+}
+
 export async function nearDuplicateInKnowledge(
-  tx: Tx,
+  tx: Db | Tx,
   knowledgeIds: string[],
   promptMd: string,
   referenceMd: string | null,
   choicesMd: string[] | null,
-  excludeQuestionId: string,
+  excludeQuestionId: string | null,
+  document?: QuestionDraftDocumentT,
 ): Promise<{ overlap: number; poolSize: number } | null> {
   if (knowledgeIds.length === 0) return null;
   const predicates = knowledgeIds.map(
@@ -323,15 +363,29 @@ export async function nearDuplicateInKnowledge(
   );
   const rows = await tx
     .select({
+      id: question.id,
+      parentQuestionId: question.parent_question_id,
       prompt_md: question.prompt_md,
       reference_md: question.reference_md,
       choices_md: question.choices_md,
+      revision: question_revision,
     })
     .from(question)
+    .leftJoin(
+      question_group_lifecycle,
+      eq(
+        question_group_lifecycle.group_id,
+        sql`COALESCE(${question.parent_question_id}, ${question.id})`,
+      ),
+    )
+    .leftJoin(
+      question_revision,
+      eq(question_revision.revision_id, question_group_lifecycle.current_revision_id),
+    )
     .where(
       and(
         or(...predicates),
-        ne(question.id, excludeQuestionId),
+        ...(excludeQuestionId != null ? [ne(question.id, excludeQuestionId)] : []),
         sql`(${question.metadata} ->> 'archived_at') IS NULL`,
         sql`NOT EXISTS (
           SELECT 1 FROM ${question_group_lifecycle} AS l
@@ -343,8 +397,15 @@ export async function nearDuplicateInKnowledge(
     .orderBy(desc(question.created_at))
     .limit(NEAR_DUP_POOL_LIMIT);
   const overlap = maxNgramOverlap(
-    nearDupComparableText(promptMd, referenceMd, choicesMd),
-    rows.map((row) => nearDupComparableText(row.prompt_md, row.reference_md, row.choices_md)),
+    nearDupComparableText(promptMd, referenceMd, choicesMd, document),
+    rows.map((row) => {
+      let peer = row.revision != null ? revisionToDraftDocument(row.revision) : undefined;
+      if (peer != null && row.parentQuestionId != null) {
+        const part = peer.parts.find((part) => part.part_id === row.id);
+        if (part != null) peer = { ...peer, parts: [part] };
+      }
+      return nearDupComparableText(row.prompt_md, row.reference_md, row.choices_md, peer);
+    }),
   );
   if (overlap < DEDUP_OVERLAP_THRESHOLD) return null;
   return { overlap, poolSize: rows.length };

@@ -1492,9 +1492,9 @@ describe('edit/submit question boundary', () => {
     if ('issuance' in replayed) expect(replayed.issuance.binding).toEqual(issued.issuance.binding);
   });
 
-  // @invariant data: choice questions that share a stem but not their options are not near-duplicates
-  // @fails-if the near-duplicate check compares only the prompt and rejects a different option set
-  it('keeps a shared stem with different choices', async () => {
+  // @invariant data: distinct semantic axes survive the same flat stem, while actual near duplicates are rejected and replay cannot insert another question
+  // @fails-if candidate or peer text loses the later unit's axes, or typed candidates bypass near dedup
+  it('keeps distinct axes behind the same flat stem and rejects a real near duplicate', async () => {
     const db = testDb();
     const kc = 'kc-stem';
     await seedKnowledge(kc);
@@ -1511,10 +1511,33 @@ describe('edit/submit question boundary', () => {
       '指数函数底数大于一时整体上升',
       '对数函数在定义域内可以先增后减',
     ];
+    const document = (prompt: string, ref: string, labels: string[]) => {
+      const doc = choiceDocument(prompt, kc, ref, ['甲', '乙']);
+      const left = [
+        { id: 'fixed', label_md: '共同的基准命题' },
+        ...labels.map((label_md, index) => ({ id: `axis-${index}`, label_md })),
+      ];
+      doc.parts[0].units.push({
+        ...doc.parts[0].units[0],
+        unit_id: 'u2',
+        slot_id: 's2',
+        response_spec: {
+          kind: 'select',
+          pick: 'one',
+          axes: { left, right: [{ id: 'target', label_md: '符合题意' }] },
+          items: left.map(({ id }) => ({
+            item_id: id,
+            coordinates: { left: id, right: 'target' },
+          })),
+        },
+        key: { kind: 'select', accepted_item_ids: ['fixed'] },
+      });
+      return doc;
+    };
     const firstSaved = await saveDraftEdit(db, {
       input: {
         action: 'save',
-        document: choiceDocument(stem, kc, 'stem-a', firstLabels),
+        document: document(stem, 'stem-a', firstLabels),
         request_id: 'stem-save-a',
       },
       ctx: ACTOR,
@@ -1531,10 +1554,11 @@ describe('edit/submit question boundary', () => {
       { ...ACTOR, sessionId: null },
     );
     expect(first.status, JSON.stringify(first)).not.toBe('conflict');
+    expect(first.question_id, JSON.stringify(first)).toEqual(expect.any(String));
     const different = await saveDraftEdit(db, {
       input: {
         action: 'save',
-        document: choiceDocument(stem, kc, 'stem-b', otherLabels),
+        document: document(stem, 'stem-b', otherLabels),
         request_id: 'stem-save-b',
       },
       ctx: ACTOR,
@@ -1551,10 +1575,23 @@ describe('edit/submit question boundary', () => {
       { ...ACTOR, sessionId: null },
     );
     expect(second.status, JSON.stringify(second)).not.toBe('conflict');
+    expect(second.question_id, JSON.stringify(second)).toEqual(expect.any(String));
+    expect(second.question_id).not.toBe(first.question_id);
+    const replay = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: different.draft_ref,
+        expected_draft_version: different.draft_version,
+        request_id: 'stem-submit-b',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(replay.replayed).toBe(true);
+    expect(await db.select({ id: question.id }).from(question)).toHaveLength(2);
     const nearSaved = await saveDraftEdit(db, {
       input: {
         action: 'save',
-        document: choiceDocument(stem.replace('中', '里'), kc, 'stem-c', firstLabels),
+        document: document(stem.replace('中', '里'), 'stem-c', firstLabels),
         request_id: 'stem-save-c',
       },
       ctx: ACTOR,
