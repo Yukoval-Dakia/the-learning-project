@@ -40,7 +40,7 @@
 ## Development and verification
 
 - 使用 pnpm，不引入 npm/yarn lockfile。dev 唯一入口 `pnpm dev:local`（重置本 worktree 库 `pnpm dev:reset`；独立 worker `pnpm worker:dev`）。常用：`pnpm vitest run --config vitest.unit.config.ts <file>`、`pnpm vitest run --config vitest.db.config.ts <file>`、`pnpm test:migration`、`pnpm typecheck`、`pnpm lint`、`pnpm build`。
-- 本机只跑必要的有界验证：diff 触及的不变量测试（若有）、artifact generation/installation、运行 app 所需的 build、bounded failure reproduction，以及 CI 不覆盖的真实 browser/process/recovery/provider acceptance。manual diagnosis 可用同一组命令，但其结果不替代或重建 merge gate。
+- 本机只跑必要的有界验证：artifact generation/installation、运行 app 所需的 build、具名最窄故障复现、以及 CI 未覆盖的真实 browser/process/recovery/provider acceptance。diff 触及的不变量测试只在具名复现或 CI 未覆盖真实边界确有需要时运行，不作为每 PR 默认；CI 已覆盖的测试不在本机重复。manual diagnosis 可用同一组命令，但其结果不替代或重建 merge gate。
 - exact-head GitHub `CI Gate` 是唯一的 merge verification matrix：static/audit/unit/DB/migration/build/parity 分 lane；planner 输出缺失按跑全量，失败即 lane 失败，只有已验证 docs-only 可跳过。
 - 涉及 agent/model 实际输出或学习效果的验收，用真实 provider actual-output 或学习者结果对账，封存 exact revision、输入/输出 digest、task-run ID、provider/model/cost。
 - 文件权限尊重 umask，不硬编码 mode bits。

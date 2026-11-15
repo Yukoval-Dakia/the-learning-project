@@ -59,7 +59,7 @@ orchestration 状态工具按运行 harness 取用，其余内容对两个 harne
 1. **Worktree**：`superpowers:using-git-worktrees` 建独立 worktree。**Guard**：subagent prompt 必须显式约束所有 bash 操作只能在 worktree 路径内（见下方模板）。
 2. **Plan**：`superpowers:writing-plans` 把 lane spec + 验收标准转成可执行 plan。
 3. **Impl**：`superpowers:subagent-driven-development` 跑 impl → 自审 → spec review → fix → quality review → fix。**不并行 dispatch implementation subagent**（superpowers 明确反对，会冲突）。
-4. **Bounded verification**：`superpowers:verification-before-completion` 只执行 `AGENTS.md`「Development and verification」允许的本地有界验证（diff 触及的不变量测试、artifact generation/installation、运行 app 所需的 build、bounded reproduction，以及 CI 不覆盖的真实 browser/process/recovery/provider acceptance）。manual diagnosis 不变成 merge gate。
+4. **Bounded verification**：`superpowers:verification-before-completion` 只执行 `AGENTS.md`「Development and verification」允许的本地有界验证（artifact generation/installation、运行 app 所需的 build、具名最窄故障复现、CI 未覆盖的真实 browser/process/recovery/provider acceptance）。diff 触及的不变量测试仅在具名复现或 CI 未覆盖真实边界确有需要时运行，不是每 lane 默认；manual diagnosis 不变成 merge gate。
 5. 标 lane `prepared`，**不删 worktree 不删 branch**（merge 成功后统一清理）。
 
 ### 3. 顺序 chain-merge（PR + CI Gate）
