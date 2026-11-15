@@ -152,6 +152,73 @@
     color: var(--un-text-2);
   }
 
+  & .ql-mistake-history {
+    margin-top: var(--un-sp-2);
+  }
+
+  & .ql-mistake-history > summary,
+  & .ql-mistake-reference > summary {
+    width: fit-content;
+    padding: var(--un-sp-2) 0;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    cursor: pointer;
+  }
+
+  & .ql-mistake-history summary:focus-visible {
+    outline: 2px solid var(--un-focus);
+    outline-offset: 2px;
+  }
+
+  & .ql-mistake-records,
+  & .ql-mistake-materials {
+    display: grid;
+    gap: var(--un-sp-5);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .ql-mistake-record,
+  & .ql-mistake-section {
+    display: grid;
+    gap: var(--un-sp-3);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  & .ql-mistake-record {
+    margin-top: var(--un-sp-3);
+    padding-top: var(--un-sp-4);
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .ql-mistake-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--un-sp-2) var(--un-sp-4);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ql-mistake-label {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .ql-mistake-material {
+    display: grid;
+    gap: var(--un-sp-2);
+    min-width: 0;
+    margin: 0;
+  }
+
+  & .ql-mistake-note {
+    white-space: pre-wrap;
+  }
+
   /* The check's reason as written; long ones show three lines here, in full on the question. */
   & .ql-reason {
     display: -webkit-box;

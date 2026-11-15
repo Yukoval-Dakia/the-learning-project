@@ -10,6 +10,7 @@ import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
 import { type LearnerCauseSeed, useLearnerCause } from '../use-learner-cause';
 import type { LibraryScope } from './library-url';
+import { MistakeRecordHistory } from './MistakeRecordHistory';
 import { type MistakeQuestion, RECORD_WORDS, causeWords, splitByEffect } from './mistake-read';
 import { LoadMore, QuestionLine, shortDay } from './QuestionLine';
 import { LIBRARY_KEY, type LibraryLookups, useMistakeQuestions } from './use-library';
@@ -105,7 +106,12 @@ function MistakeLine({
           </span>
         )
       }
-      below={causeEditor ? <CauseEditor editor={causeEditor} /> : undefined}
+      below={
+        <>
+          <MistakeRecordHistory records={group.records} lookups={lookups} partial={partial} />
+          {causeEditor && <CauseEditor editor={causeEditor} />}
+        </>
+      }
     />
   );
 }
