@@ -293,7 +293,8 @@ export async function revertBlock(id: string, blockId: string) {
 export type RecordManualMistakeInput = {
   prompt: string;
   answer: string;
-  knowledgeIds: string[];
+  knowledgeIds: readonly string[];
+  idempotencyKey?: string;
 };
 
 export function buildRecordManualMistakeBody(
@@ -303,7 +304,7 @@ export function buildRecordManualMistakeBody(
     prompt_md: input.prompt,
     reference_md: null,
     wrong_answer_md: input.answer,
-    knowledge_ids: input.knowledgeIds,
+    knowledge_ids: [...input.knowledgeIds],
     cause: null,
     difficulty: 3,
     question_kind: 'short_answer',
@@ -316,6 +317,9 @@ export async function createWrongAnswer(input: RecordManualMistakeInput) {
   return apiOperationJson('createMistake', {
     url: '/api/mistakes',
     method: 'POST',
+    init: {
+      headers: input.idempotencyKey ? { 'Idempotency-Key': input.idempotencyKey } : undefined,
+    },
     body: buildRecordManualMistakeBody(input),
   });
 }

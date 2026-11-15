@@ -9,6 +9,7 @@ export const startRecordManualMistakeClient: RecordClient['createWrongAnswer'] =
   JSON.parse(
     await createStartRecordManualMistakeFunction({
       fetch: authenticatedStartFetch,
+      headers: input.idempotencyKey ? { 'Idempotency-Key': input.idempotencyKey } : undefined,
       data: JSON.stringify(buildRecordManualMistakeBody(input)),
     }),
   );
