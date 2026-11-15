@@ -38,6 +38,8 @@ export function estimateStreamItemMinutes(
 export interface BudgetableStreamItem {
   item_kind: 'question' | 'paper';
   source: string;
+  /** Stable identity when a caller supplies an already-selected deterministic floor. */
+  ref_id?: string;
   /** Answerable slots. Prices a paper; questions ignore it. */
   questionCount?: number;
   /** A scoped estimate supplied by the question-pace owner. */
@@ -65,6 +67,8 @@ export interface TimeBudgetOptions {
   reserveQuestionSlots?: number;
   /** Exact server-owned cost of the non-due floor reserved before its rows are assembled. */
   reserveQuestionMinutes?: number;
+  /** Reuse the planner's selected floor instead of choosing different rows after assembly. */
+  reserveQuestionRefIds?: ReadonlySet<string>;
 }
 
 const NON_DUE_FLOOR_RATIO = 0.15;
@@ -132,12 +136,27 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
     if (isNewLearningSource(item.source)) newLearningIndexes.push(index);
     else otherNonDueIndexes.push(index);
   }
-  const preferred = newLearningIndexes.length > 0 ? newLearningIndexes : otherNonDueIndexes;
+  const reservedRefs = options?.reserveQuestionRefIds;
+  const preferred =
+    reservedRefs === undefined
+      ? newLearningIndexes.length > 0
+        ? newLearningIndexes
+        : otherNonDueIndexes
+      : [...newLearningIndexes, ...otherNonDueIndexes].filter((index) => {
+          const ref = items[index].ref_id;
+          return ref !== undefined && reservedRefs.has(ref);
+        });
   const slots = Math.floor(remaining / questionCost);
-  const floor = Math.min(
-    slots,
-    Math.max(nonDueQuestionFloor(slots, preferred.length), options?.reserveQuestionSlots ?? 0),
-  );
+  const floor =
+    reservedRefs === undefined
+      ? Math.min(
+          slots,
+          Math.max(
+            nonDueQuestionFloor(slots, preferred.length),
+            options?.reserveQuestionSlots ?? 0,
+          ),
+        )
+      : preferred.length;
   let protectedRemaining = Math.min(
     preferred.slice(0, floor).reduce((sum, index) => {
       const cost = pricedStreamItemMinutes(items[index], questionMinutes);

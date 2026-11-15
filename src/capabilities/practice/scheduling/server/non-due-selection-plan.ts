@@ -1,5 +1,8 @@
 import {
+  type BudgetableStreamItem,
+  type TimeBudgetResult,
   estimateStreamItemMinutes,
+  fitStreamToTimeBudget,
   nonDueQuestionFloor,
   pricedStreamItemMinutes,
 } from './stream-budget';
@@ -10,9 +13,12 @@ interface NonDueSelectionSignal {
   recallLocked?: boolean;
 }
 
-interface NonDueSelectionInputs<Signal extends NonDueSelectionSignal> {
+interface NonDueSelectionInputs<
+  Signal extends NonDueSelectionSignal,
+  Due extends BudgetableStreamItem,
+> {
   signals: readonly Signal[];
-  dueDrafts: readonly { item_kind: 'question' | 'paper'; estimatedMinutes?: number }[];
+  allDueDrafts: readonly Due[];
   max: number;
   dailyBudgetMinutes: number | undefined;
   questionMinutes: number | undefined;
@@ -51,21 +57,25 @@ export function nonDueFloorCandidateIds(
 }
 
 /**
- * Decide deterministic recall passthrough, the eligible sampling pool, and its target.
+ * Fit due rows against the chosen non-due floor, then budget recall and sampling.
  * Preserve collection order, duplicates, and complete signal objects without mutating inputs.
  * Every recall-locked ref stays out of sampling, including recall items that do not fit today.
  * Numeric inputs retain their existing arithmetic semantics without normalization.
  */
-export function planNonDueSelection<Signal extends NonDueSelectionSignal>({
+export function planNonDueSelection<
+  Signal extends NonDueSelectionSignal,
+  Due extends BudgetableStreamItem,
+>({
   signals,
-  dueDrafts,
+  allDueDrafts,
   max,
   dailyBudgetMinutes,
   questionMinutes,
   questionMinutesByQuestion,
   targetCount,
   floorCandidateRefIds,
-}: NonDueSelectionInputs<Signal>): {
+}: NonDueSelectionInputs<Signal, Due>): {
+  dueFit: TimeBudgetResult<Due>;
   recallLocked: Signal[];
   recallLockedRefs: Set<string>;
   samplable: Signal[];
@@ -92,14 +102,31 @@ export function planNonDueSelection<Signal extends NonDueSelectionSignal>({
       },
       questionMinutes,
     );
-  const dueMinutes = dueDrafts.reduce(
-    (sum, item) => sum + pricedStreamItemMinutes(item, questionMinutes),
-    0,
-  );
   const floorMinutes =
     questionMinutesByQuestion === undefined
       ? floorPassthrough.length * questionCost
       : floorPassthrough.reduce((sum, signal) => sum + minutesOf(signal), 0);
+  const questionSlots =
+    dailyBudgetMinutes === undefined ? 0 : Math.floor(dailyBudgetMinutes / questionCost);
+  // Choose the eligible floor once: its exact cost must be withheld before due fitting.
+  const dueFit = fitStreamToTimeBudget(
+    allDueDrafts,
+    dailyBudgetMinutes,
+    questionMinutes,
+    questionMinutesByQuestion === undefined
+      ? {
+          reserveQuestionSlots: nonDueQuestionFloor(
+            questionSlots,
+            floorCandidateRefIds?.length ?? 0,
+          ),
+        }
+      : { reserveQuestionMinutes: floorMinutes },
+  );
+  const dueDrafts = dueFit.kept;
+  const dueMinutes = dueDrafts.reduce(
+    (sum, item) => sum + pricedStreamItemMinutes(item, questionMinutes),
+    0,
+  );
   const remainingAfterDue =
     dailyBudgetMinutes === undefined
       ? Number.POSITIVE_INFINITY
@@ -114,7 +141,7 @@ export function planNonDueSelection<Signal extends NonDueSelectionSignal>({
     let remaining = remainingAfterDue;
     for (const signal of allRecallLocked) {
       const cost = minutesOf(signal);
-      if (cost > remaining) break;
+      if (cost > remaining) continue;
       recallLocked.push(signal);
       remaining -= cost;
     }
@@ -169,7 +196,7 @@ export function planNonDueSelection<Signal extends NonDueSelectionSignal>({
   const effectiveTarget =
     targetCount !== undefined ? Math.min(targetCount, floorTarget) : floorTarget;
 
-  return { recallLocked, recallLockedRefs, samplable, floorPassthrough, effectiveTarget };
+  return { dueFit, recallLocked, recallLockedRefs, samplable, floorPassthrough, effectiveTarget };
 }
 
 function selectNonDueFloor<Signal extends NonDueSelectionSignal>(

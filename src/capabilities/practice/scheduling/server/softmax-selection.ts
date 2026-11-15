@@ -26,12 +26,7 @@ import {
 } from './selection-orchestrator';
 import { type WeightedCandidate, sampleByWeight } from './selection-sampler';
 import { reconcileSelectionAdvice, statisticalWeights } from './selection-weights';
-import {
-  estimateStreamItemMinutes,
-  fitStreamToTimeBudget,
-  nonDueQuestionFloor,
-  pricedStreamItemMinutes,
-} from './stream-budget';
+import { fitStreamToTimeBudget } from './stream-budget';
 import {
   type ComposerInputs,
   type StreamPlan,
@@ -157,45 +152,7 @@ export async function composeSoftmaxStream(
     ...presentDueQuestion(d.knowledgeLabel, d.source),
     // 到期项不带选题信号（它们不经 sampler/MFI）——signals 缺省 {}（materialize 兜底）。
   }));
-  // 时间预算优先保留最容易忘的前缀，超预算时延后最不容易忘的到期题。有非到期候选时
-  // 先留出 1–2 题。没有 budget 的显式 DI/旧单测仍保留历史「全部 due presence」行为。
   const floorCandidateRefIds = nonDueFloorCandidateIds(inputs, seen);
-  const questionSlots =
-    inputs.dailyBudgetMinutes === undefined
-      ? 0
-      : Math.floor(
-          inputs.dailyBudgetMinutes / estimateStreamItemMinutes('question', inputs.questionMinutes),
-        );
-  const reserveQuestionSlots = nonDueQuestionFloor(questionSlots, floorCandidateRefIds.length);
-  const reservation =
-    inputs.questionMinutesByQuestion === undefined
-      ? { reserveQuestionSlots }
-      : {
-          reserveQuestionMinutes: floorCandidateRefIds.slice(0, reserveQuestionSlots).reduce(
-            (sum, id) =>
-              sum +
-              pricedStreamItemMinutes(
-                {
-                  item_kind: 'question',
-                  estimatedMinutes: inputs.questionMinutesByQuestion?.[id],
-                },
-                inputs.questionMinutes,
-              ),
-            0,
-          ),
-        };
-  const dueFit = fitStreamToTimeBudget(
-    allDueDrafts,
-    inputs.dailyBudgetMinutes,
-    inputs.questionMinutes,
-    reservation,
-  );
-  const dueDrafts = dueFit.kept;
-
-  // 到期项的 L1 真相序（预算筛选后仍保持可回忆概率升序）——assertL3Invariants 据此校验
-  // plan 里 due 子序列**顺序**与 L1 一致（铁律②不止 presence，还含 intra-day 序）。
-  const dueRefOrder = dueDrafts.map((d) => d.ref_id);
-  const dueRefSet = new Set(dueRefOrder);
 
   // ② 非到期候选（variant + new_check）——去重后是 sampler 的池子。
   const variantRaws: NonDueRaw[] = inputs.variantItems
@@ -249,10 +206,10 @@ export async function composeSoftmaxStream(
     return legacyFallback(inputs);
   }
 
-  const { recallLocked, recallLockedRefs, samplable, floorPassthrough, effectiveTarget } =
+  const { dueFit, recallLocked, recallLockedRefs, samplable, floorPassthrough, effectiveTarget } =
     planNonDueSelection({
       signals,
-      dueDrafts,
+      allDueDrafts,
       max,
       dailyBudgetMinutes: inputs.dailyBudgetMinutes,
       questionMinutes: inputs.questionMinutes,
@@ -260,6 +217,11 @@ export async function composeSoftmaxStream(
       targetCount: config.targetCount,
       floorCandidateRefIds,
     });
+  const dueDrafts = dueFit.kept;
+
+  // L1 due truth is the original order after the owner's budget fit.
+  const dueRefOrder = dueDrafts.map((d) => d.ref_id);
+  const dueRefSet = new Set(dueRefOrder);
 
   // signalByRef：所有非到期题的信号快照（含 recall-locked），物化进 StreamPlanItem.signals。
   const signalByRef = new Map<string, CollectedSignal>(signals.map((s) => [s.refId, s]));
@@ -379,6 +341,9 @@ export async function composeSoftmaxStream(
     assembled,
     inputs.dailyBudgetMinutes,
     inputs.questionMinutes,
+    inputs.questionMinutesByQuestion === undefined
+      ? undefined
+      : { reserveQuestionRefIds: floorRefs },
   );
   const budgetedRefs = new Set(budgeted.kept.map((item) => item.ref_id));
   const droppedSampled = sampled.some((item) => !budgetedRefs.has(item.refId));
