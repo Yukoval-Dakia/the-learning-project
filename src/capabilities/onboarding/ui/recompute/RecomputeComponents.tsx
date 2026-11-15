@@ -3,10 +3,16 @@
 // re-derivation (recompute-core → src/core/recompute). Read-only; renders the verify bar,
 // per-KC chips, the bit-for-bit ledger, the drift detail, and the honesty footnote.
 // M3E presentation in recompute.css (docs/design/2026-11-03-last-old-ui-m3e.md).
+// YUK-1714 — the calibration badge's own styles live in recompute-badge.css so the
+// Coach consumer (which never mounts ScreenProfile) carries the same M3E surface;
+// the rerun action uses the shared IconButton primitive and the match figure chip
+// uses Chip — no new flag, math or state.
 
 import { Check, CircleAlert, CircleCheck, Lock, RefreshCw, Zap } from 'lucide-react';
+import { Chip, IconButton } from '@/ui-next/public';
 import { type RcKcVerdict, type RcMaturitySummary, type RcSummary, rcFmt } from './recompute-core';
 import { type RcState, useRecompute } from './useRecompute';
+import './recompute-badge.css';
 
 /** Offline chip — emphasise the pure on-device, no-network re-derivation. */
 export function RcOffline() {
@@ -56,16 +62,12 @@ function RcRerunButton({
 }) {
   const accessibleLabel = state === 'running' ? `正在${label}` : label;
   return (
-    <button
-      type="button"
-      className="rc-rerun un-hit"
+    <IconButton
+      label={accessibleLabel}
+      icon={<RefreshCw size={16} aria-hidden="true" />}
       disabled={state === 'running'}
-      aria-label={accessibleLabel}
-      title={accessibleLabel}
       onClick={onClick}
-    >
-      <RefreshCw size={14} aria-hidden="true" />
-    </button>
+    />
   );
 }
 
@@ -304,10 +306,10 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
             <div className="rc-cal-sub">
               <span className="mono">{total}</span> 个知识点的显示结果一致
               <span className="rc-cal-figs">
-                <span className="rc-cal-fig">
+                <Chip tone="positive">
                   <b className="mono">区间已收窄 {dFirm}</b>
                   <Check size={11} aria-hidden="true" />
-                </span>
+                </Chip>
               </span>
               · <RcOffline />
             </div>
