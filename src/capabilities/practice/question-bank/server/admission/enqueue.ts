@@ -5,6 +5,7 @@ import {
   lockPaidEffectControlFamily,
   readPaidEffectControl,
 } from '@/core/paid-work/server/paid-effect-control';
+import { questionAdmissionV5DeliveryId } from '@/core/paid-work/server/question-admission-policy-successor-v1';
 import { QUESTION_ADMISSION_CONTRACT_VERSION } from '@/core/question-admission-policy';
 import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answer-compare';
 import type { Db, Tx } from '@/db/client';
@@ -255,20 +256,13 @@ export function admissionJobId(
   digest: string,
   generation: number,
 ): string {
-  const hex = createHash('sha256')
-    .update(
-      JSON.stringify([
-        ADMISSION_FAMILY,
-        QUESTION_ADMISSION_CONTRACT_VERSION,
-        groupId,
-        revisionId,
-        digest,
-        generation,
-      ]),
-    )
-    .digest('hex');
-  const value = `${hex.slice(0, 12)}8${hex.slice(13, 16)}${((Number.parseInt(hex[16], 16) & 3) | 8).toString(16)}${hex.slice(17, 32)}`;
-  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+  return questionAdmissionV5DeliveryId(
+    groupId,
+    revisionId,
+    digest,
+    generation,
+    QUESTION_ADMISSION_CONTRACT_VERSION,
+  );
 }
 
 /**

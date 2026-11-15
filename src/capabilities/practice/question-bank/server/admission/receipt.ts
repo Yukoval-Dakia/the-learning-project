@@ -10,10 +10,10 @@ import {
   claimPaidEffectSend,
   readPaidEffect,
   recordPaidEffectApplication,
+  transitionQuestionAdmissionV4V5SuccessorV1,
 } from '@/core/paid-work/server/paid-effect-store';
 import {
   DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
-  DUAL_SOLVE_QUESTION_ADMISSION_POLICY_ID,
   LEGACY_QUESTION_ADMISSION_PAID_UNIT,
   PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNIT,
@@ -311,6 +311,18 @@ export async function claimAdmissionBatch(
     .for('update')
     .limit(1);
   if (legacyReceipt) return { kind: 'held' as const, input, identity };
+  const policyTransition = await transitionQuestionAdmissionV4V5SuccessorV1(
+    tx,
+    effect,
+    {
+      backend: 'pg-boss',
+      deliveryId: delivery.id,
+      generation: delivery.jobData?.dispatch_generation ?? 0,
+      leaseExpiresAt: new Date(Date.now() + 60 * 60_000),
+    },
+    prepared,
+  );
+  if (policyTransition === 'held') return { kind: 'held' as const, input, identity };
   // Sealed-history gate: a cancelled never-sent intent is the
   // original admission decision for this base/revision. When no live row
   // reconciles, a redelivery whose prepared input drifted (admission
@@ -325,7 +337,7 @@ export async function claimAdmissionBatch(
   // check above, this runs inside the family-locked claim transaction, so a
   // concurrent cancel cannot commit a 'cancelled' row between this read and
   // the admit below.
-  if (!existing) {
+  if (!existing && policyTransition !== 'mapped') {
     const sealed = await tx
       .select({ input_digest: paid_effect.input_digest })
       .from(paid_effect)
@@ -340,26 +352,6 @@ export async function claimAdmissionBatch(
       .for('update')
       .limit(4);
     if (sealed.length > 0) {
-      // A pre-release @4 authorization froze the old policy/solver2 shape. Map only those
-      // two policy fields; every other input fact remains covered by the exact digest.
-      const legacySuccessor =
-        prepared.policy_id === QUESTION_ADMISSION_POLICY_ID
-          ? computePaidEffectIdentity({
-              family: effect.family,
-              entityId: prepared.group_id,
-              entityRevision: prepared.contract.integrity_digest,
-              unit: DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT,
-              input: FrozenAdmissionInput.parse(
-                JSON.parse(
-                  JSON.stringify({
-                    ...prepared,
-                    policy_id: DUAL_SOLVE_QUESTION_ADMISSION_POLICY_ID,
-                    solver2: null,
-                  }),
-                ),
-              ),
-            })
-          : null;
       const [authorizedSuccessor] = await tx
         .select({ authorization_id: paid_effect_authorization.authorization_id })
         .from(paid_effect_authorization)
@@ -368,23 +360,8 @@ export async function claimAdmissionBatch(
             eq(paid_effect_authorization.family, effect.family),
             eq(paid_effect_authorization.entity_id, effect.entityId),
             eq(paid_effect_authorization.successor_entity_revision, identity.entityRevision),
-            or(
-              and(
-                eq(paid_effect_authorization.successor_unit, identity.unit),
-                eq(paid_effect_authorization.successor_input_digest, identity.inputDigest),
-              ),
-              ...(legacySuccessor
-                ? [
-                    and(
-                      eq(paid_effect_authorization.successor_unit, legacySuccessor.unit),
-                      eq(
-                        paid_effect_authorization.successor_input_digest,
-                        legacySuccessor.inputDigest,
-                      ),
-                    ),
-                  ]
-                : []),
-            ),
+            eq(paid_effect_authorization.successor_unit, identity.unit),
+            eq(paid_effect_authorization.successor_input_digest, identity.inputDigest),
           ),
         )
         .for('update')

@@ -13,6 +13,8 @@ import { computePaidEffectIdentity } from '@/core/paid-work/protocol/paid-effect
 import {
   admitPaidEffectIntent,
   cancelPaidEffectUnsentIntent,
+  claimPaidEffectSend,
+  markPaidEffectUnknown,
   recordPaidEffectApplication,
   recordPaidEffectResult,
   reservePaidEffect,
@@ -25,14 +27,18 @@ import {
 import { taskInputHash } from '@/core/task-input-hash';
 import {
   ai_task_runs,
+  event,
   knowledge,
   paid_effect,
   paid_effect_authorization,
   question,
+  question_group_lifecycle,
+  question_revision,
   question_solution_prior,
 } from '@/db/schema';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import * as norm from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
 import { createLoomPiModels } from '@/server/ai/pi-models';
@@ -40,7 +46,11 @@ import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { ADJUDICATION_TASK_KIND } from '../server/admission/adjudicate';
 import { definitionFromContract } from '../server/admission/definition-from-contract';
-import { ADMISSION_FAMILY, admissionJobId } from '../server/admission/enqueue';
+import {
+  ADMISSION_FAMILY,
+  admissionJobId,
+  enqueuePublishedQuestionAdmission,
+} from '../server/admission/enqueue';
 import { FrozenAdmissionInput } from '../server/admission/receipt';
 import { solverParts, solverUnits } from '../server/admission/solve';
 import { runAdmissionForQuestion as run } from './question_admission_run';
@@ -1497,19 +1507,25 @@ describe('question admission provider recovery', () => {
     },
   );
 
-  // @invariant concurrency: a cancelled pre-release @4 authorization with its original
-  // bound delivery admits only the exact @5 policy successor; any input drift holds
-  // @fails-if the old @4 delivery fails to re-enqueue @5, exact @5 cannot claim after the
-  // legacy @4 successor cancellation, or drifted subject input claims or sends
+  // @invariant concurrency: an original pending @4 authorization translates once to
+  // its exact canonical @5 delivery; the mapped effect governs retries and later revisions
+  // @fails-if input/source/delivery drift or an unknown send escapes the fence, retries
+  // repurchase, old paid evidence changes, or a settled mapping blocks a later revision
   it.each([
-    { name: 'exact mapped input claims', allowed: true },
-    { name: 'subject drift holds', allowed: false },
-  ])('legacy dual-solve authorization: $name', async ({ allowed }) => {
+    { name: 'exact mapped input claims', allowed: true, drift: 'none' },
+    { name: 'mapped wait recovers without repurchase', allowed: true, drift: 'retry' },
+    { name: 'subject drift holds', allowed: false, drift: 'subject' },
+    { name: 'arbitrary delivery holds', allowed: false, drift: 'delivery' },
+    { name: 'different publication holds', allowed: false, drift: 'publication' },
+    { name: 'original unknown send holds', allowed: false, drift: 'unknown' },
+    { name: 'original sending holds', allowed: false, drift: 'sending' },
+    { name: 'purged original delivery holds', allowed: false, drift: 'missing' },
+  ])('legacy dual-solve authorization: $name', async ({ allowed, drift }) => {
     const db = testDb();
     const seed = await seedAdmission();
     const boundId = admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:legacy-bound`, 0);
     await seedCancelledLegacyAuthorization(seed, boundId);
-    if (!allowed) {
+    if (drift === 'subject') {
       const now = new Date();
       await db
         .insert(knowledge)
@@ -1529,34 +1545,213 @@ describe('question admission provider recovery', () => {
 
     bossSends.length = 0;
     const boundData = { ...jobData(seed), admission_version: 4 as const };
-    const oldRun = await run(db, boundData, { id: boundId, jobData: boundData });
-    expect(oldRun.status).toBe('stale');
+    if (drift === 'publication') {
+      const [publication] = await db.select().from(event).where(eq(event.id, seed.publishEventId));
+      if (!publication) throw new Error('original publication missing');
+      const alternateId = `pub-${createId()}`;
+      await db.insert(event).values({
+        id: alternateId,
+        actor_kind: publication.actor_kind,
+        actor_ref: publication.actor_ref,
+        action: publication.action,
+        subject_kind: publication.subject_kind,
+        subject_id: publication.subject_id,
+        outcome: publication.outcome,
+        payload: publication.payload,
+        ingest_at: new Date(),
+      });
+      await enqueuePublishedQuestionAdmission(db, {
+        subscriberId: 'practice.question-admission-successor',
+        subscriberVersion: 5,
+        deliverySeq: '0',
+        sourceEventId: alternateId,
+      });
+    } else {
+      const oldRun = await run(db, boundData, { id: boundId, jobData: boundData });
+      expect(oldRun.status).toBe('stale');
+    }
     const successors = bossSends.filter(
       (send) => (send.data as { admission_version?: number }).admission_version === 5,
     );
     expect(successors).toHaveLength(1);
-    const successorId = String(successors[0]?.opts.id);
+    const successorId =
+      drift === 'delivery'
+        ? admissionJobId(seed.groupId, seed.revisionId, `${seed.digest}:unbound`, 0)
+        : String(successors[0]?.opts.id);
     expect(successorId).not.toBe(boundId);
     const [authorization] = await db
       .select({ boundDeliveryId: paid_effect_authorization.successor_delivery_id })
       .from(paid_effect_authorization);
     expect(authorization?.boundDeliveryId).toBe(boundId);
     const successorData = successors[0]?.data as ReturnType<typeof jobData>;
-    await insertDelivery(seed, successorId, successorData, { binding: false });
-    const { task, calls } = fakeTaskFactory(seed);
+    await insertDelivery(seed, successorId, successorData, { binding: drift === 'delivery' });
+    if (drift === 'missing') await fixtureBoss?.deleteJob(ADMISSION_FAMILY, boundId);
+    if (drift === 'unknown' || drift === 'sending') {
+      const [row] = await db
+        .select()
+        .from(paid_effect)
+        .where(
+          and(
+            eq(paid_effect.unit, DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT),
+            eq(paid_effect.state, 'pending'),
+          ),
+        );
+      if (!row) throw new Error('original authorized successor missing');
+      const identity = computePaidEffectIdentity({
+        family: row.family,
+        entityId: row.entity_id,
+        entityRevision: row.entity_revision,
+        unit: row.unit,
+        input: row.input_json,
+      });
+      await db.transaction(async (tx) => {
+        const claim = await claimPaidEffectSend(tx, identity, {
+          backend: 'pg-boss',
+          deliveryId: boundId,
+          generation: 0,
+          leaseExpiresAt: new Date(Date.now() + 60_000),
+        });
+        if (claim.kind !== 'claimed') throw new Error('original authorized send did not claim');
+        if (drift === 'unknown')
+          await markPaidEffectUnknown(tx, identity, boundId, 'unresolved original send', {
+            fence: claim.fence,
+          });
+      });
+    }
+    const oldRows = () =>
+      db
+        .select()
+        .from(paid_effect)
+        .where(eq(paid_effect.unit, DUAL_SOLVE_QUESTION_ADMISSION_PAID_UNIT));
+    const oldBefore = await oldRows();
+    const authBefore = await db.select().from(paid_effect_authorization);
+    const { task, calls } = fakeTaskFactory(
+      seed,
+      drift === 'retry'
+        ? {
+            failures: new Map([
+              [0, { kind: 'bound', status: 500 }],
+              [1, { kind: 'bound', status: 500 }],
+            ]),
+          }
+        : {},
+    );
     const claimed = await run(
       db,
       successorData,
       { id: successorId, jobData: successorData },
       { runTask: task },
     );
-    expect(claimed.status).toBe(allowed ? 'admitted' : 'pending');
-    expect(calls).toHaveLength(allowed ? 1 : 0);
+    expect(claimed.status).toBe(allowed ? (drift === 'retry' ? 'waiting' : 'admitted') : 'pending');
+    if (drift === 'retry') {
+      expect((await deliverWake(seed, successorData, task)).status).toBe('admitted');
+    }
+    const expectedCalls = drift === 'retry' ? 3 : 1;
+    expect(calls).toHaveLength(allowed ? expectedCalls : 0);
     const current = await db
       .select({ unit: paid_effect.unit })
       .from(paid_effect)
       .where(eq(paid_effect.unit, QUESTION_ADMISSION_PAID_UNIT));
     expect(current).toHaveLength(allowed ? 1 : 0);
+    const mappings = () =>
+      db
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:paid_question_admission_policy_successor_v1'));
+    expect(await mappings()).toHaveLength(allowed ? 1 : 0);
+    expect(await oldRows()).toEqual(oldBefore);
+    expect(await db.select().from(paid_effect_authorization)).toEqual(authBefore);
+    if (!allowed) return;
+
+    const replay = await run(
+      db,
+      successorData,
+      { id: successorId, jobData: successorData },
+      { runTask: task },
+    );
+    expect(replay.status).toBe('already_verified');
+    expect(calls).toHaveLength(expectedCalls);
+    const settledMappings = await mappings();
+    const [settled] = await db
+      .select()
+      .from(paid_effect)
+      .where(eq(paid_effect.unit, QUESTION_ADMISSION_PAID_UNIT));
+    expect(settled?.state).toBe('applied');
+    const original = oldBefore.find((row) => row.state === 'pending');
+    if (!original) throw new Error('original pending authorization missing');
+    const retiredClaim = await db.transaction((tx) =>
+      claimPaidEffectSend(
+        tx,
+        {
+          family: original.family,
+          entityId: original.entity_id,
+          entityRevision: original.entity_revision,
+          unit: original.unit,
+          inputDigest: original.input_digest,
+        },
+        {
+          backend: 'pg-boss',
+          deliveryId: boundId,
+          generation: 0,
+          leaseExpiresAt: new Date(Date.now() + 60_000),
+        },
+      ),
+    );
+    expect(retiredClaim.kind).toBe('refused');
+
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, seed.groupId));
+    if (!lifecycle?.current_revision_id) throw new Error('settled lifecycle missing');
+    const [revision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, lifecycle.current_revision_id));
+    if (!revision) throw new Error('settled revision missing');
+    const structure = structuredClone(revision.structure);
+    structure.parts[0].prompt_md += '\n改变坡度后再判断受控变量。';
+    const layers = {
+      structure,
+      response_spec: revision.response_spec,
+      scoring_basis: revision.scoring_basis,
+      execution_plan: revision.execution_plan,
+      ...(revision.presentation ? { presentation: revision.presentation } : {}),
+    };
+    const published = await publishQuestionGroup(db, {
+      group_id: seed.groupId,
+      contract: { ...layers, integrity_digest: norm.publishedContractSeal(layers).canonical },
+      expectedCurrentRevision: revision.revision_id,
+      expectedAdmissionGeneration: lifecycle.scoring_admission_generation,
+      availability: 'general_pool',
+      admission: { state: 'withheld', reason: 'unverified_rules' },
+      actorRef: 'quiz_gen:persist',
+      now: new Date(),
+    });
+    if (published.status !== 'published') throw new Error(`later revision was ${published.status}`);
+    const laterSeed = {
+      ...seed,
+      revisionId: published.revision_id,
+      digest: published.revision_digest,
+      publishEventId: published.event_id,
+    };
+    const laterId = admissionJobId(
+      seed.groupId,
+      laterSeed.revisionId,
+      laterSeed.digest,
+      published.admission_generation,
+    );
+    const laterData = jobData(laterSeed, {
+      expected_admission_generation: published.admission_generation,
+    });
+    await insertDelivery(laterSeed, laterId, laterData);
+    expect(
+      (await run(db, laterData, { id: laterId, jobData: laterData }, { runTask: task })).status,
+    ).toBe('admitted');
+    expect(calls).toHaveLength(expectedCalls + 1);
+    expect(await oldRows()).toEqual(oldBefore);
+    expect(await db.select().from(paid_effect_authorization)).toEqual(authBefore);
+    expect(await mappings()).toEqual(settledMappings);
   });
 });
 
