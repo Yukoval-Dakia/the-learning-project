@@ -9,6 +9,7 @@
 //
 
 import { randomUUID } from 'node:crypto';
+import { acceptedProcessEventId } from '@/core/assessment-input';
 import { AgentRunError, isProviderSessionWallClockBudgetError } from '@/ai/agent-run-error';
 import type { RunTaskResult } from '@/ai/task-result';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
@@ -117,6 +118,7 @@ function citationProblem(
       .map((item) => item.evidence_id),
   );
   const evidenceIds = new Set([
+    ...(request.learner_processes ?? []).map((p) => acceptedProcessEventId(p.submission_id)),
     ...request.slot_responses.flatMap((entry) =>
       entry.kind === 'open' ? entry.evidence.map((item) => item.evidence_id) : [],
     ),

@@ -110,6 +110,7 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
       'paper_submit',
       input.questionId,
       input.assessment,
+      capture,
     );
     const submission = prepared.submission;
     const attemptId = assessmentAttemptEventId(submission.submission_id);

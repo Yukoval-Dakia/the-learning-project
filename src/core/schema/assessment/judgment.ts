@@ -64,6 +64,24 @@ export const SubmissionRecord = z.object({
 });
 export type SubmissionRecordT = z.infer<typeof SubmissionRecord>;
 
+export function acceptedProcessEventId(submissionId: string): string {
+  return `evt_accepted_process_${submissionId}`;
+}
+
+/** Original learner text accepted with a submission, never model reasoning or a scoring rule. */
+export const AcceptedLearnerProcess = z.object({
+  version: z.literal(1),
+  submission_id: SubmissionId,
+  issuance_id: IssuanceId,
+  revision_id: RevisionId,
+  evaluation_group_id: EvaluationGroupId,
+  submission_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  issued_part_ids: z.array(z.string().min(1)).min(1),
+  // Whitespace-only is absent; nonblank text retains its original bytes, including whitespace.
+  reasoning_trace: z.string().refine((text) => text.trim().length > 0),
+});
+export type AcceptedLearnerProcessT = z.infer<typeof AcceptedLearnerProcess>;
+
 /**
  * 迁移前历史记录缺冻结上下文的显式类型（§3.2/§13）：locator 非空，
  * revision/submission 身份未知就是未知 —— 不用可选字段让新请求逃避冻结，
@@ -309,7 +327,7 @@ export type EvaluationAdmissionSnapshotT = z.infer<typeof EvaluationAdmissionSna
 
 /** Server-sealed membership and input identity; absent historical facts stay absent. */
 export const EvaluationInputSnapshot = z.object({
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   revision_id: RevisionId,
   member_submission_ids: z.array(SubmissionId).min(1),
   issued_part_ids: z.array(z.string().min(1)).min(1),

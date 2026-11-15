@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { acceptedProcessEventId } from '@/core/assessment-input';
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { RunTaskResult } from '@/ai/task-result';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
@@ -144,6 +145,7 @@ function citationRejections(
 ): { rejected: ModelOutcomeRejectedCitationT[]; observed: ModelObservedCitation[] } {
   const slots = new Map(request.slot_responses.map((entry) => [entry.slot_id, entry]));
   const evidenceIds = new Set([
+    ...(request.learner_processes ?? []).map((p) => acceptedProcessEventId(p.submission_id)),
     ...request.slot_responses.flatMap((entry) =>
       entry.kind === 'open' ? entry.evidence.map((item) => item.evidence_id) : [],
     ),

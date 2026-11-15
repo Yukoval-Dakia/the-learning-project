@@ -22,6 +22,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { LearningScope } from '@/kernel/read-models/assessment-learning-scope';
+import { projectAcceptedProcesses } from '@/kernel/records/assessment-accepted-process';
 import {
   type NativeReviewOccurrence,
   projectNativeReviewOccurrences,
@@ -91,6 +92,8 @@ const SessionRow = createSelectSchema(learning_session)
 const EventRow = z.object({
   id: z.string(),
   action: z.string(),
+  actor_kind: z.string().optional(),
+  actor_ref: z.string().optional(),
   subject_kind: z.string(),
   subject_id: z.string(),
   session_id: z.string().nullable().default(null),
@@ -336,6 +339,13 @@ export function projectNativeCsv(
   activeEventIds: ReadonlySet<string>,
 ) {
   const events = parsedRows(tables.event, EventRow);
+  const acceptedProcesses = projectAcceptedProcesses(
+    events.map((row) => ({
+      ...row,
+      actor_kind: row.actor_kind ?? '',
+      actor_ref: row.actor_ref ?? '',
+    })),
+  );
   const submissions = parsedRows(tables.assessment_submission, SubmissionRow);
   const revisions = parsedRows(tables.question_revision, RevisionRow);
   const issuances = parsedRows(tables.assessment_issuance, IssuanceRow);
@@ -431,6 +441,7 @@ export function projectNativeCsv(
     issuances,
     activeActivations: [],
     settlements: [],
+    acceptedProcesses,
   } satisfies Parameters<typeof projectGroupVerdicts>[0];
   const groups = projectGroupVerdicts(input);
   for (const [id, group] of groups)
@@ -511,6 +522,7 @@ export function projectNativeCsv(
           issuances,
           activeActivations: [],
           settlements: [],
+          acceptedProcesses,
           heads: [
             {
               evaluation_group_id: original.evaluation_group_id,

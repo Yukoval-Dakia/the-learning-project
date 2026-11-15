@@ -60,6 +60,7 @@ import {
 } from '@/db/schema';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import { ApiError } from '@/kernel/http';
+import { loadAcceptedProcesses } from '@/kernel/records/assessment-accepted-process';
 import {
   ASSESSMENT_EVALUATION_GROUP_LOCK_NAMESPACE,
   lockAssessmentEvaluationGroup,
@@ -494,10 +495,11 @@ export async function evaluateSubmission(
               memberRows.map((row) => row.issuance_id),
             ),
           );
+        const acceptedProcesses = await loadAcceptedProcesses(tx, ids);
         const members = memberRows.map((row) => {
           const issuance = issuances.find((item) => item.issuance_id === row.issuance_id);
           if (!issuance) throw new EvaluateSubmissionError('issuance_not_found', row.issuance_id);
-          return evaluationMemberFromRows(row, issuance);
+          return evaluationMemberFromRows(row, issuance, acceptedProcesses.get(row.submission_id));
         });
         const [issuanceRow] = await tx
           .select()
