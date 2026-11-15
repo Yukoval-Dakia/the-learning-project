@@ -59,6 +59,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
+import { downgradeUnboundChartFences } from '@/kernel/blocks/markdown-chart-fence';
 import { ApiError } from '@/kernel/http';
 import {
   ASSESSMENT_EVALUATION_GROUP_LOCK_NAMESPACE,
@@ -745,7 +746,15 @@ export async function evaluateSubmission(
 
           return database.transaction(async (tx) => {
             if (request.judge_execution) await requireJudgeRunOpen(tx, request.judge_execution);
-            const record = { ...core.record, evaluation_id: evaluationIdFor(core.record) };
+            const safeRecord = {
+              ...core.record,
+              unit_results: core.record.unit_results.map((unit) =>
+                'feedback_md' in unit && typeof unit.feedback_md === 'string'
+                  ? { ...unit, feedback_md: downgradeUnboundChartFences(unit.feedback_md) }
+                  : unit,
+              ),
+            };
+            const record = { ...safeRecord, evaluation_id: evaluationIdFor(safeRecord) };
             const payload: EvaluationRowPayload = {
               evaluation_id: record.evaluation_id,
               evaluation_group_id: record.evaluation_group_id,

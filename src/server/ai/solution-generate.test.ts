@@ -2,6 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateReferenceSolution } from '@/capabilities/practice/question-bank/server/reference-solution';
+import { embedHash, questionEmbedText } from '@/core/embed-source';
 import { question } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
@@ -90,4 +91,59 @@ describe('generateReferenceSolution', () => {
     const [row] = await db.select().from(question).where(eq(question.id, id));
     expect(row.reference_md).toBe('REAL OCR ANSWER'); // NOT clobbered by the AI worked solution
   });
+});
+
+// @invariant data: a generated reference and its embedding hash commit the same safe chart provenance without changing the raw output or chart data.
+// @fails-if unbound record claims persist, reference/hash diverge, or model charts/plain Markdown are rewritten.
+it('persists generated chart references with their safe embedding source', async () => {
+  await resetDb();
+  // Synthetic accepted Markdown; no provider output, learner record or measured cost.
+  const chart = {
+    v: 1,
+    alt: 'Synthetic chart',
+    kind: 'chart',
+    chart: 'bar',
+    x: { label: 'step', scale: 'category' },
+    y: { label: 'value' },
+    series: [{ name: 'synthetic', points: [['one', 999]] }],
+  };
+  const modelFence = [
+    '```tlp-block',
+    JSON.stringify({ ...chart, data_source: { kind: 'model' }, caption: 'model caption' }),
+    '```',
+  ].join('\n');
+  const rawMd = [
+    'Plain **Markdown**.',
+    '```tlp-block',
+    JSON.stringify({
+      ...chart,
+      data_source: { kind: 'tool_result', tool_use_id: 'synthetic-unbound', path: '/series' },
+      caption: 'synthetic record claim',
+    }),
+    '```',
+    modelFence,
+  ].join('\n');
+  const safeMd = [
+    'Plain **Markdown**.',
+    '```tlp-block',
+    JSON.stringify({ ...chart, data_source: { kind: 'model' } }),
+    '```',
+    modelFence,
+  ].join('\n');
+  const output = { ...JSON.parse(validLlmText()), worked_solution_md: rawMd };
+  const id = await seedQuestion({});
+  expect(
+    await generateReferenceSolution({
+      db,
+      questionId: id,
+      runTaskFn: async () => ({ text: JSON.stringify(output) }),
+    }),
+  ).toMatchObject({ status: 'generated' });
+  const [stored] = await db.select().from(question).where(eq(question.id, id));
+  expect(stored.reference_md).toBe(safeMd);
+  expect(stored.embed_content_hash).toBe(
+    embedHash(questionEmbedText({ ...stored, reference_md: safeMd })),
+  );
+  expect(stored.rubric_json).toMatchObject({ reference_solution: output.reference_solution });
+  expect(output.worked_solution_md).toBe(rawMd);
 });
