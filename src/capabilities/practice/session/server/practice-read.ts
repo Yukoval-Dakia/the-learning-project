@@ -16,6 +16,7 @@ import { Artifact } from '@/core/schema/index';
 import type { Db, Tx } from '@/db/client';
 import { artifact, event, knowledge, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { readPaperTimeEstimates } from '@/kernel/read-models/paper-time-estimate';
 import {
   resolveVerdictsForAttempts,
   resolveVerdictsForNativeAttempts,
@@ -131,6 +132,15 @@ export interface PracticePaperItem {
   knowledge: Array<{ id: string; name: string }>;
   /** total answerable slots in the paper (DISTINCT assignment slots) */
   total_slots: number;
+  /**
+   * Canonical shelf estimate from the scheduling owner (kernel port): pace
+   * 一次批量读, price = owner paper formula. Null = estimate unavailable
+   * (reader not installed on this host) — honest unknown, no UI fallback.
+   */
+  estimated_minutes: number | null;
+  /** Pace provenance for the estimate; null when estimated_minutes is null. */
+  estimated_minutes_source: 'observed' | 'default' | null;
+  estimated_minutes_sample_count: number | null;
   /** the linked review session, if one has been started */
   session: {
     id: string;
@@ -424,15 +434,28 @@ export async function getPracticeList(
 
   // 6) Assemble. Total slots = the paper's distinct assignment slots (parsed via
   // readPaperSections, covering both U4 session_meta + U5 top-level plans).
-  const papers: PracticePaperItem[] = paperRows.map((row) => {
+  const slots = paperRows.map((row) => {
     const parsed = Artifact.safeParse(row);
     const toolState = parsed.success ? parsed.data.tool_state : null;
     const totalSlots =
       nativeBindings.get(sessionByPaper.get(row.id)?.id ?? '')?.slots.length ??
       countPaperSlots(toolState);
+    return { row, totalSlots };
+  });
 
+  // Canonical estimate: one batch call for the whole page — the scheduling
+  // owner reads pace once and prices every paper (no per-row N+1). Null =
+  // estimate reader not installed on this host; the wire keeps null so the
+  // UI reports unknown instead of inventing a number.
+  const estimates = await readPaperTimeEstimates(
+    db,
+    slots.map((s) => s.totalSlots),
+  );
+
+  const papers: PracticePaperItem[] = slots.map(({ row, totalSlots }, index) => {
     const session = sessionByPaper.get(row.id) ?? null;
     const kIds = row.knowledge_ids ?? [];
+    const estimate = estimates?.[index] ?? null;
     return {
       artifact_id: row.id,
       title: row.title,
@@ -442,6 +465,9 @@ export async function getPracticeList(
       knowledge_ids: kIds,
       knowledge: kIds.map((id) => ({ id, name: knowledgeNameMap.get(id) ?? id })),
       total_slots: totalSlots,
+      estimated_minutes: estimate?.minutes ?? null,
+      estimated_minutes_source: estimate?.source ?? null,
+      estimated_minutes_sample_count: estimate?.sample_count ?? null,
       session: session
         ? {
             id: session.id,

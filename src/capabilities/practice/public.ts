@@ -141,6 +141,10 @@ async function installPracticeHostPhase(): Promise<void> {
   await installModelAdmissionPins();
   const { installSchedulingCandidateRebuild } = await import('./settlement/public');
   installSchedulingCandidateRebuild();
+  // YUK-1633 — shelf reads consume the scheduling estimate through the kernel
+  // port; the web host serves /api/papers, so install here (not worker-only).
+  const { installPaperTimeEstimateFacts } = await import('./scheduling/public');
+  await installPaperTimeEstimateFacts();
 }
 
 /** Every port an API, Start acceptance, rehearsal or test host needs, in an explicit order. */
