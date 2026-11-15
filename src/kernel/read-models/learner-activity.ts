@@ -1,15 +1,17 @@
 // Which events count as a learner answer or as learning activity, which subject
 // such an event belongs to, when the learner last did any of it, and which recent
-// answers on a knowledge point were correct. Consumers read these sets instead of
-// spelling their own action lists.
+// answers on a knowledge point were correct. Activity readers share the
+// producer-backed scope; answer classification stays separate.
 
-import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { type SQL, and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
 import {
   AttemptQuestionSnapshot,
   type AttemptQuestionSnapshotT,
 } from '@/core/schema/question-evidence-snapshot';
 import type { Db, Tx } from '@/db/client';
 import {
+  artifact,
   evaluation,
   event,
   knowledge,
@@ -18,7 +20,8 @@ import {
   question_revision,
 } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
-import { allowedEventIds } from '@/kernel/events/derivation-policy';
+import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
+import { allowedEventIds, eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import {
   assessmentAttemptEventId,
   submissionIdFromAttemptEventId,
@@ -41,14 +44,78 @@ const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
 /** The learner answered a question: legacy attempt/review rows or a native attempt anchor. */
 export const LEARNER_ANSWER_ACTIONS = ['attempt', 'review', NATIVE_ATTEMPT_ACTION] as const;
 
-/** Answers plus captured learning records. */
+/** Candidate kinds only; use learningActivitySql() to establish activity. */
 export const LEARNING_ACTIVITY_ACTIONS = [
   ...LEARNER_ANSWER_ACTIONS,
   RECORD_CAPTURE_ACTION,
+  COPILOT_USER_ASK_ACTION,
+  'experimental:hint_request',
+  PROBE_RESULT_ACTION,
+  'experimental:body_blocks_edit',
 ] as const;
 
 /** Answers without `review`: the question delete warning counts attempts only. */
 export const QUESTION_ATTEMPT_ACTIONS = ['attempt', NATIVE_ATTEMPT_ACTION] as const;
+
+/** Qualifying learner interactions, including source consent and crisis filtering. */
+export function learningActivitySql(): SQL {
+  const scope = and(
+    eventAllowsDerivationSql(),
+    // Settlement time is not the learner's action time, even on a user actor row.
+    sql`coalesce(${event.payload}->>'generated_by', '')
+      IN ('', 'ingestion_capture', 'user_retry', 'rescue')`,
+    or(
+      and(eq(event.actor_kind, 'user'), inArray(event.action, [...LEARNER_ANSWER_ACTIONS])),
+      and(
+        eq(event.action, RECORD_CAPTURE_ACTION),
+        eq(event.actor_kind, 'user'),
+        eq(event.subject_kind, 'record'),
+        sql`coalesce(${event.payload}->>'enroll_outcome', '') <> 'unanswered'`,
+        // An imported question is material, even when enrollment stamps it as user.
+        sql`EXISTS (SELECT 1 FROM ${learning_record}
+          WHERE ${learning_record.id} = ${event.subject_id}
+            AND ${learning_record.origin_event_id} = ${event.id}
+            AND ${learning_record.source} = 'manual'
+            AND ${learning_record.activity_kind} IN
+              ('attempt', 'review', 'read', 'ask', 'annotate', 'conversation'))`,
+      ),
+      and(
+        eq(event.action, COPILOT_USER_ASK_ACTION),
+        eq(event.actor_kind, 'user'),
+        eq(event.actor_ref, 'user:self'),
+        sql`${event.payload}->>'surface' = 'copilot'`,
+        sql`length(btrim(${event.payload}->>'user_message')) > 0`,
+      ),
+      and(
+        eq(event.action, 'experimental:hint_request'),
+        eq(event.actor_kind, 'user'),
+        eq(event.actor_ref, 'self'),
+        eq(event.subject_kind, 'question'),
+        sql`jsonb_typeof(${event.payload}->'hint_index') = 'number'`,
+      ),
+      and(
+        eq(event.action, PROBE_RESULT_ACTION),
+        eq(event.actor_kind, 'system'),
+        eq(event.actor_ref, 'mind_probe'),
+        eq(event.subject_kind, 'question'),
+        sql`(length(btrim(${event.payload}->>'answer_md')) > 0
+          OR (jsonb_typeof(${event.payload}->'answer_image_refs') = 'array'
+            AND ${event.payload}->'answer_image_refs' <> '[]'::jsonb))`,
+      ),
+      and(
+        eq(event.action, 'experimental:body_blocks_edit'),
+        eq(event.actor_kind, 'user'),
+        eq(event.subject_kind, 'artifact'),
+        sql`jsonb_typeof(${event.payload}->'body_blocks') = 'object'`,
+        sql`EXISTS (SELECT 1 FROM ${artifact}
+          WHERE ${artifact.id} = ${event.subject_id}
+            AND ${artifact.type} IN ('note_atomic', 'note_hub', 'note_long'))`,
+      ),
+    ),
+  );
+  if (!scope) throw new Error('Learning activity scope must contain producer conditions');
+  return scope;
+}
 
 /** Newest learner-made, derivation-allowed learning activity, optionally strictly before `before`. */
 export async function loadLastLearnerEventAt(db: DbLike, before?: Date): Promise<Date | null> {
@@ -61,8 +128,7 @@ export async function loadLastLearnerEventAt(db: DbLike, before?: Date): Promise
       .from(event)
       .where(
         and(
-          eq(event.actor_kind, 'user'),
-          inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]),
+          learningActivitySql(),
           before ? lt(event.created_at, before) : undefined,
           cursor
             ? or(
@@ -93,13 +159,9 @@ export async function loadLastLearnerEventAt(db: DbLike, before?: Date): Promise
  * gap — between neighbouring activities and between the newest activity and `now` —
  * is under `gapMs`. Returns null when the newest allowed activity is already at
  * least `gapMs` old (or there is no activity at all): the streak is closed and the
- * caller treats "now" as a fresh learning day. Only `actor_kind='user'` events in
- * LEARNING_ACTIVITY_ACTIONS count. Rows carrying a settlement `generated_by`
- * `generated_by='workflow_judge'` rows are settlement writes stamped at
- * workflow-completion time, not a live learner action — they cannot re-open or
- * extend a streak. Provenances stamped at the learner's own action moment (a
- * user-reviewed import/capture, a retry, a rescue) and unprovenanced events
- * still count.
+ * caller treats "now" as a fresh learning day. The shared activity scope admits
+ * producer-backed learner interactions and excludes background settlement and
+ * unanswered imports, regardless of the actor stamped on those writes.
  *
  * The walk is bounded: it stops at the first gap that closes the streak, so a
  * long active history is not scanned. `before` bounds the window end (defaults to
@@ -122,14 +184,8 @@ export async function loadLearnerActivityStreakStart(
       .from(event)
       .where(
         and(
-          eq(event.actor_kind, 'user'),
-          inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]),
+          learningActivitySql(),
           lt(event.created_at, before),
-          // Only background settlement writes are excluded: 'workflow_judge'
-          // rows are stamped at workflow-completion time, not the learner's
-          // action moment. Human-timed provenances (ingestion_capture,
-          // user_retry, rescue) and unprovenanced events still count.
-          sql`coalesce(${event.payload}->>'generated_by', '') <> 'workflow_judge'`,
           cursor
             ? or(
                 lt(event.created_at, cursor.at),
@@ -621,8 +677,9 @@ type SubjectSource =
 /**
  * Resolve each event to a subject id. A capture reads its learning_record (knowledge
  * ids first, then the record's own subject_id). A native attempt reads its question's
- * knowledge ids (the answered part, else the revision's group). Every other action
- * reads payload `referenced_knowledge_ids`; an empty list resolves to the default.
+ * knowledge ids (the answered part, else the revision's group). Hints and probes
+ * resolve their question, note edits resolve their artifact. Other actions read
+ * payload `referenced_knowledge_ids`; an empty list resolves to the default.
  */
 export async function resolveLearningEventSubjects(
   db: DbLike,
@@ -631,11 +688,12 @@ export async function resolveLearningEventSubjects(
 ): Promise<Map<string, string>> {
   const records = await loadCaptureRecords(db, rows);
   const nativeKnowledge = await loadNativeAttemptKnowledge(db, rows);
+  const interactionKnowledge = await loadInteractionKnowledge(db, rows);
 
   const explicit = new Map<string, string>();
   const resolveInput: Array<{ id: string; knowledge_ids: string[] }> = [];
   for (const row of rows) {
-    const source = subjectSource(row, records, nativeKnowledge);
+    const source = subjectSource(row, records, nativeKnowledge, interactionKnowledge);
     if (source.kind === 'explicit') explicit.set(row.id, source.subjectId);
     else if (source.kind === 'knowledge')
       resolveInput.push({ id: row.id, knowledge_ids: source.knowledgeIds });
@@ -651,6 +709,7 @@ function subjectSource(
   row: LearningEventRef,
   records: Map<string, { knowledge_ids: string[]; subject_id: string | null }>,
   nativeKnowledge: Map<string, string[]>,
+  interactionKnowledge: Map<string, string[]>,
 ): SubjectSource {
   if (row.action === RECORD_CAPTURE_ACTION) {
     const rec = records.get(row.subject_id);
@@ -664,10 +723,47 @@ function subjectSource(
     const knowledgeIds = nativeKnowledge.get(row.id) ?? [];
     return knowledgeIds.length > 0 ? { kind: 'knowledge', knowledgeIds } : { kind: 'unresolved' };
   }
+  if (interactionKnowledge.has(row.id)) {
+    const knowledgeIds = interactionKnowledge.get(row.id) ?? [];
+    return knowledgeIds.length > 0 ? { kind: 'knowledge', knowledgeIds } : { kind: 'unresolved' };
+  }
   return {
     kind: 'knowledge',
     knowledgeIds: stringArrayField(row.payload, 'referenced_knowledge_ids'),
   };
+}
+
+/** Subject evidence for interactions whose payload does not repeat knowledge ids. */
+async function loadInteractionKnowledge(
+  db: DbLike,
+  rows: LearningEventRef[],
+): Promise<Map<string, string[]>> {
+  const questionRows = rows.filter(
+    (row) =>
+      row.subject_kind === 'question' &&
+      (row.action === 'experimental:hint_request' || row.action === PROBE_RESULT_ACTION),
+  );
+  const noteRows = rows.filter(
+    (row) => row.subject_kind === 'artifact' && row.action === 'experimental:body_blocks_edit',
+  );
+  const out = new Map<string, string[]>();
+  if (questionRows.length) {
+    const found = await db
+      .select({ id: question.id, knowledgeIds: question.knowledge_ids })
+      .from(question)
+      .where(inArray(question.id, [...new Set(questionRows.map((row) => row.subject_id))]));
+    const byId = new Map(found.map((row) => [row.id, row.knowledgeIds]));
+    for (const row of questionRows) out.set(row.id, byId.get(row.subject_id) ?? []);
+  }
+  if (noteRows.length) {
+    const found = await db
+      .select({ id: artifact.id, knowledgeIds: artifact.knowledge_ids })
+      .from(artifact)
+      .where(inArray(artifact.id, [...new Set(noteRows.map((row) => row.subject_id))]));
+    const byId = new Map(found.map((row) => [row.id, row.knowledgeIds]));
+    for (const row of noteRows) out.set(row.id, byId.get(row.subject_id) ?? []);
+  }
+  return out;
 }
 
 async function loadCaptureRecords(

@@ -2,7 +2,7 @@
 // 订阅只入队；compose 与补题在 job 里跑。测试标记的事件仍准备今日安排和补题，不刷新简报。
 // 任何档位的回访都先看教练计划是否过期，过期才唤醒 coach_daily（窗口与节流在 kernel 端口）。
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
@@ -13,7 +13,7 @@ import type {
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
 import { loadActivityTier } from '@/kernel/read-models/activity-tier';
-import { LEARNING_ACTIVITY_ACTIONS } from '@/kernel/read-models/learner-activity';
+import { learningActivitySql } from '@/kernel/read-models/learner-activity';
 import { resolveLearningDayDate } from '@/kernel/stream-date';
 import { getStartedBoss } from '@/server/boss/client';
 import { buildSeededSelectionRng } from './selection-seed';
@@ -21,16 +21,15 @@ import { composeNightly, resolveSelectionPolicy } from './stream-store';
 
 export const LEARNER_RETURN_WAKE_QUEUE = 'learner_return_wake';
 const WAKE_SINGLETON_SECONDS = 180;
-const WAKE_ACTIONS = new Set<string>(LEARNING_ACTIVITY_ACTIONS);
 
 export function buildLearnerReturnWakeSubscriber(db: Db): EventSubscriptionHandler {
   return async (delivery: EventSubscriptionDelivery): Promise<EventSubscriptionOutcome> => {
     const [row] = await db
       .select({ action: event.action })
       .from(event)
-      .where(eq(event.id, delivery.sourceEventId))
+      .where(and(eq(event.id, delivery.sourceEventId), learningActivitySql()))
       .limit(1);
-    if (!row || !WAKE_ACTIONS.has(row.action)) {
+    if (!row) {
       return { status: 'skipped', reason: 'not a learning event' };
     }
     const boss = await getStartedBoss();
@@ -52,8 +51,12 @@ export function buildLearnerReturnWakeHandler(
   return async (jobs) => {
     const eventId = jobs[0]?.data?.eventId;
     if (!eventId) return;
-    const [row] = await db.select().from(event).where(eq(event.id, eventId)).limit(1);
-    if (!row || !WAKE_ACTIONS.has(row.action)) return;
+    const [row] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.id, eventId), learningActivitySql()))
+      .limit(1);
+    if (!row) return;
 
     // The coach wake is an add-on: its failure must not cost the learner the brief refresh below.
     try {

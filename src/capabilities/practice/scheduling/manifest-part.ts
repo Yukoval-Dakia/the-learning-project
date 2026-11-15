@@ -36,7 +36,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
       },
       {
         id: 'practice.learner-return-wake',
-        version: 1,
+        version: 2,
         actions: [...LEARNING_ACTIVITY_ACTIONS],
         load: () =>
           import('./server/learner-return-wake').then((m) => m.buildLearnerReturnWakeSubscriber),

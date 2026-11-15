@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { type SQL, and, eq, sql } from 'drizzle-orm';
+import { type SQL, and, eq, inArray, sql } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { unzipSync, zipSync } from 'fflate';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -53,7 +53,7 @@ const statuses = [
   'pending',
 ] as const;
 const liveSubscriberIdentities = [
-  ['agency.curator-activity', 1],
+  ['agency.curator-activity', 2],
   ['agency.intervention-diagnostic-review-settlement', 4],
   ['agency.probe-evidence-intervention-prepare', 1],
   ['agency.probe-publication-serve', 1],
@@ -63,7 +63,7 @@ const liveSubscriberIdentities = [
   ['notes.mastery-progress-note-refine', 1],
   ['practice.failure-learning-attempt', 3],
   ['practice.learner-profile-refresh', 1],
-  ['practice.learner-return-wake', 1],
+  ['practice.learner-return-wake', 2],
   ['practice.question-admission-enqueue', 1],
   ['practice.serving-recheck', 1],
   ['practice.upload-ready', 1],
@@ -327,8 +327,8 @@ describe('YUK-766 subscription progress backup', () => {
     });
   });
 
-  // @invariant data: restore keeps seven states and discovers one shared publish event once
-  // @fails-if import the other publish subscriber's events; its delivery count exceeds eight
+  // @invariant data: restore keeps seven states and discovers every subscribed source exactly once
+  // @fails-if a restored subscriber omits a matching source or creates duplicate deliveries for it
   it('restores progress, fences old leases and preserves terminal/effect idempotency', async () => {
     const db = testDb();
     const { registry, leases, notes } = await seedProgress();
@@ -436,8 +436,13 @@ describe('YUK-766 subscription progress backup', () => {
           .select()
           .from(delivery)
           .where(eq(delivery.subscriber_id, sub.id));
-        const effectAttemptDelivery = sub.actions.includes('attempt') ? 1 : 0;
-        expect(discovered).toHaveLength(statuses.length + 1 + effectAttemptDelivery);
+        const expectedSources = await db
+          .select({ id: event.id })
+          .from(event)
+          .where(inArray(event.action, [...sub.actions]));
+        expect(discovered.map((row) => row.source_event_id).sort()).toEqual(
+          expectedSources.map((row) => row.id).sort(),
+        );
         expect(
           discovered.filter(
             (row) => row.source_event_id === fixtureSourceId(sub, 'undiscovered', counts),

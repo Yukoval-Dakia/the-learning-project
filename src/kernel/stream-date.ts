@@ -27,8 +27,8 @@ export function streamLocalDate(now: Date = new Date()): string {
  * 「今天」换成空分区——前一日 pending/in_progress 被留在旧分区、用户还要再付
  * 一次 lazy compose。改为按**学习者真实练习活动**的不活跃间隔切：
  *
- * - `loadLearnerActivityStreakStart` 只看 `actor_kind='user'` 且属
- *   `LEARNING_ACTIVITY_ACTIONS` 的事件（后台 job / 系统写入不算活动），并把
+ * - `loadLearnerActivityStreakStart` 只看共享读口确认的学习者活动
+ *   （含系统封存的真实探针答案，排除后台写入与未作答导入），并把
  *   从 `now` 往回、相邻间隔都小于 `gapMs` 的连续活动段找出来。
  * - 段还在延续（最近一次活动距 `now` < gap）→ 「今天」= 段首日所在的日历日。
  *   23:50 开始、00:10 刷新：段首日仍是前一日 → 同一 date 分区，无新 compose。

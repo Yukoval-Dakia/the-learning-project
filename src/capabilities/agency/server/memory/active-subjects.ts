@@ -4,12 +4,11 @@
 // never tag `subject:*` in affected_scopes, so an affected_scopes filter would find
 // almost nothing and regenerate an empty brief every night.
 
-import { and, desc, eq, gt, gte, inArray, like, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, like, lt, or } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
-import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import {
-  LEARNING_ACTIVITY_ACTIONS,
+  learningActivitySql,
   loadNativeAttemptOutcomes,
   resolveLearningEventSubjects,
 } from '@/kernel/read-models/learner-activity';
@@ -114,10 +113,8 @@ export async function listActiveSubjectsSinceRefresh(
       created_at: event.created_at,
     })
     .from(event)
-    .where(
-      and(inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]), gt(event.created_at, scanFloor)),
-    )
-    .orderBy(sql`${event.created_at} DESC`)) as QualifyingEventRow[];
+    .where(and(learningActivitySql(), gt(event.created_at, scanFloor)))
+    .orderBy(desc(event.created_at), desc(event.id))) as QualifyingEventRow[];
 
   if (rows.length === 0) return [];
 
@@ -227,8 +224,7 @@ async function loadSubjectWindowEvents(
       .from(event)
       .where(
         and(
-          inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]),
-          eventAllowsDerivationSql(),
+          learningActivitySql(),
           bound.from ? gte(event.created_at, bound.from) : undefined,
           bound.until ? lt(event.created_at, bound.until) : undefined,
           cursor

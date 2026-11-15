@@ -30,6 +30,9 @@ export const notesCapability = defineCapability({
     '笔记域：artifact 笔记的读（note-page 聚合 / notes-read 按知识点）、写（body-blocks 块编辑 ' +
     '乐观锁 / block-refs 反链索引）与 Living Note refine 链（triggers→policy→' +
     'mutator|propose；信号源 = mastery_change 与错因完成后的 mark_wrong）。',
+  events: {
+    actions: ['experimental:body_blocks_edit'],
+  },
   subscriptions: {
     handlers: [
       {
