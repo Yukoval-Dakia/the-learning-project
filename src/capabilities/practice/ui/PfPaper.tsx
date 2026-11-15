@@ -2118,48 +2118,34 @@ function PaperVisit({
         {/* YUK-1051 — 作答控件换组件族。§6.4 缓冲反馈：恒 feedback='none'，作答全程
             零对错色（导航 pip 只有「已答」中性墨点）；对错色只属于交卷后的 PfRetro。 */}
         {cur.assessment ? (
-          <>
-            {cur.assessment.practice_dto.response_spec.slots.map((slot) => {
-              // A slot an input block binds is drawn by the block tree above, never twice.
-              if (curBlockSlots.has(slot.slot_id)) return null;
-              const spec = nativeSlotFieldSpec(slot);
-              if (!spec) return null;
-              const entry = nativeResponses[curKey]?.entries.find(
-                (item) => item.slot_id === slot.slot_id,
-              );
-              return (
-                <ResponseSlotField
-                  key={slot.slot_id}
-                  spec={spec}
-                  value={nativeResponseValue(entry)}
-                  label={slot.placement?.label}
-                  notation={cur.question.notation}
-                  feedback="none"
-                  ariaLabel={slot.placement?.label ?? '作答'}
-                  disabled={answerLocked}
-                  onChange={(value) => {
-                    const updated: SlotResponseT = nativeResponseEntry(slot, value, entry);
-                    updateCurResponses((prev) => [
-                      ...prev.filter((item) => item.slot_id !== slot.slot_id),
-                      updated,
-                    ]);
-                  }}
-                />
-              );
-            })}
-            <EvidenceComposer
-              text=""
-              onTextChange={() => {}}
-              showText={false}
-              attachments={evidence}
-              onAttachmentsChange={onEvidenceChange}
-              disabled={answerLocked}
-              onUploadingChange={setUploading}
-              slotLabels={Object.fromEntries(
-                slots.map((slot, i) => [slotKey(slot), `第 ${i + 1} 题`]),
-              )}
-            />
-          </>
+          cur.assessment.practice_dto.response_spec.slots.map((slot) => {
+            // A slot an input block binds is drawn by the block tree above, never twice.
+            if (curBlockSlots.has(slot.slot_id)) return null;
+            const spec = nativeSlotFieldSpec(slot);
+            if (!spec) return null;
+            const entry = nativeResponses[curKey]?.entries.find(
+              (item) => item.slot_id === slot.slot_id,
+            );
+            return (
+              <ResponseSlotField
+                key={slot.slot_id}
+                spec={spec}
+                value={nativeResponseValue(entry)}
+                label={slot.placement?.label}
+                notation={cur.question.notation}
+                feedback="none"
+                ariaLabel={slot.placement?.label ?? '作答'}
+                disabled={answerLocked}
+                onChange={(value) => {
+                  const updated: SlotResponseT = nativeResponseEntry(slot, value, entry);
+                  updateCurResponses((prev) => [
+                    ...prev.filter((item) => item.slot_id !== slot.slot_id),
+                    updated,
+                  ]);
+                }}
+              />
+            );
+          })
         ) : isChoice ? (
           <ChoiceSetResponse
             options={curOptions}
@@ -2189,6 +2175,81 @@ function PaperVisit({
             ariaLabel="作答"
             slotLabels={Object.fromEntries(slots.map((s, i) => [slotKey(s), `第 ${i + 1} 题`]))}
             onUploadingChange={setUploading}
+          />
+        )}
+      </div>
+
+      <div className="pf-pp-foot" data-busy={submitting || undefined}>
+        <Button variant="secondary" disabled={pos === 0} onClick={() => goPos(pos - 1)}>
+          <ArrowLeft size={18} aria-hidden="true" />
+          上一题
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={pos === slots.length - 1}
+          onClick={() => goPos(pos + 1)}
+        >
+          下一题
+          <ArrowRight size={18} aria-hidden="true" />
+        </Button>
+        <span className="pf-pp-count">
+          已答 {answeredCount} / {slots.length}
+        </span>
+        {confirm ? (
+          <span className="pf-pp-confirm">
+            <span className="pf-pp-confirm-q">还有 {unanswered} 题空着——仍要交？</span>
+            <Button
+              variant="primary"
+              disabled={
+                !position.canEdit ||
+                !hasNativeBindings ||
+                submitting ||
+                exiting ||
+                handInBlocked ||
+                conflictNumbers.length > 0
+              }
+              onClick={() => void submitAll()}
+            >
+              <Send size={18} aria-hidden="true" />
+              {submitting ? '判分中…' : '交卷'}
+            </Button>
+            <Button variant="ghost" onClick={() => setConfirm(false)}>
+              再看看
+            </Button>
+          </span>
+        ) : (
+          <Button
+            variant="primary"
+            disabled={
+              !position.canEdit ||
+              !hasNativeBindings ||
+              submitting ||
+              exiting ||
+              handInBlocked ||
+              conflictNumbers.length > 0
+            }
+            onClick={() => (unanswered > 0 ? setConfirm(true) : void submitAll())}
+          >
+            <Send size={18} aria-hidden="true" />
+            {submitting ? '判分中…' : '交卷 · 统一判分'}
+          </Button>
+        )}
+      </div>
+
+      {/* 附件、改绑、思路与信心自评是主操作之后的辅助面，不属于作答控件本身。 */}
+      <section className="pf-pp-aux" aria-label="附件与辅助作答信息">
+        {cur.assessment && (
+          <EvidenceComposer
+            text=""
+            onTextChange={() => {}}
+            showText={false}
+            attachments={evidence}
+            onAttachmentsChange={onEvidenceChange}
+            disabled={answerLocked}
+            onUploadingChange={setUploading}
+            slotLabels={Object.fromEntries(
+              slots.map((slot, i) => [slotKey(slot), `第 ${i + 1} 题`]),
+            )}
           />
         )}
         {discarded[curKey] && (
@@ -2269,64 +2330,8 @@ function PaperVisit({
             ariaLabel={`第 ${pos + 1} 题信心自评`}
           />
         )}
-      </div>
+      </section>
 
-      <div className="pf-pp-foot" data-busy={submitting || undefined}>
-        <Button variant="secondary" disabled={pos === 0} onClick={() => goPos(pos - 1)}>
-          <ArrowLeft size={18} aria-hidden="true" />
-          上一题
-        </Button>
-        <Button
-          variant="secondary"
-          disabled={pos === slots.length - 1}
-          onClick={() => goPos(pos + 1)}
-        >
-          下一题
-          <ArrowRight size={18} aria-hidden="true" />
-        </Button>
-        <span className="pf-pp-count">
-          已答 {answeredCount} / {slots.length}
-        </span>
-        {confirm ? (
-          <span className="pf-pp-confirm">
-            <span className="pf-pp-confirm-q">还有 {unanswered} 题空着——仍要交？</span>
-            <Button
-              variant="primary"
-              disabled={
-                !position.canEdit ||
-                !hasNativeBindings ||
-                submitting ||
-                exiting ||
-                handInBlocked ||
-                conflictNumbers.length > 0
-              }
-              onClick={() => void submitAll()}
-            >
-              <Send size={18} aria-hidden="true" />
-              {submitting ? '判分中…' : '交卷'}
-            </Button>
-            <Button variant="ghost" onClick={() => setConfirm(false)}>
-              再看看
-            </Button>
-          </span>
-        ) : (
-          <Button
-            variant="primary"
-            disabled={
-              !position.canEdit ||
-              !hasNativeBindings ||
-              submitting ||
-              exiting ||
-              handInBlocked ||
-              conflictNumbers.length > 0
-            }
-            onClick={() => (unanswered > 0 ? setConfirm(true) : void submitAll())}
-          >
-            <Send size={18} aria-hidden="true" />
-            {submitting ? '判分中…' : '交卷 · 统一判分'}
-          </Button>
-        )}
-      </div>
       <div className="pf-pp-hint">
         {!hasNativeBindings
           ? '历史作答保留，当前不可提交。'

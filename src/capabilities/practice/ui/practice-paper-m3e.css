@@ -423,6 +423,15 @@
     }
   }
 
+  /* ═══ Post-primary auxiliary surface (attachments, rebinding, trace, confidence) ═══ */
+  & .pf-pp-aux {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--un-sp-3);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
   @media (max-width: 640px) {
     & .pf-pp-title {
       font-size: 22px;

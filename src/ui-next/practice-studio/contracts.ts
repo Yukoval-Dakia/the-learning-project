@@ -200,6 +200,7 @@ export interface PracticeContentProps {
   surfaces?: {
     questionBody?: ReactNode;
     answerExtras?: ReactNode;
+    reasoning?: ReactNode;
     conflict?: ReactNode;
     history?: ReactNode;
     overlays?: ReactNode;
