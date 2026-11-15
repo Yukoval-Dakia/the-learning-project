@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { randomId } from '@/ui/lib/random-id';
 import type { PaperDetail } from './practice-api';
 import { usePracticeClient } from './practice-client';
 
@@ -32,7 +33,7 @@ export function usePaperContinuation(artifactId: string, initial: PaperDetail['c
       const body = {
         task_ref: prior.task_ref,
         expected_revision: prior.revision,
-        command_id: crypto.randomUUID(),
+        command_id: randomId(),
       };
       const accepted = (ack: PaperDetail['continuation']) =>
         ack?.task_ref.session_id === prior.task_ref.session_id &&
