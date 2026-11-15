@@ -309,9 +309,7 @@ export async function resetDb() {
   } catch (error) {
     // 40P01 means another backend held the lock TRUNCATE needed; snapshot that
     // fork's activity for the pids named in the deadlock report, then rethrow.
-    if ((error as { code?: string } | null)?.code === '40P01') {
-      await reportDeadlockParticipants(error).catch(() => undefined);
-    }
+    await reportDeadlockParticipants(error).catch(() => undefined);
     throw error;
   }
 }
@@ -321,11 +319,28 @@ export async function resetDb() {
  * through a dedicated short-lived connection to THIS fork's TEST_DATABASE_URL
  * (the same env testDb() already used — not another worker's DB). Records only
  * safe metadata columns (pid/state/wait_event/lock mode) — never query text,
- * params, client address, or row data. Always resolves; a dead/wedged probe
- * returns early and never masks the original error, which the caller rethrows.
+ * params, client address, or row data. Drizzle wraps the driver PostgresError
+ * in a DrizzleQueryError whose own message embeds the SQL+params, so we unwrap
+ * the cause chain for the real code/detail and never log the outer error.
+ * Always resolves; a dead/wedged probe returns early and never masks the
+ * original outer error, which the caller rethrows unchanged.
  */
 async function reportDeadlockParticipants(error: unknown): Promise<void> {
-  const detail = (error as { detail?: string } | null)?.detail;
+  // Walk the cause chain: db.execute throws DrizzleQueryError{query,params,
+  // cause} — the code/detail live only on the inner PostgresError.
+  let node: unknown = error;
+  let detail: string | undefined;
+  let isDeadlock = false;
+  for (let depth = 0; depth < 8 && node !== null && node !== undefined; depth += 1) {
+    const rec = node as { code?: unknown; detail?: unknown; cause?: unknown };
+    if (rec.code === '40P01') {
+      isDeadlock = true;
+      if (typeof rec.detail === 'string') detail = rec.detail;
+      break;
+    }
+    node = rec.cause;
+  }
+  if (!isDeadlock) return;
   // Postgres prints "Process <pid> waits for ..." per participant — these are
   // the real lock parties, not pg_blocking_pids(our own backend).
   const pids = [...(detail ?? '').matchAll(/Process (\d+) waits for/g)].map((m) => Number(m[1]));
