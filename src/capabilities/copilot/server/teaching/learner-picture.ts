@@ -63,6 +63,8 @@ export async function loadTeachingLearnerPicture(
         return [{ answer_excerpt: answer.slice(0, 400), at: failure.created_at.toISOString() }];
       })
       .slice(0, 2),
-    active_misconceptions: confirmedMisconceptions.slice(0, 5).map((row) => row.title.slice(0, 120)),
+    active_misconceptions: confirmedMisconceptions
+      .slice(0, 5)
+      .map((row) => row.title.slice(0, 120)),
   };
 }
