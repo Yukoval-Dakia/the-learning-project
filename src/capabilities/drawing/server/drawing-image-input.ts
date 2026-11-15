@@ -38,6 +38,7 @@ export class DrawingImageInputError extends Error {
 export async function readDrawingImageManifest(
   db: Db | Tx,
   source: ImageSource,
+  requireCurrentDraft = true,
 ): Promise<DrawingImageManifestEntry[]> {
   const [ask] = source.source_event_id
     ? await db.select().from(event).where(eq(event.id, source.source_event_id))
@@ -75,15 +76,17 @@ export async function readDrawingImageManifest(
         db,
         { issuanceId: focus.issuance_id, questionId: focus.question_id },
         async (tx, { issuance: issued, revision }, binding, sources, sourceEpochs) => {
-          // The outer publish transaction retains this lock through asset/ready commit.
-          const [draft] = await tx
-            .select({ save_epoch: assessment_response_draft.save_epoch })
-            .from(assessment_response_draft)
-            .where(eq(assessment_response_draft.issuance_id, focus.issuance_id))
-            .for('share');
+          if (requireCurrentDraft) {
+            // Freshness fences generation; published figures outlive subsequent answer edits.
+            const [draft] = await tx
+              .select({ save_epoch: assessment_response_draft.save_epoch })
+              .from(assessment_response_draft)
+              .where(eq(assessment_response_draft.issuance_id, focus.issuance_id))
+              .for('share');
+            if (draft?.save_epoch !== focus.save_epoch) throw new DrawingImageInputError();
+          }
           if (
             revision.revision_id !== focus.revision_id ||
-            draft?.save_epoch !== focus.save_epoch ||
             grant.binding_digest !== binding ||
             grant.source_digest !== sources ||
             grant.source_usage_epochs === undefined ||

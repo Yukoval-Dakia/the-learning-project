@@ -609,7 +609,8 @@ describe('drawing_generate handler invariants', () => {
 
   // @invariant security: only verified public figures from the accepted issued
   // revision can leave the worker; private and mutable attachments never do.
-  // @fails-if an unbound/corrupt figure is sent or an edited request publishes.
+  // @fails-if an unbound/corrupt figure is sent, an edited request publishes,
+  // or later answer edits revoke a published figure with unchanged sources.
   it.each([
     'verified',
     'corrupt',
@@ -834,6 +835,22 @@ describe('drawing_generate handler invariants', () => {
     expect(run.input_hash).toBe(
       taskInputHash({ text, images: [{ data, mediaType: 'image/png' }] }),
     );
+    await db
+      .update(assessment_response_draft)
+      .set({ save_epoch: 2 })
+      .where(eq(assessment_response_draft.issuance_id, issuanceId));
+    expect(await readDrawingStatus(db, stored.id, session)).toMatchObject({ status: 'ready' });
+    expect(await readDrawingAsset(db, stored.id, session)).toMatchObject({
+      asset_id: stored.last_ready_asset_id,
+    });
+    expect(await redrawDrawing(db, stored.id, session)).toMatchObject({ status: 'refused' });
+    await db
+      .delete(assessment_response_draft)
+      .where(eq(assessment_response_draft.issuance_id, issuanceId));
+    expect(await readDrawingStatus(db, stored.id, session)).toMatchObject({ status: 'ready' });
+    expect(await readDrawingAsset(db, stored.id, session)).toMatchObject({
+      asset_id: stored.last_ready_asset_id,
+    });
     await deleteImageAsset(db, r2, asset.asset_id);
     expect(await readDrawingStatus(db, stored.id, session)).toMatchObject({
       status: 'expired',

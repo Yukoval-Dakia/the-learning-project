@@ -32,7 +32,11 @@ import {
 import type { DrawingBlockIssue, DrawingRequestOutcome } from '@/kernel/tools/drawing-request';
 import type { TurnSourceLedger } from '@/kernel/tools/source-ledger';
 import { getStartedBoss } from '@/server/boss/client';
-import { DrawingImageInputError, readDrawingImageManifest } from './drawing-image-input';
+import {
+  DrawingImageInputError,
+  loadDrawingImageBytes,
+  readDrawingImageManifest,
+} from './drawing-image-input';
 import {
   DRAWING_EXPIRABLE_STATUSES,
   DRAWING_LIVE_STATUSES,
@@ -143,6 +147,7 @@ export async function drawingSourcesAuthorized(
   >,
   options: {
     lockSources?: boolean;
+    requireCurrentDraft?: boolean;
     verifyImageBytes?: (
       manifest: Awaited<ReturnType<typeof readDrawingImageManifest>>,
     ) => Promise<unknown>;
@@ -150,7 +155,7 @@ export async function drawingSourcesAuthorized(
 ): Promise<boolean> {
   try {
     // Study's root/source/issuance locks precede additional turn-ledger locks.
-    const manifest = await readDrawingImageManifest(db, row);
+    const manifest = await readDrawingImageManifest(db, row, options.requireCurrentDraft ?? true);
     if (options.lockSources) {
       await db.transaction(async (tx) => {
         for (const source of row.sources) await lockDerivationSources(tx, source);
@@ -492,7 +497,16 @@ async function fenceExpiry(db: Db, row: DrawingRow): Promise<DrawingRow> {
  */
 async function fenceSourceAndEpoch(db: Db, row: DrawingRow): Promise<DrawingRow> {
   if (row.status === 'expired') return row;
-  if (await drawingSourcesAuthorized(db, row)) return row;
+  if (
+    await drawingSourcesAuthorized(db, row, {
+      requireCurrentDraft: false,
+      verifyImageBytes: async (manifest) => {
+        if (row.status === 'ready') await loadDrawingImageBytes(db, manifest);
+      },
+    })
+  ) {
+    return row;
+  }
   const [updated] = await db
     .update(drawing)
     .set({
