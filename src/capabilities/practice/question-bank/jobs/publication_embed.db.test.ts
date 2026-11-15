@@ -1,8 +1,13 @@
-import { eq, sql } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { computePaidEffectIdentity } from '@/core/paid-work/protocol/paid-effect-protocol';
-import { voidPaidEffectWithSuccessor } from '@/core/paid-work/server/paid-effect-store';
+import {
+  readPaidEffectAuthorizations,
+  voidPaidEffectWithSuccessor,
+} from '@/core/paid-work/server/paid-effect-store';
 import { db } from '@/db/client';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { paid_effect, question } from '@/db/schema';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { EMBED_DIMS, EmbeddingRequestNotSentError, type embedMany } from '@/server/ai/embed';
@@ -230,76 +235,261 @@ it.each(['credentials', 'source', 'purpose', 'abort'] as const)(
   },
 );
 
-// @invariant concurrency: an expired claimed send becomes a visible unknown obligation and an explicitly retired fence cannot apply a late response.
-// @fails-if expiry authorizes another send, nightly reports held work as complete, or a late old delivery lands after sanctioned recovery.
-it('reconciles an abandoned send lease and fences its late response after explicit recovery', async () => {
-  const id = 'abandoned-embedding';
-  const data = await publish(id);
-  const attempt = {
-    db,
-    caller: 'worker' as const,
-    deadlineAt: new Date(Date.now() + 20_000),
-    operationAnchor: id,
-  };
-  let entered!: () => void;
-  let release!: (vectors: number[][]) => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const response = new Promise<number[][]>((resolve) => {
-    release = resolve;
-  });
-  let sends = 0;
-  const provider: typeof embedMany = async (_texts, options) => {
-    await options?.beforeSend?.();
-    sends += 1;
-    entered();
-    return response;
-  };
-  const running = runPublicationEmbed(db, data, attempt, provider).then(
-    () => null,
-    (error: unknown) => error,
-  );
-  await started;
-  await db
-    .update(paid_effect)
-    .set({ send_lease_expires_at: new Date(0) })
-    .where(eq(paid_effect.entity_id, id));
-  await expect(runPublicationEmbed(db, data, attempt, provider)).rejects.toThrow('reconciliation');
-  const [expired] = await db.select().from(paid_effect).where(eq(paid_effect.entity_id, id));
-  expect(expired.state).toBe('unknown');
-  expect(expired.unresolved_reason).toBe('send_lease_expired');
-  await expect(runEmbedBackfill(db, 1, attempt, provider)).rejects.toThrow('held paid obligations');
-  expect(sends).toBe(1);
-  const identity = computePaidEffectIdentity({
-    family: expired.family,
-    entityId: id,
-    entityRevision: expired.entity_revision,
-    unit: expired.unit,
-    input: expired.input_json,
-  });
-  await db.transaction((tx) =>
-    voidPaidEffectWithSuccessor(tx, identity, {
-      expectedFence: expired.fence,
-      authorization: {
-        authorizationId: 'embedding-expiry-recovery',
-        reason: 'test explicit reconciliation',
-        operator: 'test:operator',
-        basis: 'test:approved-recovery',
-        successorInput: {
-          family: expired.family,
-          entityId: id,
-          entityRevision: expired.entity_revision,
-          unit: expired.unit,
-          input: { previous_input: expired.input_json, recovery: 'explicit' },
+// @invariant concurrency: an expired send stays held until an exact bound operator successor continues; old receipts and fences remain immutable.
+// @fails-if drifted input or another delivery buys a vector, accepted receipts are repaid, or the retired writer applies a late response.
+it.each(['continuation', 'not_sent', 'source_changed', 'drifted', 'legacy_wrapper'] as const)(
+  'continues only the authorized embedding recovery: %s',
+  async (recovery) => {
+    const id = 'abandoned-embedding';
+    const data = await publish(id);
+    const attempt = {
+      db,
+      caller: 'worker' as const,
+      deadlineAt: new Date(Date.now() + 20_000),
+      operationAnchor: id,
+    };
+    let entered!: () => void;
+    let release!: (vectors: number[][]) => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const response = new Promise<number[][]>((resolve) => {
+      release = resolve;
+    });
+    let sends = 0;
+    const provider: typeof embedMany = async (_texts, options) => {
+      await options?.beforeSend?.();
+      sends += 1;
+      entered();
+      return response;
+    };
+    const running = runPublicationEmbed(db, data, attempt, provider).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await started;
+    await db
+      .update(paid_effect)
+      .set({ send_lease_expires_at: new Date(0) })
+      .where(eq(paid_effect.entity_id, id));
+    await expect(runPublicationEmbed(db, data, attempt, provider)).rejects.toThrow(
+      'reconciliation',
+    );
+    const [expired] = await db.select().from(paid_effect).where(eq(paid_effect.entity_id, id));
+    expect(expired.state).toBe('unknown');
+    expect(expired.unresolved_reason).toBe('send_lease_expired');
+    await expect(runEmbedBackfill(db, 1, attempt, provider)).rejects.toThrow(
+      'held paid obligations',
+    );
+    expect(sends).toBe(1);
+    const identity = computePaidEffectIdentity({
+      family: expired.family,
+      entityId: id,
+      entityRevision: expired.entity_revision,
+      unit: expired.unit,
+      input: expired.input_json,
+    });
+    const successorInput = {
+      family: expired.family,
+      entityId: id,
+      entityRevision: expired.entity_revision,
+      unit: expired.unit,
+      input:
+        recovery === 'legacy_wrapper'
+          ? { previous_input: expired.input_json, recovery: 'explicit' }
+          : {
+              ...(expired.input_json as object),
+              recovery: 'explicit',
+              ...(recovery === 'drifted' ? { model: 'unapproved-model' } : {}),
+            },
+    };
+    const successorIdentity = computePaidEffectIdentity(successorInput);
+    const deliveryId = randomUUID();
+    // The generic operator API and pg-boss share one transaction, just as the
+    // production admission recovery does; this is the delivery the worker sees.
+    await db.transaction(async (tx) => {
+      const queued = await boss.send(PUBLICATION_EMBED_JOB, data, {
+        id: deliveryId,
+        db: fromPgBossDrizzleTx(tx),
+      });
+      if (!queued) throw new Error('recovery job was not inserted');
+      await voidPaidEffectWithSuccessor(tx, identity, {
+        expectedFence: expired.fence,
+        authorization: {
+          authorizationId: 'embedding-expiry-recovery',
+          reason: 'explicit reconciliation of the abandoned send',
+          operator: 'test:operator',
+          basis: 'test:approved-recovery',
+          successorInput,
+          successorDelivery: { backend: 'pg-boss', deliveryId },
         },
-        successorDelivery: { backend: 'pg-boss', deliveryId: 'authorized-successor' },
-      },
-    }),
-  );
-  release([Array(EMBED_DIMS).fill(0.5)]);
-  expect(await running).toBeInstanceOf(Error);
-  const [row] = await db.select().from(question).where(eq(question.id, id));
-  expect(row.embedding).toBeNull();
-  expect(sends).toBe(1);
-});
+      });
+    });
+    const oldWhere = and(
+      eq(paid_effect.entity_id, id),
+      eq(paid_effect.input_digest, identity.inputDigest),
+    );
+    const successorWhere = and(
+      eq(paid_effect.entity_id, id),
+      eq(paid_effect.input_digest, successorIdentity.inputDigest),
+    );
+    const [retired] = await db.select().from(paid_effect).where(oldWhere);
+    release([Array(EMBED_DIMS).fill(0.5)]);
+    expect(await running).toBeInstanceOf(Error);
+    const [afterLate] = await db.select().from(paid_effect).where(oldWhere);
+    expect(afterLate).toEqual(retired);
+    const [row] = await db.select().from(question).where(eq(question.id, id));
+    expect(row.embedding).toBeNull();
+    const [bound] = await boss.fetch<PublicationEmbedJobData>(PUBLICATION_EMBED_JOB);
+    if (!bound) throw new Error('bound recovery delivery missing');
+    expect(bound.id).toBe(deliveryId);
+    const boundAttempt = { ...attempt, operationAnchor: bound.id };
+    const recoveredProvider: typeof embedMany = async (_texts, options) => {
+      await options?.beforeSend?.();
+      sends += 1;
+      return [Array(EMBED_DIMS).fill(0.75)];
+    };
+    if (recovery === 'drifted' || recovery === 'legacy_wrapper') {
+      await expect(
+        runPublicationEmbed(db, bound.data, boundAttempt, recoveredProvider),
+      ).rejects.toThrow('reconciliation');
+      const [held] = await db.select().from(paid_effect).where(successorWhere);
+      expect(held.state).toBe('pending');
+      expect(sends).toBe(1);
+      return;
+    }
+    await boss.send(PUBLICATION_EMBED_JOB, data, { id: randomUUID() });
+    const [other] = await boss.fetch<PublicationEmbedJobData>(PUBLICATION_EMBED_JOB);
+    if (!other) throw new Error('other recovery delivery missing');
+    const otherAttempt = { ...attempt, operationAnchor: other.id };
+    await expect(
+      runPublicationEmbed(db, other.data, otherAttempt, recoveredProvider),
+    ).rejects.toThrow('reconciliation');
+    expect(sends).toBe(1);
+    if (recovery === 'not_sent') {
+      const refused: typeof embedMany = async (_texts, options) => {
+        await options?.beforeSend?.();
+        throw new EmbeddingRequestNotSentError('send_not_authorized');
+      };
+      await expect(runPublicationEmbed(db, bound.data, boundAttempt, refused)).rejects.toThrow(
+        'send_not_authorized',
+      );
+      const [notSent] = await db.select().from(paid_effect).where(successorWhere);
+      expect(notSent.state).toBe('applied');
+      expect(notSent.result_json).toMatchObject({ status: 'not_sent' });
+      expect(await runPublicationEmbed(db, other.data, otherAttempt, recoveredProvider)).toBe(
+        'embedded',
+      );
+      const [retry] = await db
+        .select()
+        .from(paid_effect)
+        .where(
+          and(
+            eq(paid_effect.entity_id, id),
+            sql`${paid_effect.input_json}->>'not_sent_attempt' = '1'`,
+          ),
+        );
+      expect(retry.state).toBe('applied');
+      expect(retry.input_json).toEqual({
+        ...(successorInput.input as object),
+        not_sent_attempt: 1,
+      });
+      const [afterRetry] = await db.select().from(paid_effect).where(oldWhere);
+      expect(afterRetry).toEqual(retired);
+      expect(sends).toBe(2);
+      return;
+    }
+    if (recovery === 'source_changed') {
+      await db.execute(sql`create function change_recovered_source() returns trigger language plpgsql as $$
+        begin
+          if old.state = 'sending' and new.state = 'receipt_ready' and new.entity_id = 'abandoned-embedding' then
+            update question set prompt_md = 'Changed after authorized send', version = version + 1 where id = new.entity_id;
+          end if;
+          return new;
+        end $$`);
+      await db.execute(sql`create trigger change_recovered_source after update on paid_effect
+        for each row execute function change_recovered_source()`);
+      try {
+        expect(await runPublicationEmbed(db, bound.data, boundAttempt, recoveredProvider)).toBe(
+          'skipped',
+        );
+      } finally {
+        await db.execute(sql`drop trigger change_recovered_source on paid_effect`);
+        await db.execute(sql`drop function change_recovered_source()`);
+      }
+      const [changed] = await db.select().from(question).where(eq(question.id, id));
+      expect(changed.embedding).toBeNull();
+      expect(sends).toBe(2);
+      const current = await publishQuestionGroupFromRow(db, {
+        rootId: id,
+        actorRef: 'test:recovery-republish',
+        now: new Date(),
+        admission: ADMITTED,
+      });
+      if (current.status !== 'published')
+        throw new Error('changed recovery source did not publish');
+      await enqueuePublicationEmbed(db, {
+        subscriberId: 'practice.question-publication-embed',
+        subscriberVersion: 1,
+        deliverySeq: '2',
+        sourceEventId: current.event_id,
+      });
+      const [next] = await boss.fetch<PublicationEmbedJobData>(PUBLICATION_EMBED_JOB);
+      if (!next) throw new Error('current revision delivery missing');
+      expect(
+        await runPublicationEmbed(
+          db,
+          next.data,
+          { ...attempt, operationAnchor: next.id },
+          recoveredProvider,
+        ),
+      ).toBe('embedded');
+      expect(sends).toBe(3);
+      const [afterCurrent] = await db.select().from(paid_effect).where(oldWhere);
+      expect(afterCurrent).toEqual(retired);
+      return;
+    }
+    await db.execute(sql`create function fail_recovered_embed() returns trigger language plpgsql as $$
+      begin if new.embedding is not null then raise exception 'application unavailable'; end if; return new; end $$`);
+    await db.execute(sql`create trigger fail_recovered_embed before update on question
+      for each row execute function fail_recovered_embed()`);
+    try {
+      await expect(
+        runPublicationEmbed(db, bound.data, boundAttempt, recoveredProvider),
+      ).rejects.toThrow('application unavailable');
+      const [saved] = await db.select().from(paid_effect).where(successorWhere);
+      expect(saved.state).toBe('receipt_ready');
+      expect(saved.input_json).toEqual(successorInput.input);
+    } finally {
+      await db.execute(sql`drop trigger fail_recovered_embed on question`);
+      await db.execute(sql`drop function fail_recovered_embed()`);
+    }
+    expect(await runPublicationEmbed(db, other.data, otherAttempt, recoveredProvider)).toBe(
+      'embedded',
+    );
+    expect(await runPublicationEmbed(db, bound.data, boundAttempt, recoveredProvider)).toBe(
+      'skipped',
+    );
+    const [embedded] = await db.select().from(question).where(eq(question.id, id));
+    expect(embedded.embedding?.[0]).toBe(0.75);
+    expect(
+      questionVectorInvalidReason({ ...embedded, dimension: embedded.embedding?.length ?? null }),
+    ).toBeNull();
+    const [applied] = await db.select().from(paid_effect).where(successorWhere);
+    expect(applied.state).toBe('applied');
+    await db.update(question).set({ embedding: null }).where(eq(question.id, id));
+    expect(await runPublicationEmbed(db, other.data, otherAttempt, recoveredProvider)).toBe(
+      'embedded',
+    );
+    const [replayed] = await db.select().from(paid_effect).where(successorWhere);
+    expect(replayed).toEqual(applied);
+    const [authorization] = await readPaidEffectAuthorizations(db, {
+      family: expired.family,
+      entityId: id,
+    });
+    expect(authorization.consumed_delivery_id).toBe(bound.id);
+    const [afterRecovery] = await db.select().from(paid_effect).where(oldWhere);
+    expect(afterRecovery).toEqual(retired);
+    expect(sends).toBe(2);
+  },
+);

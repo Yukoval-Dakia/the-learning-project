@@ -13,12 +13,17 @@ import {
   knowledgeEmbedText,
   questionEmbedText,
 } from '@/core/embed-source';
-import { computePaidEffectIdentity } from '@/core/paid-work/protocol/paid-effect-protocol';
+import {
+  PAID_EFFECT_AUTHORIZATION_OPEN_STATES,
+  type PaidEffectInput,
+  computePaidEffectIdentity,
+} from '@/core/paid-work/protocol/paid-effect-protocol';
 import { lockPaidEffectControlFamily } from '@/core/paid-work/server/paid-effect-control';
 import {
   admitPaidEffectIntent,
   markPaidEffectUnknown,
   readPaidEffect,
+  readPaidEffectAuthorizations,
   recordPaidEffectApplication,
   recordPaidEffectResult,
   reservePaidEffect,
@@ -26,7 +31,7 @@ import {
 } from '@/core/paid-work/server/paid-effect-store';
 import type { Db } from '@/db/client';
 import { isEmbedRevisionCurrent } from '@/db/embed-currency';
-import { knowledge, question, question_group_lifecycle } from '@/db/schema';
+import { knowledge, paid_effect, question, question_group_lifecycle } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 import {
@@ -162,29 +167,138 @@ export async function runQuestionEmbedding(
   };
   const prepared = await db.transaction(async (tx) => {
     await lockPaidEffectControlFamily(tx, 'embed_backfill');
-    // Like source-verify rechecks, only a proven not_sent terminal receipt may
-    // advance the attempt coordinate. Frozen receipts and unknowns never reopen.
-    for (let notSentAttempt = 0; ; notSentAttempt += 1) {
-      const input = {
-        family: 'embed_backfill',
-        entityId: row.id,
-        entityRevision: String(row.version),
-        unit: 'question_embedding',
-        input:
-          notSentAttempt === 0 ? baseInput : { ...baseInput, not_sent_attempt: notSentAttempt },
+    const authorizations = await readPaidEffectAuthorizations(tx, {
+      family: 'embed_backfill',
+      entityId: row.id,
+    });
+    const semanticInput = (value: unknown): value is Record<string, unknown> => {
+      if (value == null || typeof value !== 'object' || Array.isArray(value)) return false;
+      const input = value as Record<string, unknown>;
+      return (
+        input.text === baseInput.text &&
+        input.model === baseInput.model &&
+        input.embed_version === baseInput.embed_version &&
+        input.dimensions === baseInput.dimensions &&
+        (input.not_sent_attempt === undefined ||
+          (typeof input.not_sent_attempt === 'number' &&
+            Number.isSafeInteger(input.not_sent_attempt) &&
+            input.not_sent_attempt >= 0))
+      );
+    };
+    const successors = new Map<string, PaidEffectInput>();
+    for (const auth of authorizations) {
+      const identity = {
+        family: auth.family,
+        entityId: auth.entity_id,
+        entityRevision: auth.successor_entity_revision,
+        unit: auth.successor_unit,
+        inputDigest: auth.successor_input_digest,
       };
-      await admitPaidEffectIntent(tx, input);
-      const identity = computePaidEffectIdentity(input);
       const snapshot = await readPaidEffect(tx, identity);
-      if (!snapshot) throw new Error('question embedding intent missing');
+      if (!snapshot) return null;
+      const [stored] = await tx
+        .select({ input: paid_effect.input_json })
+        .from(paid_effect)
+        .where(
+          and(
+            eq(paid_effect.family, identity.family),
+            eq(paid_effect.entity_id, identity.entityId),
+            eq(paid_effect.entity_revision, identity.entityRevision),
+            eq(paid_effect.unit, identity.unit),
+            eq(paid_effect.input_digest, identity.inputDigest),
+          ),
+        );
+      const input: PaidEffectInput = {
+        family: identity.family,
+        entityId: identity.entityId,
+        entityRevision: identity.entityRevision,
+        unit: identity.unit,
+        input: stored?.input,
+      };
       if (
-        snapshot.state === 'applied' &&
-        (snapshot.result as { status?: string } | null)?.status === 'not_sent'
-      )
+        auth.successor_delivery_backend !== 'pg-boss' ||
+        identity.entityRevision !== String(row.version) ||
+        identity.unit !== 'question_embedding' ||
+        !semanticInput(input.input) ||
+        computePaidEffectIdentity(input).inputDigest !== identity.inputDigest
+      ) {
+        if (PAID_EFFECT_AUTHORIZATION_OPEN_STATES.some((state) => state === snapshot.state))
+          return null;
         continue;
-      return { input, identity, snapshot };
+      }
+      // Preserve the entire authorized envelope, including opaque operator audit
+      // metadata. It is never rebuilt with a new digest or unwrapped as provider text.
+      successors.set(identity.inputDigest, input);
     }
+    const resolve = async (initial: PaidEffectInput) => {
+      let input = initial;
+      const visited = new Set<string>();
+      for (;;) {
+        const identity = computePaidEffectIdentity(input);
+        if (visited.has(identity.inputDigest)) return null;
+        visited.add(identity.inputDigest);
+        await admitPaidEffectIntent(tx, input);
+        const snapshot = await readPaidEffect(tx, identity);
+        if (!snapshot) throw new Error('question embedding intent missing');
+        if (snapshot.state === 'voided') {
+          const auth = authorizations.find(
+            (authorization) =>
+              authorization.entity_revision === identity.entityRevision &&
+              authorization.unit === identity.unit &&
+              authorization.input_digest === identity.inputDigest,
+          );
+          const successor = auth && successors.get(auth.successor_input_digest);
+          if (!successor) return null;
+          input = successor;
+          continue;
+        }
+        if (
+          snapshot.state === 'applied' &&
+          (snapshot.result as { status?: string } | null)?.status === 'not_sent'
+        ) {
+          if (!semanticInput(input.input)) return null;
+          const attempt = Number(input.input.not_sent_attempt ?? 0) + 1;
+          if (!Number.isSafeInteger(attempt)) return null;
+          input = { ...input, input: { ...input.input, not_sent_attempt: attempt } };
+          continue;
+        }
+        if (snapshot.state === 'pending') {
+          const binding = authorizations.find(
+            (auth) =>
+              auth.successor_entity_revision === identity.entityRevision &&
+              auth.successor_unit === identity.unit &&
+              auth.successor_input_digest === identity.inputDigest,
+          );
+          if (
+            binding &&
+            (providerAttempt.operationAnchor === undefined ||
+              binding.successor_delivery_id !== providerAttempt.operationAnchor)
+          )
+            return null;
+        }
+        return { input, identity, snapshot };
+      }
+    };
+    const initial: PaidEffectInput = {
+      family: 'embed_backfill',
+      entityId: row.id,
+      entityRevision: String(row.version),
+      unit: 'question_embedding',
+      input: baseInput,
+    };
+    // Retain accepted targets after their authorization closes: a later delivery
+    // must replay their receipt, or continue their proven no-send retry chain.
+    const candidates = successors.size > 0 ? [...successors.values()] : [initial];
+    let accepted: Awaited<ReturnType<typeof resolve>> = null;
+    for (const candidate of candidates) {
+      const target = await resolve(candidate);
+      if (!target || (accepted && accepted.identity.inputDigest !== target.identity.inputDigest))
+        return null;
+      accepted = target;
+    }
+    return accepted;
   });
+  if (!prepared) return 'held';
   const effect = { identity: prepared.identity };
   let expectedFence = prepared.snapshot.fence;
   if (['sending', 'unknown', 'voided', 'cancelled'].includes(prepared.snapshot.state))
