@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Check, ChevronDown, CircleAlert, Eye, Layers, RefreshCw, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 
+import type { DraftFocusT } from '@/core/schema/assessment/draft-focus';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 
 import {
@@ -91,6 +92,7 @@ function HintLadderReady({
   onReturnToAnswer,
   issuanceId,
   submitted = false,
+  readSavedDraft,
   onStageReached,
   onFullSolutionRevealed,
   requestFullSolution,
@@ -100,6 +102,7 @@ function HintLadderReady({
   onRefresh: () => void;
   question: QuestionDetail;
   submitted?: boolean;
+  readSavedDraft?: () => DraftFocusT | undefined;
   onReturnToAnswer?: () => void;
   // YUK-1051 (D16) — 提示/揭示证据必须绑定 issuance 并在服务端留痕；服务端契约是
   // YUK-1052 lane。接缝：宿主传入 issuanceId + 回调后，每阶提示的抵达与完整解的揭示
@@ -169,6 +172,7 @@ function HintLadderReady({
     setUnavailable(null);
     setFullError(null);
     try {
+      const draftFocus = submitted ? undefined : readSavedDraft?.();
       let sid = sessionId;
       if (!sid) {
         sid = (await solveStart(question.id, issuanceId ?? undefined)).session_id;
@@ -180,6 +184,7 @@ function HintLadderReady({
         targetIdx,
         issuanceId ?? undefined,
         crypto.randomUUID(),
+        draftFocus,
       );
       // YUK-1409 — unavailable：这一阶没给出任何帮助 → 不算用掉这一阶，停在原位可重试/跳过。
       if ('status' in h && h.status === 'unavailable') {

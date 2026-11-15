@@ -1,12 +1,16 @@
 import { and, desc, eq, ne, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { type HelpProviderFault, isHelpProviderFault } from '@/ai/help-provider-fault';
 import { canonicalHash } from '@/core/migration/canonical';
+import { DraftFocus, type DraftFocusT } from '@/core/schema/assessment/draft-focus';
+import { ResponseSet, SlotResponse } from '@/core/schema/assessment/response';
 import { HintPublication, type HintPublicationT } from '@/core/schema/event/assistance-publication';
 import type { Db, Tx } from '@/db/client';
 import { assessment_issuance, event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { issuanceRowToContract } from './assessment-issuance';
+import { readFocusedSavedDraft } from './current-draft';
 import { loadIssuanceStudyCoordinate, recordStudyAssistanceExposure } from './study-reference';
 import { lockStudySources, studyMaterialAssetIds } from './study-sources';
 
@@ -14,6 +18,105 @@ type Coordinate = { issuanceId: string; questionId: string };
 export type StoredHint = { id: string; publication: HintPublicationT };
 const claimId = (input: Coordinate, rung: number) => `hint-claim:${input.issuanceId}:${rung}`;
 const exposureId = (input: Coordinate, rung: number) => `hint-body:${input.issuanceId}:${rung}`;
+
+const FrozenHintDraftSchema = z.object({
+  learner_ref: z.literal('user:self'),
+  focus: DraftFocus,
+  container_occurrence_ref: z.string().nullable(),
+  part_ids: z.array(z.string()),
+  response_digest: z.string().regex(/^[0-9a-f]{64}$/),
+  entries: z
+    .array(SlotResponse)
+    .max(20)
+    .transform((entries) =>
+      entries.map((entry) => {
+        const { self_confidence: _selfConfidence, ...response } = entry;
+        if (response.kind !== 'open') return response;
+        const { evidence: _evidence, ...text } = response;
+        return text;
+      }),
+    ),
+  attachments_omitted: z.literal(true),
+});
+export type FrozenHintDraft = z.infer<typeof FrozenHintDraftSchema>;
+type StudyCoordinate = Extract<
+  Awaited<ReturnType<typeof loadIssuanceStudyCoordinate>>,
+  { status: 'assistable' }
+>;
+
+function assertDraftCoordinate(
+  input: Coordinate,
+  coordinate: StudyCoordinate,
+  focus: DraftFocusT,
+  frozen?: FrozenHintDraft,
+) {
+  if (
+    focus.question_id !== input.questionId ||
+    focus.issuance_id !== input.issuanceId ||
+    focus.revision_id !== coordinate.revision.revision_id ||
+    (frozen &&
+      (frozen.container_occurrence_ref !== coordinate.issuance.container_occurrence_ref ||
+        canonicalHash(frozen.part_ids) !== canonicalHash(coordinate.issuance.part_ids)))
+  )
+    throw new ApiError('draft_focus_stale', 'saved draft coordinate differs', 409);
+}
+
+function readClaimDraft(payload: Record<string, unknown>): FrozenHintDraft | undefined {
+  const { input_digest, ...identity } = payload;
+  if (canonicalHash(identity) !== input_digest)
+    throw new ApiError('hint_request_conflict', 'saved hint request identity differs', 409);
+  if (!('draft_snapshot' in identity)) return undefined;
+  const parsed = FrozenHintDraftSchema.safeParse(identity.draft_snapshot);
+  if (
+    !parsed.success ||
+    canonicalHash(parsed.data) !== canonicalHash(identity.draft_snapshot) ||
+    Buffer.byteLength(JSON.stringify(parsed.data.entries)) > 8192
+  )
+    throw new ApiError('hint_request_conflict', 'saved hint draft cannot be verified', 409);
+  return parsed.data;
+}
+
+async function freezeHintDraft(
+  tx: Tx,
+  input: Coordinate,
+  coordinate: StudyCoordinate,
+  focus: DraftFocusT,
+): Promise<FrozenHintDraft> {
+  assertDraftCoordinate(input, coordinate, focus);
+  const draft = await readFocusedSavedDraft(tx, focus);
+  const responses = ResponseSet.safeParse(draft.response_set);
+  const issuedSlots = coordinate.revision.response_spec.slots.filter((slot) =>
+    coordinate.issuance.part_ids.includes(slot.part_id),
+  );
+  const allowed = new Set(issuedSlots.map((slot) => slot.slot_id));
+  if (
+    !responses.success ||
+    responses.data.entries.some((entry) => !allowed.has(entry.slot_id)) ||
+    new Set(responses.data.entries.map((entry) => entry.slot_id)).size !==
+      responses.data.entries.length
+  )
+    throw new ApiError('draft_unsupported', 'saved draft is outside the issued slots', 409);
+  const focusedSlots = new Set(
+    issuedSlots
+      .filter(
+        (slot) =>
+          input.questionId === coordinate.revision.group_id || slot.part_id === input.questionId,
+      )
+      .map((slot) => slot.slot_id),
+  );
+  const snapshot = FrozenHintDraftSchema.safeParse({
+    learner_ref: 'user:self',
+    focus,
+    container_occurrence_ref: coordinate.issuance.container_occurrence_ref,
+    part_ids: coordinate.issuance.part_ids,
+    response_digest: canonicalHash(draft.response_set),
+    entries: responses.data.entries.filter((entry) => focusedSlots.has(entry.slot_id)),
+    attachments_omitted: true,
+  });
+  if (!snapshot.success || Buffer.byteLength(JSON.stringify(snapshot.data.entries)) > 8192)
+    throw new ApiError('draft_unsupported', 'saved draft exceeds the text boundary', 409);
+  return snapshot.data;
+}
 
 /** Root/source rows precede issuance; this operation never acquires an evaluation-group lock. */
 export async function withStudyAuthorization<T>(
@@ -53,6 +156,7 @@ export async function withStudyAuthorization<T>(
       .for('update');
     if (
       !issuance ||
+      issuance.container_occurrence_ref !== loaded.issuance.container_occurrence_ref ||
       canonicalHash(issuanceRowToContract(issuance).binding) !==
         canonicalHash(issuanceRowToContract(loaded.issuance).binding)
     ) {
@@ -204,7 +308,7 @@ export async function restoreIssuedHints(db: Db, input: Coordinate) {
 
 export async function claimIssuedHint(
   db: Db,
-  input: Coordinate & { rung: number; requestId: string },
+  input: Coordinate & { rung: number; requestId: string; draftFocus?: DraftFocusT },
 ) {
   if (!Number.isInteger(input.rung) || input.rung < 0 || input.rung > 4)
     throw new ApiError('hint_rung_invalid', 'only the next hint may be requested', 409);
@@ -228,13 +332,29 @@ export async function claimIssuedHint(
         409,
       );
     const [existing] = await tx.select().from(event).where(eq(event.id, id));
+    let frozenDraft: FrozenHintDraft | undefined;
+    if (existing) {
+      frozenDraft = readClaimDraft(existing.payload);
+      if (frozenDraft) assertDraftCoordinate(input, coordinate, frozenDraft.focus, frozenDraft);
+      if (
+        (frozenDraft || input.draftFocus) &&
+        (existing.payload.request_id !== input.requestId ||
+          canonicalHash(frozenDraft?.focus ?? null) !== canonicalHash(input.draftFocus ?? null) ||
+          existing.payload.binding_digest !== binding ||
+          existing.payload.source_digest !== sources)
+      )
+        throw new ApiError('hint_request_conflict', 'request saved draft identity differs', 409);
+    }
     const saved = state.hints[input.rung];
+    if (saved && input.draftFocus && !existing)
+      throw new ApiError('hint_request_conflict', 'saved hint has no matching draft claim', 409);
     if (saved)
       return {
         status: 'restored' as const,
         hint: saved,
         prior: state.hints.slice(0, input.rung),
         claimId: id,
+        frozenDraft,
       };
     if (existing || (await sequenceClaim(tx, input, binding, sources, input.rung)))
       throw new ApiError(
@@ -244,6 +364,13 @@ export async function claimIssuedHint(
       );
     if (state.legacy || input.rung !== state.hints.length)
       throw new ApiError('hint_history_gap', 'the preceding saved hints are unavailable', 409);
+    if (input.draftFocus)
+      frozenDraft = await freezeHintDraft(
+        tx,
+        input,
+        coordinate,
+        DraftFocus.parse(input.draftFocus),
+      );
     const identity = {
       version: 1,
       request_id: input.requestId,
@@ -253,6 +380,8 @@ export async function claimIssuedHint(
       question_id: input.questionId,
       rung: input.rung,
       prior: state.hints.map((h) => ({ id: h.id, digest: h.publication.body_digest })),
+      // Omitting the entire field preserves historical no-draft input digests.
+      ...(frozenDraft ? { draft_snapshot: frozenDraft } : {}),
     };
     await writeEvent(tx, {
       id,
@@ -263,16 +392,18 @@ export async function claimIssuedHint(
       subject_id: input.issuanceId,
       outcome: null,
       payload: { ...identity, input_digest: canonicalHash(identity) },
+      // The saved answer belongs to this request, not ambient learner memory.
+      ...(frozenDraft ? { affected_scopes: [], ingest_at: new Date() } : {}),
     });
-    return { status: 'claimed' as const, prior: state.hints, claimId: id };
+    return { status: 'claimed' as const, prior: state.hints, claimId: id, frozenDraft };
   });
 }
 
 export async function admitHintSend(
   db: Db,
-  input: Coordinate & { rung: number; requestId: string },
+  input: Coordinate & { rung: number; requestId: string; draftSnapshotDigest?: string },
 ) {
-  return withStudyAuthorization(db, input, async (tx, _coordinate, binding, sources) => {
+  return withStudyAuthorization(db, input, async (tx, coordinate, binding, sources) => {
     const id = claimId(input, input.rung);
     const [claim] = await tx.select().from(event).where(eq(event.id, id));
     const [sent] = await tx
@@ -287,6 +418,21 @@ export async function admitHintSend(
       sent
     )
       throw new ApiError('hint_outcome_unknown', 'send not authorized', 409);
+    const frozenDraft = readClaimDraft(claim.payload);
+    if ((frozenDraft ? canonicalHash(frozenDraft) : undefined) !== input.draftSnapshotDigest)
+      throw new ApiError('hint_request_conflict', 'hint input differs from the frozen draft', 409);
+    if (frozenDraft) {
+      assertDraftCoordinate(input, coordinate, frozenDraft.focus, frozenDraft);
+      await recordStudyAssistanceExposure(tx, {
+        issuanceId: input.issuanceId,
+        questionId: input.questionId,
+        kind: 'chat_context',
+        impact: 'unknown',
+        actorRef: 'assessment:assistance',
+        eventId: `${id}:draft-read`,
+        contentDigest: `sha256:${canonicalHash(frozenDraft)}`,
+      });
+    }
     await writeEvent(tx, {
       id: `${id}:send`,
       actor_kind: 'system',
@@ -342,6 +488,7 @@ export async function publishIssuedHint(
       state.hints.length !== input.rung
     )
       throw new ApiError('hint_publication_conflict', 'hint claim is no longer current', 409);
+    readClaimDraft(claim.payload);
     const publication: HintPublicationT = {
       version: 1,
       binding_digest: binding,

@@ -3,6 +3,7 @@
 
 import { Lightbulb, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import type { DraftFocusT } from '@/core/schema/assessment/draft-focus';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { IconButton, UiNextRoot } from '@/ui-next/public';
 import { HintLadder } from '../HintLadder';
@@ -17,6 +18,7 @@ export interface SoloCoachProps {
   onClose: () => void;
   question: QuestionDetail;
   issuanceId?: string;
+  readSavedDraft?: () => DraftFocusT | undefined;
   /** The answer is in: its record is sealed, and what is looked at now doesn't change it. */
   submitted: boolean;
 }
@@ -27,6 +29,7 @@ export function SoloCoach({
   onClose,
   question,
   issuanceId,
+  readSavedDraft,
   presentation,
   submitted,
 }: SoloCoachProps) {
@@ -74,6 +77,9 @@ export function SoloCoach({
               ? '这题已经交了，现在看提示不影响这次的记录。'
               : '查看新提示或恢复旧提示都会计入援助；没有提示时，只打开这里不算。'}
             越往后越接近答案，已看过的提示可以回看。
+            {!submitted &&
+              readSavedDraft &&
+              '下一阶仅使用点击时已保存的作答，不含未保存改动和附件。'}
           </p>
           {session > 0 && (
             <HintLadder
@@ -81,6 +87,7 @@ export function SoloCoach({
               question={question}
               onReturnToAnswer={onClose}
               issuanceId={issuanceId}
+              readSavedDraft={readSavedDraft}
               submitted={submitted}
               requestFullSolution={
                 issuanceId

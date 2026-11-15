@@ -123,6 +123,7 @@ export async function requestPracticeSolveHint(
       sessionId,
       hintIndex,
       requestId: parsed.data?.request_id,
+      draftFocus: parsed.data?.draft_focus,
       expectedQuestionId: questionId,
       issuanceId: parsed.data?.issuance_id,
     });
