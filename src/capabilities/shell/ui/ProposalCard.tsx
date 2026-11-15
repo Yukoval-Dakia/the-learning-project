@@ -672,7 +672,7 @@ export function ProposalCard({
             </div>
             <ol className="ib-plan-steps">
               {workingScope.map((point, i) => (
-                <li key={`${point.knowledge_id}:${i}`}>
+                <li key={point.knowledge_id}>
                   <span className="ib-plan-dot" data-kind="atomic" aria-hidden="true" />
                   <span>
                     <b>{point.label}</b>
