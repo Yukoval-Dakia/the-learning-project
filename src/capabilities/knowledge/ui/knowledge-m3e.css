@@ -1306,6 +1306,7 @@
   }
 
   & .kn-misc {
+    scroll-margin-top: var(--un-sp-6);
     padding: var(--un-sp-4);
     border: var(--un-hairline) solid var(--un-line);
     border-radius: var(--un-r-2);
@@ -1391,6 +1392,41 @@
     border-radius: var(--un-r-1);
     color: var(--un-text-3);
     font-size: var(--un-fs-1);
+  }
+
+  & .kn-misc-evidence {
+    display: grid;
+    gap: var(--un-sp-1);
+    margin-top: var(--un-sp-2);
+    list-style: none;
+  }
+
+  & .kn-misc-evidence-link {
+    display: grid;
+    align-content: center;
+    gap: var(--un-sp-1);
+    min-height: 44px;
+    padding: var(--un-sp-2);
+    border-radius: var(--un-r-1);
+    color: var(--un-text-1);
+    overflow-wrap: anywhere;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  & .kn-misc-evidence-link:hover {
+    background: var(--un-bg-hover);
+  }
+
+  & .kn-misc-evidence-id {
+    color: var(--un-text-3);
+  }
+
+  & .kn-misc:focus-visible,
+  & .kn-misc-evidence-link:focus-visible,
+  & .kn-misc .kn-link:focus-visible {
+    outline: 2px solid var(--un-focus);
+    outline-offset: 2px;
   }
 
   & .kn-misc-acts {

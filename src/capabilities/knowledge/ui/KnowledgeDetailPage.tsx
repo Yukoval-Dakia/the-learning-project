@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { NoteBodyPreview as NoteBodyPreviewContribution } from '@/capabilities/notes/ui-public';
+import type { MisconceptionTraceTarget } from '@/ui/lib/misconception-evidence-routes';
 import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import { ToastHost } from '@/ui-next/feedback/ToastHost';
 import { FoldList } from '@/ui-next/primitives/FoldList';
@@ -172,11 +173,13 @@ export default function KnowledgeDetailPage({
   id,
   navigate,
   returnToPlan = false,
+  traceTarget,
   NoteBodyPreview,
 }: {
   id: string;
   navigate: (to: string) => void;
   returnToPlan?: boolean;
+  traceTarget?: MisconceptionTraceTarget;
   NoteBodyPreview: typeof NoteBodyPreviewContribution;
 }) {
   const queryClient = useQueryClient();
@@ -322,6 +325,8 @@ export default function KnowledgeDetailPage({
             <MisconceptionList
               items={miscRows}
               knowledgeId={node.id}
+              returnToPlan={returnToPlan}
+              traceTarget={traceTarget}
               isLoading={miscQ.isLoading}
               isError={miscQ.isError}
               onRetry={() => void miscQ.refetch()}
