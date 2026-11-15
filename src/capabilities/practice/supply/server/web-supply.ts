@@ -11,7 +11,7 @@
 // can never double-dispatch paid work. Placement demands never fall back.
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import { canonicalHash } from '@/core/migration/canonical';
@@ -29,6 +29,7 @@ import { writeEvent } from '@/kernel/events';
 import { webSupplyDemandKey as key, lockWebSupplyDemand } from '@/kernel/locks/question-supply';
 import type { EventSubscriptionDelivery, EventSubscriptionOutcome } from '@/kernel/manifest';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
+import { readDemandPublications } from '@/kernel/records/publication-receipt';
 import { SupplyTraceV1, type SupplyTraceV1T } from '@/kernel/supply-contracts';
 import { TaskConfigError } from '@/server/ai/providers';
 import { answerClassCompatible } from '@/subjects/question-kind';
@@ -509,41 +510,73 @@ export async function dispatchWebSupplyRouteFallback(
   return { dispatched: true, jobId, route };
 }
 
-async function submissionBinding(db: Db, submission: z.infer<typeof Submission>) {
+async function submissionBinding(db: Db, demandId: string, submission: z.infer<typeof Submission>) {
   const receipt = submission.receipt;
-  if (!receipt?.question_id) return null;
-  // The flat publisher's enrich event and the typed submit receipt were committed
-  // with publication. Do not bind whichever revision happens to be current later.
+  if (
+    !receipt?.question_id ||
+    submission.request.request_id !== submission.requestId ||
+    (submission.request.demand_id != null && submission.request.demand_id !== demandId) ||
+    (receipt.request_id != null && receipt.request_id !== submission.requestId)
+  )
+    return null;
+
+  const publications = await readDemandPublications(db, demandId);
+  const matching = publications.filter(
+    (publication) =>
+      publication.demand_id === demandId &&
+      publication.request_id === submission.requestId &&
+      (receipt.group_id == null || publication.group_id === receipt.group_id) &&
+      (receipt.revision_id == null || publication.revision_id === receipt.revision_id) &&
+      (receipt.publication_event_id == null ||
+        publication.publication_event_id === receipt.publication_event_id),
+  );
+  // A request must name one committed publication. Legacy receipts without an
+  // event cannot supply its admission generation; never reconstruct that identity.
+  if (matching.length !== 1) return null;
+  const publication = matching[0];
+  if (publication.publication_event_id == null) return null;
+
   const [published] = await db
-    .select({ id: event.id, payload: event.payload, digest: question_revision.integrity_digest })
-    .from(event)
-    .innerJoin(
-      question_revision,
-      sql`${question_revision.revision_id} = ${event.payload}->>'revision_id'`,
-    )
+    .select({
+      payload: event.payload,
+      digest: question_revision.integrity_digest,
+      structure: question_revision.structure,
+    })
+    .from(question_revision)
+    .innerJoin(event, eq(event.id, publication.publication_event_id))
     .where(
       and(
+        eq(question_revision.revision_id, publication.revision_id),
+        eq(question_revision.group_id, publication.group_id),
         eq(event.action, 'experimental:assessment_publish'),
-        eq(event.subject_id, receipt.group_id ?? receipt.question_id),
-        receipt.revision_id
-          ? sql`${event.payload}->>'revision_id' = ${receipt.revision_id}`
-          : inArray(event.actor_ref, [
-              'sourced-draft:sourcing_web',
-              'submit-question:sourcing_web:enrich',
-            ]),
+        eq(event.outcome, 'success'),
+        eq(event.subject_kind, 'question'),
+        eq(event.subject_id, publication.group_id),
       ),
     )
-    .orderBy(desc(question_revision.revision_ordinal), asc(event.created_at))
     .limit(1);
-  if (!published) return null;
-  const p = published.payload;
-  return Binding.parse({
-    questionId: receipt.question_id,
-    revisionId: p.revision_id,
+  if (
+    !published ||
+    published.payload.group_id !== publication.group_id ||
+    published.payload.revision_id !== publication.revision_id ||
+    published.structure.group_id !== publication.group_id ||
+    (receipt.question_id !== publication.group_id &&
+      !published.structure.parts.some((part) => part.part_id === receipt.question_id)) ||
+    (published.payload.integrity_digest != null &&
+      published.payload.integrity_digest !== published.digest)
+  )
+    return null;
+
+  const binding = Binding.safeParse({
+    questionId: publication.group_id,
+    revisionId: publication.revision_id,
     digest: published.digest,
-    generation: p.admission_generation,
-    publicationEventId: published.id,
+    generation: published.payload.admission_generation,
+    publicationEventId: publication.publication_event_id,
   });
+  return binding.success && binding.data.generation >= 0 && binding.data.digest.length > 0
+    ? binding.data
+    : null;
 }
 
 // Entire read, including serving's own queries, shares one snapshot. A successful
@@ -780,7 +813,7 @@ export async function resumeWebSupply(
       }
     }
     if (!submission.binding) {
-      const binding = await submissionBinding(db, submission);
+      const binding = await submissionBinding(db, state.demandId, submission);
       if (binding) submission = { ...submission, binding };
     }
     if (
