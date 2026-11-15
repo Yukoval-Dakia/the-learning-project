@@ -126,6 +126,7 @@ export function PracticePresentation(props: PracticePresentationProps) {
   };
   let questionBody: ReactNode;
   let answerExtras: ReactNode;
+  let reasoningExtras: ReactNode;
   let hasQuestion = false;
   if (question.query.isError) {
     view.page = {
@@ -273,35 +274,30 @@ export function PracticePresentation(props: PracticePresentationProps) {
         (slot) => parts.length === 0 || !frozen.faces.some((face) => face.part_id === slot.part_id),
       )
       .flatMap(field);
-    answerExtras = (
-      <>
-        {(!locked || draft.evidence.length > 0) && (
-          <EvidenceComposer
-            text=""
-            onTextChange={() => {}}
-            showText={false}
-            attachments={draft.evidence}
-            onAttachmentsChange={draft.updateEvidence}
-            disabled={locked}
-            onUploadingChange={draft.setUploading}
-            showAddButton
-          />
-        )}
-        {answering && shouldOfferProcessBox(draft.isChoice) && (
-          <details>
-            <summary>补充思路（可选）</summary>
-            <textarea
-              rows={3}
-              disabled={locked}
-              value={submit.reasoningTrace}
-              maxLength={props.reasoningTraceMaxLength}
-              onChange={(event) => submit.setReasoningTrace(event.target.value)}
-              aria-label="解题思路（可选）"
-            />
-          </details>
-        )}
-      </>
-    );
+    answerExtras =
+      !locked || draft.evidence.length > 0 ? (
+        <EvidenceComposer
+          text=""
+          onTextChange={() => {}}
+          showText={false}
+          attachments={draft.evidence}
+          onAttachmentsChange={draft.updateEvidence}
+          disabled={locked}
+          onUploadingChange={draft.setUploading}
+          showAddButton
+        />
+      ) : undefined;
+    reasoningExtras =
+      answering && shouldOfferProcessBox(draft.isChoice) ? (
+        <textarea
+          rows={3}
+          disabled={locked}
+          value={submit.reasoningTrace}
+          maxLength={props.reasoningTraceMaxLength}
+          onChange={(event) => submit.setReasoningTrace(event.target.value)}
+          aria-label="解题思路（可选）"
+        />
+      ) : undefined;
     if (draft.presentation)
       questionBody = (
         <>
@@ -724,6 +720,7 @@ export function PracticePresentation(props: PracticePresentationProps) {
       surfaces={{
         questionBody,
         answerExtras,
+        reasoning: reasoningExtras,
         conflict: conflict ? <DraftConflictPanel view={conflict} /> : undefined,
         history: props.history,
         overlays: props.overlays,

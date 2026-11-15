@@ -118,9 +118,6 @@ export function PracticeStudio(p: ReadingProps) {
       : undefined;
   const actionRow = (
     <div ref={lifecycle?.submitActionsRef} className="un-st-submit">
-      {q.submission.confidence && (
-        <ConfidenceScale confidence={q.submission.confidence} intents={intents} />
-      )}
       <div className="un-st-actions">
         {primary && <IntentButton action={primary} intents={intents} primary />}
         {q.submission.secondary.map((action) => (
@@ -247,18 +244,19 @@ export function PracticeStudio(p: ReadingProps) {
         />
       </div>
       <section className="un-st-study-tools" aria-label="辅助工具">
-        <div className="un-st-actions">
-          {q.supportActions.map((action) => (
-            <IntentButton key={action.id} action={action} intents={intents} />
-          ))}
-        </div>
         {surfaces?.answerExtras && (
           <details className="un-st-disclosure">
             <summary>
               <Paperclip size={18} aria-hidden="true" />
-              补充附件与思路
+              补充附件
             </summary>
             <div className="un-st-supplement">{surfaces.answerExtras}</div>
+          </details>
+        )}
+        {surfaces?.reasoning && (
+          <details className="un-st-disclosure">
+            <summary>补充思路（可选）</summary>
+            <div className="un-st-supplement">{surfaces.reasoning}</div>
           </details>
         )}
         {q.thought && (
@@ -267,6 +265,14 @@ export function PracticeStudio(p: ReadingProps) {
             <PracticeField field={q.thought} intents={intents} renderers={renderers} />
           </details>
         )}
+        {q.submission.confidence && (
+          <ConfidenceScale confidence={q.submission.confidence} intents={intents} />
+        )}
+        <div className="un-st-actions">
+          {q.supportActions.map((action) => (
+            <IntentButton key={action.id} action={action} intents={intents} />
+          ))}
+        </div>
         {surfaces?.history}
         {p.presentation.selection && (
           <aside className="un-st-quote-preview">
