@@ -10,11 +10,20 @@
 //   - any other block taller than a whole page body is a layout_overflow.
 // A flow is a run of pages with one orientation. A passage flow repeats its passage in the left
 // column of each of its pages; the passage itself must fit one column.
+//
+// YUK-1538 — a passage taller than one column continues across pages instead of overflowing.
+// The measure stage reports the legal cut offsets inside the column (line/block starts); the
+// paginator packs each page's left column with the longest run between cuts that fits, then the
+// renderer shows that vertical slice. Pages the right column still needs after the passage ran
+// out carry a "see earlier pages" pointer instead; pages with passage left after the right
+// column finished keep coming with no right-column placements. Short passages keep the old
+// per-page repeat exactly.
 
 import {
   BLOCK_GAP_MM,
   BODY_SAFETY_MM,
   MIN_SEGMENT_MM,
+  PASSAGE_CONTINUED_HINT_MM,
   type SheetOrientation,
 } from './worksheet-geometry';
 
@@ -31,7 +40,15 @@ export interface FlowInput {
   key: string;
   orientation: SheetOrientation;
   /** Passage flows: the left column block (item header + passage) and its height. */
-  passage: { key: string; heightMm: number } | null;
+  passage: {
+    key: string;
+    heightMm: number;
+    /**
+     * Sorted legal cut positions inside the column (mm from its top), ending at heightMm.
+     * Present only when the column is split; a short passage repeats whole per page.
+     */
+    cutOffsetsMm?: readonly number[];
+  } | null;
   blocks: MeasuredBlock[];
 }
 
@@ -55,6 +72,21 @@ export interface LaidOutPage {
   flowKey: string;
   orientation: SheetOrientation;
   passageKey: string | null;
+  /**
+   * Which slice of the passage column this page's left column shows: `repeat` (short passage,
+   * the whole column again), `slice` (continued passage: [offsetMm, offsetMm+heightMm)), or
+   * `seeEarlier` (right column still going, passage already finished — a pointer note).
+   * `roomMm` is the full column height the paginator packed against, so the renderer can tell
+   * how much slack a slice left for a continuation hint.
+   */
+  passage?: {
+    kind: 'repeat' | 'slice' | 'seeEarlier';
+    offsetMm: number;
+    heightMm: number;
+    roomMm: number;
+    /** This slice is not the last — the passage continues on a later page. */
+    continues?: boolean;
+  };
   placements: PagePlacement[];
 }
 
@@ -81,8 +113,40 @@ export function paginate(
 
   for (const flow of flows) {
     const height = bodyMm[flow.orientation] - BODY_SAFETY_MM;
-    if (flow.passage && flow.passage.heightMm > height) {
+    const cuts = flow.passage?.cutOffsetsMm;
+    const splits = flow.passage != null && cuts != null && cuts.length > 1;
+    if (flow.passage && flow.passage.heightMm > height && !splits) {
       return { ok: false, reason: 'layout_overflow', key: flow.passage.key };
+    }
+    // Left-column slices for a long passage: each page takes the longest run of legal cuts
+    // that fits one column. `slices[i]` is [offsetMm, offsetMm+heightMm) on left-column page i.
+    const slices: { offsetMm: number; heightMm: number; continues: boolean }[] = [];
+    if (splits && flow.passage && cuts) {
+      let offset = 0;
+      let cursor = 0;
+      while (offset < flow.passage.heightMm) {
+        let end = offset;
+        while (cursor < cuts.length) {
+          const cut = cuts[cursor] ?? 0;
+          // Continuation pages reserve room for the 接上页 hint above the slice and (unless the
+          // slice ends at the last cut) the 下页续 hint below it.
+          const topHint = offset > 0 ? PASSAGE_CONTINUED_HINT_MM : 0;
+          const bottomHint = cut < flow.passage.heightMm ? PASSAGE_CONTINUED_HINT_MM : 0;
+          const limit = height - topHint - bottomHint;
+          if (cut - offset > limit) break;
+          end = cut;
+          cursor += 1;
+        }
+        if (end <= offset) {
+          // A single indivisible box taller than the column: honest overflow, never clipped.
+          return { ok: false, reason: 'layout_overflow', key: flow.passage.key };
+        }
+        slices.push({ offsetMm: offset, heightMm: end - offset, continues: false });
+        offset = end;
+      }
+      for (const [index, slice] of slices.entries()) {
+        slice.continues = index < slices.length - 1;
+      }
     }
     const newPage = (): LaidOutPage => ({
       flowKey: flow.key,
@@ -90,6 +154,7 @@ export function paginate(
       passageKey: flow.passage?.key ?? null,
       placements: [],
     });
+    const flowStart = pages.length;
     let page = newPage();
     pages.push(page);
     let used = 0;
@@ -175,6 +240,47 @@ export function paginate(
         if (piece.placement.segment) {
           piece.placement.segment.continues = pieceIndex < pieces.length - 1;
         }
+      }
+    }
+
+    // Assign each page its left-column slice (or repeat/see-earlier marker) for this flow, and
+    // keep emitting pages while the passage outlasts the right column — no fake question, no
+    // dropped paragraph.
+    if (flow.passage) {
+      for (const [index, laidOut] of pages.slice(flowStart).entries()) {
+        laidOut.passage = !splits
+          ? { kind: 'repeat', offsetMm: 0, heightMm: flow.passage.heightMm, roomMm: height }
+          : (() => {
+              const slice = slices[index];
+              return slice
+                ? {
+                    kind: 'slice',
+                    offsetMm: slice.offsetMm,
+                    heightMm: slice.heightMm,
+                    roomMm: height,
+                    continues: slice.continues,
+                  }
+                : { kind: 'seeEarlier', offsetMm: 0, heightMm: 0, roomMm: height };
+            })();
+      }
+      while (splits && pages.length - flowStart < slices.length) {
+        const extra: LaidOutPage = {
+          flowKey: flow.key,
+          orientation: flow.orientation,
+          passageKey: flow.passage.key,
+          placements: [],
+        };
+        const slice = slices[pages.length - flowStart];
+        if (slice) {
+          extra.passage = {
+            kind: 'slice',
+            offsetMm: slice.offsetMm,
+            heightMm: slice.heightMm,
+            roomMm: height,
+            continues: slice.continues,
+          };
+        }
+        pages.push(extra);
       }
     }
   }

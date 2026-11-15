@@ -26,6 +26,9 @@ export const MIN_SEGMENT_MM = 30;
 /** Kept free at the bottom of every body so sub-pixel rounding can never push a block out. */
 export const BODY_SAFETY_MM = 0.6;
 
+/** Room one "接上页 / 下页续" hint line needs around a continued passage slice. */
+export const PASSAGE_CONTINUED_HINT_MM = 9;
+
 /** Ruled-line pitch and the 5mm grid / dot pitch used by the marks. */
 export const RULE_PITCH_MM = 8;
 export const GRID_PITCH_MM = 5;

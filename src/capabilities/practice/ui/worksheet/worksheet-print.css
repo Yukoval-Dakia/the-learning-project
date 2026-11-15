@@ -91,6 +91,7 @@
   font-size: 10.5pt;
   line-height: 1.6;
   font-feature-settings: normal;
+  text-wrap: pretty;
 }
 
 .ws-col-portrait {
@@ -581,6 +582,26 @@
 
 .ws-passage-md p {
   text-indent: 1.4em;
+}
+
+/* Long-passage continuation: a fixed clip window shows one page's slice of the column. */
+.ws-passage-window {
+  overflow: hidden;
+}
+
+/* Same inner stack as .ws-passage so the slice lays out exactly as measured. */
+.ws-passage-inner {
+  display: grid;
+  align-content: start;
+  gap: 2.8mm;
+}
+
+.ws-passage-hint {
+  color: var(--ws-text-4);
+  font-family: var(--ws-sans);
+  font-size: 8pt;
+  line-height: 1.5;
+  text-indent: 0;
 }
 
 .ws-qs {
