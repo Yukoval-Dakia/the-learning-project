@@ -195,7 +195,10 @@ describe('YUK-1047 formal entry candidate reuse', () => {
       { reasoning_trace: 'a late capture must not backfill a historical submission' },
     );
     expect(
-      await db.select().from(event).where(eq(event.action, 'experimental:assessment_accepted_process')),
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:assessment_accepted_process')),
     ).toHaveLength(0);
     expect(preview.record.provenance?.input_snapshot?.version).toBe(1);
     const commit = await evaluateSubmission(db, request);

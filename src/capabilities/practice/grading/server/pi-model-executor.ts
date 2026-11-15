@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { acceptedProcessEventId } from '@/core/assessment-input';
+import { acceptedProcessEventId } from '@/core/schema/assessment/judgment';
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { RunTaskResult } from '@/ai/task-result';
 import { resolveTaskBudget } from '@/capabilities/task-registry';

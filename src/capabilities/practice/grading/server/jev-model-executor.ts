@@ -189,7 +189,9 @@ function typedState(
     submission: {
       member_submission_ids: request.submission_ids ?? [request.submission_id],
       entries: entries.map((entry) => projectSlotResponse(entry)),
-      ...(request.learner_processes?.length ? { learner_processes: request.learner_processes } : {}),
+      ...(request.learner_processes?.length
+        ? { learner_processes: request.learner_processes }
+        : {}),
       group_evidence: groupEvidence.map((item) => ({
         evidence_id: item.evidence.evidence_id,
         kind: item.evidence.kind,

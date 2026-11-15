@@ -36,7 +36,11 @@ import type {
   SubmissionIdT,
 } from '@/core/schema/assessment/ids';
 import { ActivateEvaluationIntent, resolveActivationCas } from '@/core/schema/assessment/ids';
-import { EvaluationProvenance, type EvaluationRecordT } from '@/core/schema/assessment/judgment';
+import {
+  EvaluationInputSnapshot,
+  EvaluationProvenance,
+  type EvaluationRecordT,
+} from '@/core/schema/assessment/judgment';
 import { FsrsRating } from '@/core/schema/business';
 import { loadAcceptedProcesses } from '@/kernel/records/assessment-accepted-process';
 import type { Tx } from '@/db/client';
@@ -313,10 +317,14 @@ export async function activateEvaluation(
     );
   let inputScope: ActivationSettleInput['inputScope'];
   try {
-    const snapshot = cand.provenance?.input_snapshot;
+    const rawSnapshot = cand.provenance?.input_snapshot;
+    const snapshot = rawSnapshot == null ? undefined : EvaluationInputSnapshot.parse(rawSnapshot);
     const acceptedProcesses =
       snapshot?.version === 2
-        ? await loadAcceptedProcesses(tx, memberRows.map((row) => row.submission_id))
+        ? await loadAcceptedProcesses(
+            tx,
+            memberRows.map((row) => row.submission_id),
+          )
         : undefined;
     const members = memberRows.map((row) => {
       const binding = memberIssuances.find((item) => item.issuance_id === row.issuance_id);
@@ -326,7 +334,12 @@ export async function activateEvaluation(
     });
     const anchor = members.find((member) => member.submission.submission_id === sub.submission_id);
     if (!anchor) return { status: 'coordinate_mismatch' };
-    const actual = freezeEvaluationInput(anchor.submission, revRow, members, snapshot?.version ?? 1);
+    const actual = freezeEvaluationInput(
+      anchor.submission,
+      revRow,
+      members,
+      snapshot?.version ?? 1,
+    );
     // Old single-member inputs are unambiguous and now sealed against append.
     // Historical joint candidates never acquire invented evidence at activation.
     if (snapshot == null ? members.length !== 1 : !matchesEvaluationInput(snapshot, actual)) {

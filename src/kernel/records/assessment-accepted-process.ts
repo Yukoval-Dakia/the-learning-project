@@ -1,11 +1,11 @@
 import { inArray } from 'drizzle-orm';
-import { acceptedProcessEventId } from '@/core/assessment-input';
 import { crisisDerivationPayload } from '@/core/crisis/classify';
 import { canonicalHash } from '@/core/migration/canonical';
 import { GroupInputContractError } from '@/core/schema/assessment/group-input';
 import {
   AcceptedLearnerProcess,
   type AcceptedLearnerProcessT,
+  acceptedProcessEventId,
 } from '@/core/schema/assessment/judgment';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';

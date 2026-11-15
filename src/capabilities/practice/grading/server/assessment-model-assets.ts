@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { acceptedProcessEventId } from '@/core/assessment-input';
+import { acceptedProcessEventId } from '@/core/schema/assessment/judgment';
 import {
   containsRenderedImage,
   hasInlineQuestionImage,

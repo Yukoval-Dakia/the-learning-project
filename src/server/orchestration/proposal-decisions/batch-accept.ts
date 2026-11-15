@@ -374,6 +374,14 @@ export async function batchAcceptProposals(db: Db, input: unknown): Promise<Batc
       if (err instanceof ApiError) {
         const status =
           err.code === 'conflict' || err.code === 'not_pending' ? 'rejected' : 'failed';
+        if (status === 'failed') {
+          console.warn('[proposal-batch-accept] accept failed', {
+            proposal_id: id,
+            kind: payload.kind,
+            code: err.code,
+            error: err.message,
+          });
+        }
         items.push(
           item(
             id,

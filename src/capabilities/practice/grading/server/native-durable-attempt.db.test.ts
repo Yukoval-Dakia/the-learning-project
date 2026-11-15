@@ -2,7 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, ne, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { acceptedProcessEventId } from '@/core/assessment-input';
+import { acceptedProcessEventId } from '@/core/schema/assessment/judgment';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import { FsrsStateSchema } from '@/core/schema/event/blocks';

@@ -15,8 +15,6 @@ import {
 } from './schema/assessment/judgment';
 import type { IssuanceBindingT, PublishedQuestionRevisionT } from './schema/assessment/revision';
 
-export { acceptedProcessEventId } from './schema/assessment/judgment';
-
 export interface FrozenEvaluationMember extends EvaluationInputMember {
   binding: IssuanceBindingT;
   issued_at: string;
