@@ -1,5 +1,6 @@
 import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import type { ConfirmationAssessmentRenderer } from '../confirmation';
+import type { FailedTurnReferenceRenderer } from '../failed-turn-reference';
 import { ConfirmationBlock } from './ConfirmationBlock';
 import type { ConfirmationAction } from './turn-sender';
 // One turn in the conversation. The learner's line sits right in a quiet bubble; the companion's
@@ -21,6 +22,8 @@ import { SkillTurnBlock } from './SkillTurnBlock';
 import { StepActivity, ThinkingDone, stepsOf } from './ToolRow';
 
 export interface MessageRowProps {
+  failedTurnReferenceRenderer?: FailedTurnReferenceRenderer;
+  referenceDisabled?: boolean;
   confirmationRenderer?: ConfirmationAssessmentRenderer;
   thinkingText?: string;
   readNotePage: NotePageClient;
@@ -82,6 +85,7 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   const canCorrect = settled && turnId !== undefined && props.turnNumber !== undefined;
   const checkpoint = settled ? m.checkpoint_event_id : undefined;
   const helpReturnTarget = m.help_return_target;
+  const ReferenceRenderer = props.failedTurnReferenceRenderer;
   return (
     <div className="un-cp-row un-cp-row-ai" data-streaming={generating ? '' : undefined}>
       {/* YUK-1664 — settled: the reply's steps fold into one summary line above the text. */}
@@ -128,6 +132,19 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
             </Button>
           ) : null}
         </div>
+      ) : null}
+      {ReferenceRenderer &&
+      helpReturnTarget &&
+      settled &&
+      publicProse?.status === 'failed' &&
+      m.run_id &&
+      m.session_id ? (
+        <ReferenceRenderer
+          key={`${m.session_id}:${m.run_id}`}
+          runId={m.run_id}
+          sessionId={m.session_id}
+          disabled={props.referenceDisabled ?? true}
+        />
       ) : null}
       {m.confirmationIncompatible && <p role="alert">确认题版本或状态不兼容，暂不能操作。</p>}
       {props.showConfirmation &&

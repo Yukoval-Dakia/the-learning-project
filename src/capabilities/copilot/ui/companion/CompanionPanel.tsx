@@ -1,5 +1,6 @@
 import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import type { ConfirmationAssessmentRenderer } from '../confirmation';
+import type { FailedTurnReferenceRenderer } from '../failed-turn-reference';
 import type { QuestionCardRenderer } from '../question-card';
 // The companion's frame, in three layouts:
 //   side  — desktop: a column beside the content (the shell gives it its place), not glass (T3);
@@ -37,6 +38,7 @@ import './companion.css';
 export type CompanionLayout = 'side' | 'float' | 'sheet';
 
 export interface CompanionPanelProps {
+  failedTurnReferenceRenderer?: FailedTurnReferenceRenderer;
   confirmationRenderer?: ConfirmationAssessmentRenderer;
   questionCardRenderer?: QuestionCardRenderer;
   readNotePage: NotePageClient;
@@ -71,6 +73,7 @@ export function CompanionPanel({
   sessionId,
   presentation,
   confirmationRenderer,
+  failedTurnReferenceRenderer,
   questionCardRenderer,
   readNotePage,
 }: CompanionPanelProps) {
@@ -143,6 +146,7 @@ export function CompanionPanel({
           nudges={<NudgeBar nudges={nudges} />}
           messages={
             <MessageStream
+              failedTurnReferenceRenderer={failedTurnReferenceRenderer}
               confirmationRenderer={confirmationRenderer}
               questionCardRenderer={questionCardRenderer}
               readNotePage={readNotePage}
@@ -242,6 +246,7 @@ export function CompanionPanel({
         <NudgeBar nudges={nudges} />
         <div className="un-cp-body">
           <MessageStream
+            failedTurnReferenceRenderer={failedTurnReferenceRenderer}
             confirmationRenderer={confirmationRenderer}
             questionCardRenderer={questionCardRenderer}
             readNotePage={readNotePage}

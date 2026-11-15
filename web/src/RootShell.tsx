@@ -9,7 +9,12 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { type CompanionLayout, CompanionMount } from '@/capabilities/copilot/ui-public';
+import {
+  type CompanionLayout,
+  CompanionMount,
+  FailedTurnReference,
+  type FailedTurnReferenceClient,
+} from '@/capabilities/copilot/ui-public';
 import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import {
   ConfirmationAssessment,
@@ -131,6 +136,7 @@ function ShellMain({ blockedByModal, children }: ShellMainProps) {
 export function RootShell({
   confirmationClient,
   questionCardClient,
+  failedTurnReferenceClient,
   children,
   pathname,
   navigate,
@@ -139,6 +145,7 @@ export function RootShell({
 }: {
   confirmationClient?: ConfirmationDraftClient;
   questionCardClient?: QuestionCardClient;
+  failedTurnReferenceClient?: FailedTurnReferenceClient;
   children: ReactNode;
   pathname: string;
   navigate: (to: string) => void;
@@ -166,6 +173,14 @@ export function RootShell({
     [questionCardClient],
   );
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const FailedTurnReferenceRenderer = useMemo(() => {
+    if (!failedTurnReferenceClient) return undefined;
+    return function ReferenceRenderer(
+      props: Omit<ComponentProps<typeof FailedTurnReference>, 'client'>,
+    ) {
+      return <FailedTurnReference {...props} client={failedTurnReferenceClient} />;
+    };
+  }, [failedTurnReferenceClient]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [companionOpen, setCompanionOpen] = useState(false);
   const companionLayout = useSyncExternalStore(
@@ -267,6 +282,7 @@ export function RootShell({
       <ShellMain blockedByModal={navOpen || companionModal}>{children}</ShellMain>
       <div className="un-st-companion-slot">
         <CompanionMount
+          failedTurnReferenceRenderer={FailedTurnReferenceRenderer}
           confirmationRenderer={ConfirmationRenderer}
           questionCardRenderer={QuestionCardRenderer}
           readNotePage={readNotePage}

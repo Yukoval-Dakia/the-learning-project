@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import { DraftFocus } from '@/core/schema/assessment/draft-focus';
+import { DraftFocus, type DraftFocusT } from '@/core/schema/assessment/draft-focus';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
@@ -13,17 +13,41 @@ export interface CopilotHelpReturnTarget {
   id: string;
 }
 
+type HelpPracticeFocus =
+  | { status: 'ready'; focus: DraftFocusT }
+  | { status: 'unavailable'; reason: 'revoked' | 'no_saved_practice_target' };
+
 /** Call only for visible failed terminal runs; identity and current permission stay server-owned. */
 export async function readHelpReturnTargets(
   db: Db | Tx,
   sessionId: string,
   failedRunIds: readonly string[],
 ): Promise<Map<string, CopilotHelpReturnTarget>> {
+  const focuses = await readHelpPracticeFocuses(db, sessionId, failedRunIds);
   const targets = new Map<string, CopilotHelpReturnTarget>();
-  if (failedRunIds.length === 0) return targets;
+  for (const [runId, result] of focuses)
+    if (result.status === 'ready')
+      targets.set(runId, { kind: 'question', id: result.focus.question_id });
+  return targets;
+}
+
+/** Shared accepted-ask identity and permission projection; private capture proof never leaves here. */
+export async function readHelpPracticeFocuses(
+  db: Db | Tx,
+  sessionId: string,
+  runIds: readonly string[],
+): Promise<Map<string, HelpPracticeFocus>> {
+  const targets = new Map<string, HelpPracticeFocus>();
+  if (runIds.length === 0) return targets;
   const ask = alias(event, 'help_return_original_ask');
   const roots = await db
-    .select({ runId: event.id, askId: ask.id, payload: ask.payload })
+    .select({
+      runId: event.id,
+      askId: ask.id,
+      payload: ask.payload,
+      allowed: eventAllowsDerivationSql(),
+      askAllowed: eventAllowsDerivationSql(ask),
+    })
     .from(event)
     .innerJoin(
       ask,
@@ -42,10 +66,8 @@ export async function readHelpReturnTargets(
     .where(
       and(
         eq(event.session_id, sessionId),
-        inArray(event.id, [...failedRunIds]),
+        inArray(event.id, [...runIds]),
         inArray(event.action, [COPILOT_USER_ASK_ACTION, COPILOT_RETRY_ACTION]),
-        eventAllowsDerivationSql(),
-        eventAllowsDerivationSql(ask),
       ),
     );
   const corrections = await getCorrectionStatuses(db, [
@@ -55,13 +77,20 @@ export async function readHelpReturnTargets(
     if (
       corrections.get(root.runId)?.state === 'retracted' ||
       corrections.get(root.askId)?.state === 'retracted' ||
+      root.allowed !== true ||
+      root.askAllowed !== true ||
       root.payload.surface !== 'copilot' ||
       root.payload.session_id !== sessionId ||
       root.payload.derivation_policy !== 'allow'
-    )
+    ) {
+      targets.set(root.runId, { status: 'unavailable', reason: 'revoked' });
       continue;
+    }
     const captured = root.payload.draft_focus;
-    if (!captured || typeof captured !== 'object' || Array.isArray(captured)) continue;
+    if (!captured || typeof captured !== 'object' || Array.isArray(captured)) {
+      targets.set(root.runId, { status: 'unavailable', reason: 'no_saved_practice_target' });
+      continue;
+    }
     // The capture envelope also holds private provenance; validate only the original coordinate.
     const focus = DraftFocus.safeParse({
       question_id: 'question_id' in captured ? captured.question_id : undefined,
@@ -69,7 +98,12 @@ export async function readHelpReturnTargets(
       revision_id: 'revision_id' in captured ? captured.revision_id : undefined,
       save_epoch: 'save_epoch' in captured ? captured.save_epoch : undefined,
     });
-    if (focus.success) targets.set(root.runId, { kind: 'question', id: focus.data.question_id });
+    targets.set(
+      root.runId,
+      focus.success
+        ? { status: 'ready', focus: focus.data }
+        : { status: 'unavailable', reason: 'no_saved_practice_target' },
+    );
   }
   return targets;
 }

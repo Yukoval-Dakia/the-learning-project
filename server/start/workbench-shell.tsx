@@ -1,7 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
 import { AgentNoteClientProvider } from '@/capabilities/agency/ui-public';
-import { CopilotClientProvider } from '@/capabilities/copilot/ui-public';
+import {
+  CopilotClientProvider,
+  readCopilotFailedTurnPracticeTarget,
+} from '@/capabilities/copilot/ui-public';
 import { WorkbenchClientProvider } from '@/capabilities/shell/ui-public';
 import { SubjectClientProvider } from '@/ui/hooks/subject-client';
 import { startIssuanceCreateClient } from './issuance-create-client';
@@ -16,12 +19,18 @@ import { startNotePageClient } from './note-page-client';
 import { startPracticeAdviceClient } from './practice-advice-client';
 import { startPracticeSubmitClient } from './practice-submit-client';
 import { startQuestionCardReadClient } from './question-card-client';
+import { startStudyReferenceClient } from './study-reference-client';
 import { startSubjectClient } from './subject-client';
 import { startKnowledgeTreeClient, startWorkbenchClient } from './workbench-client';
 
 const confirmationClient = {
   getIssuanceState: startIssuanceStateClient,
   saveResponseDraft: startResponseDraftClient,
+};
+
+const failedTurnReferenceClient = {
+  readTarget: readCopilotFailedTurnPracticeTarget,
+  revealReference: startStudyReferenceClient,
 };
 
 const questionCardClient = {
@@ -49,6 +58,7 @@ export function StartWorkbenchShell({
             <SubjectClientProvider value={startSubjectClient}>
               <CopilotClientProvider value={startCopilotClient}>
                 <RootShell
+                  failedTurnReferenceClient={failedTurnReferenceClient}
                   confirmationClient={confirmationClient}
                   questionCardClient={questionCardClient}
                   pathname={pathname}
