@@ -1,11 +1,19 @@
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  event,
+  misconception,
+  misconception_edge,
   question,
   question_group_lifecycle,
   question_revision,
   question_solution_prior,
   source_document,
 } from '@/db/schema';
+import {
+  listActiveMisconceptionsForKcs,
+  listDerivableActiveMisconceptionsForKcs,
+} from '@/kernel/read-models/failure-learning-context';
 import { buildCoverageEvidenceDemand } from '@/kernel/supply-contracts';
 import type { ToolContext } from '@/kernel/tools/types';
 import { EMBED_DIMS, type embedMany } from '@/server/ai/embed';
@@ -186,6 +194,7 @@ describe('restricted-source questions in model derivation lanes', () => {
   //   or the few-shot pool and reach the provider), or the filter is applied after
   //   selection so restricted rows starve the batch — or a serving read starts
   //   refusing rows it is allowed to see
+  //   — or a promoted misconception reuses restricted/missing evidence or unknown epochs
   it.each([
     { policy: 'answer_only' as const, expectRestrictedSent: false },
     { policy: 'crisis' as const, expectRestrictedSent: false },
@@ -193,7 +202,77 @@ describe('restricted-source questions in model derivation lanes', () => {
   ])(
     'selection predicates keep restricted lineage out of every derivation read ($policy)',
     async ({ policy, expectRestrictedSent }) => {
-      await seedBank(policy);
+      await seedBank('allow');
+      await db.insert(event).values([
+        {
+          id: 'native-source',
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'attempt',
+          subject_kind: 'knowledge',
+          subject_id: 'k1',
+          payload: { derivation_policy: 'allow' },
+          created_at: now,
+        },
+        {
+          id: 'document-source',
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'attempt',
+          subject_kind: 'question',
+          subject_id: 'qr-1',
+          payload: { derivation_policy: 'allow' },
+          created_at: now,
+        },
+      ]);
+      const promoted = [
+        { id: 'misc_native', source: 'soft', evidence: ['native-source'] },
+        { id: 'misc_mixed', source: 'hard', evidence: ['native-source', 'document-source'] },
+        { id: 'misc_missing', source: 'soft', evidence: ['missing-event'] },
+        { id: 'misc_unknown', source: 'unknown', evidence: ['native-source'] },
+      ];
+      await db.insert(misconception).values(
+        promoted.map((row) => ({
+          ...row,
+          title: row.id,
+          reasoning: 'promoted explanation',
+          status: 'active',
+          seen: 3,
+          created_by: { by: 'ai' as const },
+          proposed_by_ai: true,
+          created_at: now,
+          updated_at: now,
+        })),
+      );
+      await db.insert(misconception_edge).values(
+        promoted.map((row) => ({
+          id: `${row.id}:kc`,
+          from_kind: 'misconception',
+          from_id: row.id,
+          to_kind: 'knowledge',
+          to_id: 'k1',
+          relation_type: 'caused_by',
+          created_by: { by: 'ai' as const },
+          created_at: now,
+          updated_at: now,
+        })),
+      );
+      // Promotion stays active when its document policy changes; derivation rechecks all evidence.
+      await db
+        .update(source_document)
+        .set({
+          provenance: {
+            usage_policy: { derivation_policy: policy },
+            usage_epoch: 'current-document-epoch',
+          },
+        })
+        .where(eq(source_document.id, 'doc-restricted'));
+      expect(
+        (await listActiveMisconceptionsForKcs(db, ['k1'])).map((row) => row.id).sort(),
+      ).toEqual(promoted.map((row) => row.id).sort());
+      expect(
+        (await listDerivableActiveMisconceptionsForKcs(db, ['k1'])).map((row) => row.id),
+      ).toEqual(['misc_native']);
 
       const { sent: embedSent, embedFn } = countingEmbed();
       await runEmbedBackfill(db, 50, attempt, embedFn);

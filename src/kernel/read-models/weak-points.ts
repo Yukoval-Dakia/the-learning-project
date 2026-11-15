@@ -23,7 +23,7 @@
 // 与 YUK-1584 的边界：本端口刻意不读掌握结论（p(L)/θ/FSRS），落点是定性证据折叠结果；
 // 需要掌握读数的消费方走 readLearnerJudgments。
 
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { settlementReversions } from '@/core/assessment-settlement-liveness';
 import {
   type CauseCategoryT,
@@ -46,12 +46,13 @@ import {
   weakPointKey,
 } from '@/core/schema/weak-point';
 import type { Db, Tx } from '@/db/client';
-import { event, knowledge, misconception, misconception_edge } from '@/db/schema';
+import { event, knowledge } from '@/db/schema';
 import { agentCauseCountsAsObservation } from '@/kernel/read-models/cause-confidence';
 import {
   type FailureAttempt,
   getFailureAttemptsForDerivation,
 } from '@/kernel/read-models/failure-attempts';
+import { listDerivableMisconceptionEvidenceForKcs } from '@/kernel/read-models/failure-learning-context';
 import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -425,25 +426,7 @@ export async function deriveActionableWeakPoints(
     ),
   ];
   if (cellKnowledgeIds.length > 0) {
-    const rows = await db
-      .select({
-        id: misconception.id,
-        source: misconception.source,
-        evidence: misconception.evidence,
-      })
-      .from(misconception_edge)
-      .innerJoin(misconception, eq(misconception.id, misconception_edge.from_id))
-      .where(
-        and(
-          eq(misconception_edge.from_kind, 'misconception'),
-          eq(misconception_edge.to_kind, 'knowledge'),
-          eq(misconception_edge.relation_type, 'caused_by'),
-          inArray(misconception_edge.to_id, cellKnowledgeIds),
-          isNull(misconception_edge.archived_at),
-          isNull(misconception.archived_at),
-          eq(misconception.status, 'active'),
-        ),
-      );
+    const rows = await listDerivableMisconceptionEvidenceForKcs(db, cellKnowledgeIds);
     for (const row of rows) {
       liveMisconceptionById.set(row.id, { source: row.source, evidence: row.evidence ?? [] });
     }
