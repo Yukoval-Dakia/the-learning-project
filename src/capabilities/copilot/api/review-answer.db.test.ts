@@ -1,9 +1,8 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ingestionCapability } from '@/capabilities/ingestion/manifest';
+import { capabilities } from '@/capabilities';
 import { createAttempt } from '@/capabilities/practice/grading/api/submit';
 import { submitReviewAnswerTool } from '@/capabilities/practice/grading/tools/submit-review-answer';
-import { practiceCapability } from '@/capabilities/practice/manifest';
 import { installPracticeHost } from '@/capabilities/practice/public';
 import {
   assessment_submission,
@@ -23,7 +22,6 @@ import {
   nativeSoloHttpFixture,
 } from '../../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { copilotCapability } from '../manifest';
 import {
   type CopilotExecutionAdapters,
   createCopilotExecutionOwner,
@@ -44,7 +42,7 @@ vi.mock('@/server/boss/client', () => ({
 // Only queue delivery is substituted. Real route/session/acceptance/original/effect owners run.
 vi.mock('@/kernel/background-job-enqueue', () => ({ shouldEnqueueBackgroundJobs: () => true }));
 registerTool(submitReviewAnswerTool);
-const app = buildHonoApp([copilotCapability, ingestionCapability, practiceCapability], {
+const app = buildHonoApp(capabilities, {
   epochGate: async () => ({ runnable: true }),
 });
 const token = 'offline-yuk1356-token';

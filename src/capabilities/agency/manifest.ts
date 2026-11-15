@@ -7,6 +7,7 @@ import {
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { nightlyEligibility } from '@/kernel/nightly-eligibility';
+import { LEARNING_ACTIVITY_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
   AgentNotesQuerySchema,
@@ -22,7 +23,6 @@ import {
   ProbeAnswerResponseSchema,
 } from './api/contracts';
 import { CreateGoalBody, GoalSchema } from './api/goal-contracts';
-import { CURATOR_ACTIVITY_ACTIONS } from './context/activity-contract';
 import { ChangeResult } from './context/topic-contract';
 import {
   ContextActionRequest,
@@ -60,7 +60,7 @@ export const agencyCapability = defineCapability({
       {
         id: 'agency.curator-activity',
         version: 1,
-        actions: CURATOR_ACTIVITY_ACTIONS,
+        actions: [...LEARNING_ACTIVITY_ACTIONS],
         load: () => import('./context/activity').then((m) => m.buildCuratorActivitySubscriber),
       },
       {
