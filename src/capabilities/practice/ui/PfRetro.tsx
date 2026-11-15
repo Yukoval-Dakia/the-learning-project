@@ -25,9 +25,8 @@ import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { Button, Chip } from '@/ui-next/public';
-
-import type { PaperSlot } from './practice-api';
 import { PaperRetroResponse } from './PaperRetroResponse';
+import type { PaperSlot } from './practice-api';
 import { usePracticeClient } from './practice-client';
 
 type Verdict = 'good' | 'hard' | 'again';
