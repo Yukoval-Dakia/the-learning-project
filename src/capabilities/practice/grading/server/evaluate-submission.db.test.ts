@@ -12,9 +12,11 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { evaluateSubmission } from '@/capabilities/practice/grading/server/judge/evaluate-submission';
+import { projectEvaluationToJudgeResult } from '@/capabilities/practice/grading/server/judge/evaluation-authority';
 import { canonicalHash } from '@/core/migration/canonical';
 import type {
   ExecutionPlanT,
+  ModelUnitOutcomeT,
   ResponseSetT,
   ResponseSpecT,
   ScoringBasisT,
@@ -210,4 +212,114 @@ describe('YUK-1047 formal entry candidate reuse', () => {
       evaluateSubmission(db, { ...request, provenance: { source: 'automatic', assisted: true } }),
     ).rejects.toMatchObject({ code: 'evaluation_key_conflict' });
   });
+});
+
+// @invariant grading: a new evaluation identity seals the same safe chart feedback that is stored, returned and replayed; raw executor output remains raw.
+// @fails-if evaluation identity hashes unsafe feedback, persisted/projection bytes diverge, or replay rewrites the candidate.
+it('seals safe chart feedback before assigning its durable evaluation identity', async () => {
+  // Synthetic accepted Markdown; no provider output, learner record or measured cost.
+  const chart = {
+    v: 1,
+    alt: 'Synthetic chart',
+    kind: 'chart',
+    chart: 'bar',
+    x: { label: 'step', scale: 'category' },
+    y: { label: 'value' },
+    series: [{ name: 'synthetic', points: [['one', 999]] }],
+  };
+  const modelFence = [
+    '```tlp-block',
+    JSON.stringify({ ...chart, data_source: { kind: 'model' }, caption: 'model caption' }),
+    '```',
+  ].join('\n');
+  const rawMd = [
+    'Plain **Markdown**.',
+    '```tlp-block',
+    JSON.stringify({
+      ...chart,
+      data_source: { kind: 'tool_result', tool_use_id: 'synthetic-unbound', path: '/series' },
+      caption: 'synthetic record claim',
+    }),
+    '```',
+    modelFence,
+  ].join('\n');
+  const safeMd = [
+    'Plain **Markdown**.',
+    '```tlp-block',
+    JSON.stringify({ ...chart, data_source: { kind: 'model' } }),
+    '```',
+    modelFence,
+  ].join('\n');
+  await seedContractChain({
+    groupId: 'chart_g',
+    revisionId: 'chart_r',
+    issuanceId: 'chart_i',
+    submissionId: 'chart_s',
+    evalGroupId: 'chart_eg',
+    units: [
+      {
+        scoring_unit_id: 'p1::u',
+        slot_refs: ['p1::r'],
+        material_refs: [],
+        evidence_slot_refs: [],
+        requires_group_evidence: false,
+        points: 4,
+        criterion: {
+          kind: 'rule_reference',
+          rule_id: 'synthetic-rule',
+          statement_md: 'Select alpha.',
+          source: 'official',
+        },
+      },
+    ],
+    assignments: [
+      {
+        scoring_unit_ids: ['p1::u'],
+        executor: {
+          kind: 'model_executor',
+          task_kind: 'AssessmentRuleJudgeTask',
+          admitted_slice_id: 'synthetic-slice',
+          max_cost_usd_micros: 1000,
+        },
+      },
+    ],
+  });
+  const rawOutcome: ModelUnitOutcomeT = {
+    kind: 'scored',
+    points_awarded: 4,
+    matched: { rule_id: 'synthetic-rule', option_ids: [] },
+    feedback_md: rawMd,
+    evidence_citations: [],
+    confidence: 1,
+    run_refs: ['synthetic:chart-output'],
+    cost_usd_micros: 0,
+  };
+  const request = {
+    submission_id: 'chart_s',
+    evaluation_group_id: 'chart_eg',
+    evaluation_key: 'submission:chart_s',
+    model_executor: async () => rawOutcome,
+  };
+  const result = await evaluateSubmission(db, request);
+  const [stored] = await db
+    .select()
+    .from(evaluation)
+    .where(eq(evaluation.evaluation_id, result.record.evaluation_id));
+  expect(stored.unit_results).toEqual(result.record.unit_results);
+  expect(stored.unit_results[0]).toMatchObject({ feedback_md: safeMd, points_awarded: 4 });
+  const { evaluation_id, ...sealedContent } = result.record;
+  expect(evaluation_id).toBe(`eva_${canonicalHash(sealedContent).slice(0, 48)}`);
+  expect(projectEvaluationToJudgeResult(result.record, result.scoring_basis).feedback_md).toBe(
+    safeMd,
+  );
+  expect(result.record.run_refs).toEqual(rawOutcome.run_refs);
+  expect(rawOutcome.feedback_md).toBe(rawMd);
+  const replay = await evaluateSubmission(db, {
+    ...request,
+    expected_evaluation_id: evaluation_id,
+  });
+  expect(replay.replayed).toBe(true);
+  expect(replay.record).toEqual(result.record);
+  expect(replay.created_at).toEqual(result.created_at);
+  expect(await db.select().from(evaluation)).toHaveLength(1);
 });

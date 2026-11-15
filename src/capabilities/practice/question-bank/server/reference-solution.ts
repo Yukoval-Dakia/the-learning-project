@@ -7,6 +7,7 @@ import { Rubric } from '@/core/schema/business';
 import { SolutionGenerateOutput } from '@/core/schema/solution';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import { downgradeUnboundChartFences } from '@/kernel/blocks/markdown-chart-fence';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
@@ -102,6 +103,7 @@ export async function generateReferenceSolution(
     console.warn(`[generateReferenceSolution] logged-skip for ${questionId}: ${reason}`);
     return { status: 'skipped_error', reason };
   }
+  const safeWorkedSolutionMd = downgradeUnboundChartFences(parsed.worked_solution_md);
 
   // Merge-preserving: keep existing criteria/keywords and replace only
   // reference_solution. A question without a rubric gets a minimal valid one.
@@ -160,7 +162,7 @@ export async function generateReferenceSolution(
     const nextEmbedHash = embedHash(
       questionEmbedText({
         prompt_md: locked.prompt_md,
-        reference_md: parsed.worked_solution_md,
+        reference_md: safeWorkedSolutionMd,
         choices_md: locked.choices_md,
       }),
     );
@@ -168,7 +170,7 @@ export async function generateReferenceSolution(
       .update(question)
       .set({
         rubric_json: mergedRubric as RubricT,
-        reference_md: parsed.worked_solution_md,
+        reference_md: safeWorkedSolutionMd,
         updated_at: new Date(),
         ...(nextEmbedHash !== locked.embed_content_hash
           ? { embedding: null, embed_content_hash: nextEmbedHash, embed_source_revision: null }
