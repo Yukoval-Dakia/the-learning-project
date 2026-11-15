@@ -376,10 +376,9 @@ export async function batchAcceptProposals(db: Db, input: unknown): Promise<Batc
           err.code === 'conflict' || err.code === 'not_pending' ? 'rejected' : 'failed';
         if (status === 'failed') {
           console.warn('[proposal-batch-accept] accept failed', {
-            proposal_id: id,
-            kind: payload.kind,
-            code: err.code,
-            error: err.message,
+            code: /^[a-z][a-z0-9_]{0,63}$/.test(err.code) ? err.code : 'redacted_code',
+            status: err.status,
+            error_class: 'ApiError',
           });
         }
         items.push(
@@ -393,9 +392,7 @@ export async function batchAcceptProposals(db: Db, input: unknown): Promise<Batc
         );
       } else {
         console.warn('[proposal-batch-accept] accept failed', {
-          proposal_id: id,
-          kind: payload.kind,
-          error: err instanceof Error ? err.message : String(err),
+          error_class: err instanceof Error ? 'Error' : 'NonError',
         });
         items.push(item(id, payload.kind, 'failed', 'accept_failed'));
       }
