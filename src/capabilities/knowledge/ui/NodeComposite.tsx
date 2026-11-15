@@ -34,9 +34,8 @@ export interface NodeCompositeProps {
   onDiscussJudgment: () => void;
 }
 
-// Canonical ability_claim → honest label. low_observed is 「低掌握读数」, never
-// 「不会」: it only means the observed reading sits below the disagreement
-// rule's low side.
+// ability_claim kind → label. The note below stays inside the published
+// reading; it does not reinterpret the canonical judgement sentence.
 const ABILITY_CLAIM_LABEL: Record<NodeJudgment['ability_claim']['kind'], string> = {
   low_observed: '掌握读数偏低',
   observed: '掌握读数',
@@ -48,7 +47,7 @@ const ABILITY_CLAIM_LABEL: Record<NodeJudgment['ability_claim']['kind'], string>
 function abilityClaimNote(claim: NodeJudgment['ability_claim']): string | null {
   switch (claim.kind) {
     case 'low_observed':
-      return '本人作答读数在低掌握一侧；不等于「不会」，只是现有证据下的判断。';
+      return '本人作答读数在低掌握一侧，尚未个人校准。';
     case 'observed':
       return '本人作答读数不在低掌握一侧。';
     case 'insufficient_evidence':
@@ -94,7 +93,7 @@ function disagreementText(
         ? '仅记忆保持读数可用，暂无法对比两端。'
         : '仅掌握读数可用，暂无法对比两端。';
     case 'unknown':
-      return '两端读数均不可用，还不知道。';
+      return '暂时无法比较会做与记忆保持。';
   }
 }
 
