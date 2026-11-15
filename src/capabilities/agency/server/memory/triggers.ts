@@ -10,7 +10,7 @@ import {
 import { loadSubjectBriefEvents, subjectScopeHasNewEvidence } from './active-subjects';
 import { type GenerateBrief, regenerateMemoryBrief, scopeHasNewEvidence } from './brief';
 import { executePurposeBrief } from './brief-purpose';
-import { isLearnerAnswerAction, isLearnerEvidenceAction } from './learner-evidence';
+import { isMemoryExtractionEvent } from './learner-evidence';
 import {
   type MemoryClient,
   type MemoryEventInput,
@@ -222,15 +222,11 @@ export function buildMemoryEventIngestHandler(
       }
       if (!row) continue;
 
-      // Three gates before extraction: agent-originated events never feed mem0
-      // (the model must not confirm its own output), bank-authoring events are
-      // not learner evidence, and learner answers keep their verbatim text out
-      // of the infer prompt. Curator separately reads permitted learner
-      // activity — answers included — from PG.
-      const learnerEvidence = isLearnerEvidenceAction(row.action);
-      const admitToExtraction =
-        learnerEvidence && shouldExtractToMemory(row) && !isLearnerAnswerAction(row.action);
+      // Only explicit learner words enter inference. Owner-edited canonical
+      // conjectures retain their separate verbatim projection.
       const editedConjecture = editedConjectureMemory(row);
+      const admitToExtraction =
+        isMemoryExtractionEvent(row) || (shouldExtractToMemory(row) && editedConjecture !== null);
 
       // Owner-edited conjectures are already canonical text. Persist the claim verbatim
       // (infer:false) so this job makes exactly one deterministic add+embedding call and

@@ -1,10 +1,9 @@
-// The event → learner-memory-input classification. Question-bank authoring and
-// publish events are audit history, not learner evidence: they must not reach
-// extraction, trigger a brief regen, or enter the evidence window. Classify by
-// action only — real attempts can also arrive on agent lanes and be about
-// questions, so actor_kind/subject_kind would misclassify them.
+// Shared evidence reads retain real attempts, including those on agent lanes.
+// Question-bank authoring is audit history; Mem0 inference has a separate,
+// narrower gate so it cannot restrict Curator, brief or profile evidence.
 
 import { inArray, sql } from 'drizzle-orm';
+import { allowsDerivation } from '@/core/schema/derivation-policy';
 import { event } from '@/db/schema';
 import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 
@@ -66,6 +65,31 @@ const LEARNER_ANSWER_SET: ReadonlySet<string> = new Set([
  */
 export function isLearnerAnswerAction(action: string): boolean {
   return LEARNER_ANSWER_SET.has(action);
+}
+
+/** Narrow inference admission without changing Curator, brief or profile evidence. */
+export function isMemoryExtractionEvent(input: {
+  actor_kind: string;
+  action: string;
+  payload: unknown;
+}): boolean {
+  if (
+    input.actor_kind !== 'user' ||
+    isLearnerAnswerAction(input.action) ||
+    input.action !== 'experimental:copilot_user_ask' ||
+    !allowsDerivation(input.payload)
+  ) {
+    return false;
+  }
+  const payload = input.payload;
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    'user_message' in payload &&
+    typeof payload.user_message === 'string' &&
+    payload.user_message.trim().length > 0
+  );
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   executeMem0OpaqueOperation,
 } from '@/server/ai/provider-attempt-runtime';
 import { DASHSCOPE_EMBED_MODEL_ID } from '@/server/ai/providers';
+import { LEARNING_MEMORY_INSTRUCTIONS, projectEventMemory } from './event-memory-projection';
 import { type Env, memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
 
 // The global product pin selects the extraction LLM; embeddings keep their own
@@ -181,6 +182,7 @@ export function createMem0Config(env: Env = process.env): MemoryConfig {
   assertModelEndpointHostAllowed(embeddingBaseUrl, 'MEM0_EMBEDDING_BASE_URL (memory embedder)');
 
   return {
+    customInstructions: LEARNING_MEMORY_INSTRUCTIONS,
     embedder: {
       provider: 'openai', // OpenAI-compatible adapter: baseURL points at DashScope
       config: {
@@ -291,16 +293,10 @@ function redactQuestionEvidenceForMemory(action: string, payload: unknown): unkn
 }
 
 function eventToText(input: MemoryEventInput): string {
-  return JSON.stringify({
-    id: input.id,
-    action: input.action,
-    subject_kind: input.subject_kind,
-    subject_id: input.subject_id,
-    // Attempt snapshots contain gold references for later evidence replay. They
-    // are system truth, not learner-authored facts, and must never enter Mem0's
-    // infer:true extraction prompt.
-    payload: redactQuestionEvidenceForMemory(input.action, input.payload),
-  });
+  return projectEventMemory(
+    input.action,
+    redactQuestionEvidenceForMemory(input.action, input.payload),
+  );
 }
 
 // One process shares one SDK instance per database and model. Each `new Memory()`
