@@ -19,6 +19,7 @@ import { startNotePageClient } from './note-page-client';
 import { startPracticeAdviceClient } from './practice-advice-client';
 import { startPracticeSubmitClient } from './practice-submit-client';
 import { startQuestionCardReadClient } from './question-card-client';
+import { startHintHistoryClient } from './solve-client';
 import { startStudyReferenceClient } from './study-reference-client';
 import { startSubjectClient } from './subject-client';
 import { startKnowledgeTreeClient, startWorkbenchClient } from './workbench-client';
@@ -31,6 +32,7 @@ const confirmationClient = {
 const failedTurnReferenceClient = {
   readTarget: readCopilotFailedTurnPracticeTarget,
   revealReference: startStudyReferenceClient,
+  restoreHints: startHintHistoryClient,
 };
 
 const questionCardClient = {
