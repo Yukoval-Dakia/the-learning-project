@@ -17,11 +17,13 @@ export type ConversationDrafts = ReturnType<typeof createConversationDrafts>;
 
 export function createConversationDrafts(store: StoreApi<CompanionState>) {
   const drafts = new Map<string | null, Draft>();
+  let creating: { sessionId: string | null; draft?: Draft } | null = null;
   const empty = (): Draft => ({ text: '', handed: null });
   drafts.set(null, empty());
 
   function current(): Draft {
     const sessionId = store.getState().currentSessionId;
+    if (creating?.sessionId === sessionId && creating.draft) return creating.draft;
     let draft = drafts.get(sessionId);
     if (!draft) {
       draft = empty();
@@ -32,10 +34,31 @@ export function createConversationDrafts(store: StoreApi<CompanionState>) {
 
   function write(sessionId: string | null, draft: Draft) {
     drafts.set(sessionId, draft);
-    if (store.getState().currentSessionId === sessionId) store.setState({ draft: draft.text });
+    if (
+      store.getState().currentSessionId === sessionId &&
+      !(creating?.sessionId === sessionId && creating.draft)
+    )
+      store.setState({ draft: draft.text });
+  }
+
+  function writeCurrent(draft: Draft) {
+    const sessionId = store.getState().currentSessionId;
+    if (creating && creating.sessionId === sessionId) {
+      creating.draft = draft;
+      store.setState({ draft: draft.text });
+    } else {
+      write(sessionId, draft);
+    }
+  }
+
+  function finishCreate() {
+    const pending = creating;
+    creating = null;
+    if (pending?.draft) write(pending.sessionId, pending.draft);
   }
 
   function select(sessionId: string): Pick<CompanionState, 'currentSessionId' | 'draft'> {
+    finishCreate();
     let draft = drafts.get(sessionId);
     if (!draft) {
       // Before the first selection, typed words and compose handoffs have no conversation yet.
@@ -47,16 +70,36 @@ export function createConversationDrafts(store: StoreApi<CompanionState>) {
   }
 
   function edit(text: string) {
-    write(store.getState().currentSessionId, { text, handed: null });
+    writeCurrent({ text, handed: null });
   }
 
   function handoff(text: string) {
     const draft = current();
     const replace = draft.text.trim() === '' || draft.text === draft.handed;
-    write(store.getState().currentSessionId, {
+    writeCurrent({
       text: replace ? text : `${draft.text}\n${text}`,
       handed: replace ? text : null,
     });
+  }
+
+  function captureCreate() {
+    const pending: NonNullable<typeof creating> = {
+      sessionId: store.getState().currentSessionId,
+    };
+    creating = pending;
+    // Pending edits stay separate from the old draft, which an earlier send may still clear.
+    return {
+      select(sessionId: string) {
+        if (creating === pending) {
+          creating = null;
+          if (pending.draft) drafts.set(sessionId, pending.draft);
+        }
+        return select(sessionId);
+      },
+      finish() {
+        if (creating === pending) finishCreate();
+      },
+    };
   }
 
   function captureSend(sessionId: string, raw: string): DraftSend {
@@ -87,5 +130,5 @@ export function createConversationDrafts(store: StoreApi<CompanionState>) {
     };
   }
 
-  return { select, edit, handoff, captureSend };
+  return { select, edit, handoff, captureCreate, captureSend };
 }
