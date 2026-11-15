@@ -15,6 +15,7 @@ import { type QuestionFullDetail, focusTitle, isDeleted, isDraft } from './libra
 import { useLibraryClient } from './library-client';
 import { MyHistory } from './MyHistory';
 import { NextSteps } from './NextSteps';
+import { PublishedQuestionVersion } from './PublishedQuestionVersion';
 import { QuestionBanner } from './QuestionBanner';
 import { QuestionEditor } from './QuestionEditor';
 import { QuestionNotice } from './QuestionNotice';
@@ -59,6 +60,7 @@ function Loaded({
           onEdit={deleted ? undefined : () => setEditing(true)}
         />
       )}
+      <PublishedQuestionVersion questionId={detail.id} />
       <MyHistory detail={detail} navigate={navigate} />
       {!deleted && (
         <NextSteps

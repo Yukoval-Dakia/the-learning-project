@@ -239,6 +239,35 @@
     box-shadow: inset 0 calc(-1 * var(--un-hairline)) 0 var(--un-md-sys-color-outline-variant);
   }
 
+  & .qd-published-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+    width: 100%;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+  }
+
+  & .qd-published-body {
+    display: grid;
+    gap: var(--un-sp-4);
+  }
+
+  & .qd-published-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2) var(--un-sp-4);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .qd-published-held {
+    color: var(--un-caution);
+    font-size: var(--un-fs-1);
+  }
+
   /* ── Next steps and tidying: label on the left, one button on the right ── */
   & .qd-next {
     display: grid;

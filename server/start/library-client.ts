@@ -7,7 +7,10 @@ import {
 } from './library-draft-promotion-client';
 import { startLibraryMistakesClient } from './library-mistake-list-client';
 import { startLibraryQuestionDeleteClient } from './library-question-delete-client';
-import { startLibraryQuestionDetailClient } from './library-question-detail-client';
+import {
+  startLibraryPublishedQuestionVersionClient,
+  startLibraryQuestionDetailClient,
+} from './library-question-detail-client';
 import { startLibraryQuestionsClient } from './library-question-list-client';
 import { startLibraryQuestionMistakesClient } from './library-question-mistakes-client';
 import { startLibraryQuestionRestoreClient } from './library-question-restore-client';
@@ -29,4 +32,5 @@ export const startLibraryClient: LibraryClient = {
   getQuestionKnowledgeOptions: () => startKnowledgeTreeClient(),
   getDraftDetail: startLibraryDraftDetailClient,
   getQuestionFull: startLibraryQuestionDetailClient,
+  getPublishedQuestionVersion: startLibraryPublishedQuestionVersionClient,
 };
