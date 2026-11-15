@@ -1,8 +1,5 @@
-// M3 知识面 — 节点详情抽屉（YUK-317）。
-// 设计基准 docs/design/loom-refresh/project/screen-knowledge.jsx（NodeDrawer）：
-// 头部 MasteryDial + 三指标（掌握度/evidence/decay）、「层级 hierarchy」与
-// 「关系 typed edges」视觉分离、AI 边提议四动作（接受/反向/改类型/忽略）、
-// EdgeCreateForm、foot 打开节点详情页。decay 用非颜色 cue（icon+label）。
+// Node drawer: reads the selected node's public judgment and keeps relationship
+// operations separate from the read-only assessment.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -11,7 +8,6 @@ import {
   ArrowRight,
   Check,
   ChevronRight,
-  Layers,
   Link2,
   ListTree,
   PencilLine,
@@ -20,12 +16,15 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
+import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import { invalidateAfterProposalDecision, queryKeys } from '@/ui/lib/write-invalidation';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button, ChipToggle, IconButton } from '@/ui-next/public';
 
 import { BandChip } from './BandChip';
-import { DecayChip, RelTag } from './KnowledgeChips';
+import { RelTag } from './KnowledgeChips';
 import { InteractiveArtifactDiscovery } from './KnowledgeDetailPage';
 import {
   type EdgeProposalInboxRow,
@@ -34,9 +33,8 @@ import {
   edgeProposalOperation,
 } from './knowledge-api';
 import { useKnowledgeClient } from './knowledge-client';
-import { isKnowledgeContainer } from './knowledge-node-kind';
 import { knowledgeNodeDrawerQueryOptions } from './knowledge-node-query';
-import { MasteryDial } from './MasteryDial';
+import { NodeJudgment } from './NodeJudgment';
 import { REL_CUE } from './relation-cue';
 
 // decay → 非颜色 cue（设计稿 DECAY_META；bucket 与 server 的
@@ -199,16 +197,14 @@ export function NodeDrawer({
     },
   });
 
-  // ADR-0033 D5 — interactive artifact discovery in the drawer. The drawer host
-  // (KnowledgePage) only fetches the tree/edges/proposals, not per-node pages, so
-  // the drawer fetches the node page itself for the picked node to read
-  // interactive_artifacts. Best-effort: enabled only while open; on error/empty
-  // the section renders nothing (InteractiveArtifactDiscovery gates on length).
+  // The host only reads tree/edges/proposals. Judgment and artifacts share this
+  // node-page response, keyed to the selected node even during a failed refresh.
   const nodePageQ = useQuery({
     ...knowledgeNodeDrawerQueryOptions(node?.id ?? '', getNodePage),
     enabled: open && node != null,
   });
-  const interactiveArtifacts = nodePageQ.data?.interactive_artifacts ?? [];
+  const nodePage = nodePageQ.data?.id === node?.id ? nodePageQ.data : undefined;
+  const interactiveArtifacts = nodePage?.interactive_artifacts ?? [];
 
   if (!node) return null;
   const parent = nodes.find((n) => n.id === node.parent_id) ?? null;
@@ -225,8 +221,16 @@ export function NodeDrawer({
       p.payload.proposed_change.from_knowledge_id === node.id ||
       p.payload.proposed_change.to_knowledge_id === node.id,
   );
-  const cue = decayCue(node.mastery);
-  const isContainer = isKnowledgeContainer(node);
+  const name = nodePage?.name ?? node.name;
+  const discussJudgment = () => {
+    if (!nodePage) return;
+    onClose();
+    setCompanionFocus({ kind: 'knowledge', id: nodePage.id, title: nodePage.name });
+    openCopilot(
+      `关于「${nodePage.name}」的当前判断（评估时点 ${new Date(nodePage.judgment.batch.as_of).toLocaleString('zh-CN')}）：\n\n${nodePage.judgment.judgement}\n\n我的疑问是：`,
+      { send: false },
+    );
+  };
 
   return (
     <>
@@ -244,56 +248,67 @@ export function NodeDrawer({
         // native <dialog> imperative API 不兼容（同 CopilotDrawer/PfCoach 先例）
         role="dialog"
         aria-modal={open}
-        aria-label={node.name}
+        aria-label={name}
         aria-hidden={!open}
       >
         <div className="kn-drawer-head">
-          {/* ⑥治理：头环去裸 pct，档由下方指标区的 BandChip 给。 */}
-          {isContainer ? (
-            <span className="kn-container-ic" aria-hidden="true">
-              <Layers size={20} />
-            </span>
-          ) : (
-            <MasteryDial mastery={node.mastery} size={40} />
-          )}
-          <h2 className="kn-drawer-title">{node.name}</h2>
+          <h2 className="kn-drawer-title">{name}</h2>
           <IconButton label="关闭" icon={<X size={18} />} onClick={onClose} />
         </div>
 
         <div className="kn-drawer-body">
-          <dl className="kn-metrics">
-            {isContainer ? (
-              <div className="kn-metric">
-                <dt>节点类型</dt>
-                <dd>
-                  <span className="kn-tag">学科容器</span>
-                </dd>
-              </div>
-            ) : null}
-            {!isContainer && (
-              <div className="kn-metric">
-                {/* A5 S1 (YUK-354) — 离散档 BandChip 替代裸 {pct}%（⑥治理：绝不裸概率）。 */}
-                <dt>掌握度</dt>
-                <dd>
-                  <BandChip input={node} />
-                </dd>
-              </div>
-            )}
-            {!isContainer && (
-              <div className="kn-metric">
-                <dt>学习依据</dt>
-                <dd className="kn-metric-n un-num">{node.evidence_count}</dd>
-              </div>
-            )}
-            {!isContainer && (
-              <div className="kn-metric">
-                <dt>记忆状态</dt>
-                <dd>
-                  <DecayChip cue={cue} />
-                </dd>
-              </div>
-            )}
-          </dl>
+          {!nodePage && nodePageQ.isPending && (
+            <SkeletonLines rows={4} label="正在读取当前判断与依据" />
+          )}
+          {nodePageQ.isError && (
+            <RetryLine
+              message={
+                nodePage ? '判断更新失败，以下保留上次读取结果。' : '当前判断与依据读取失败。'
+              }
+              onRetry={() => void nodePageQ.refetch()}
+            />
+          )}
+          {!nodePage && !nodePageQ.isPending && !nodePageQ.isError && (
+            <RetryLine
+              message="没有读到当前知识点的判断与依据。"
+              onRetry={() => void nodePageQ.refetch()}
+            />
+          )}
+          {nodePage && (
+            <>
+              {nodePageQ.isFetching && (
+                <p className="kn-quiet" role="status">
+                  正在更新判断，以下为上次读取结果。
+                </p>
+              )}
+              <NodeJudgment judgment={nodePage.judgment} onDiscussJudgment={discussJudgment} />
+              <dl className="kn-metrics">
+                {nodePage.role !== 'kc' ? (
+                  <div className="kn-metric">
+                    <dt>节点类型</dt>
+                    <dd>
+                      <span className="kn-tag">
+                        {nodePage.role === 'goal' ? '学习目标' : '知识容器'}
+                      </span>
+                    </dd>
+                  </div>
+                ) : (
+                  <>
+                    <div className="kn-metric">
+                      <dt>掌握读数</dt>
+                      <dd>
+                        <BandChip input={nodePage} />
+                      </dd>
+                    </div>
+                    <div className="kn-metric">
+                      <dt>学习依据</dt>
+                      <dd className="un-num">{nodePage.evidence_count}</dd>
+                    </div>
+                  </>
+                )}
+              </dl>
+            </>
+          )}
 
           {/* 层级块——与 typed 关系视觉分离（设计稿 L187 注释） */}
           <section className="kn-dsec" aria-labelledby="kn-dsec-tree">
