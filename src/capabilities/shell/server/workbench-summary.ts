@@ -18,7 +18,7 @@ import {
 } from '@/db/schema';
 import { proposalAutoApplyEnabled } from '@/kernel/proposals/auto-apply-marker';
 import { loadNativeReviewOccurrences } from '@/kernel/read-models/assessment-review-occurrences';
-import { LEARNING_ACTIVITY_ACTIONS } from '@/kernel/read-models/learner-activity';
+import { learningActivitySql } from '@/kernel/read-models/learner-activity';
 import { listMistakeProjectionRows } from '@/kernel/read-models/mistake-projection';
 import { type ColdStartState, buildColdStartState } from './cold-start-state';
 import { type TodayProposalKpi, loadTodayProposalKpi } from './proposal-kpi';
@@ -335,13 +335,8 @@ async function listActiveSessions(db: Db): Promise<WorkbenchSessionRow[]> {
 }
 
 async function loadWeekHeat(db: Db): Promise<WorkbenchHeatDay[]> {
-  // 近 7 天（含今天）按 BJT 日界分天，只计学习者自己的学习活动。夜间任务、判分
-  // 和定时任务的 actor 不是 user，或 action 不在学习活动集合里，不进热力。
+  // 近 7 天（含今天）按 BJT 日界分天，活动证据和用途限制由共享读口裁定。
   // generate_series 在 SQL 侧补零天；join 条件带 created_at 预过滤（宽放 8 天）。
-  const learningActions = sql.join(
-    LEARNING_ACTIVITY_ACTIONS.map((action) => sql`${action}`),
-    sql`, `,
-  );
   const rows = await db.execute<{ day: string; count: number }>(sql`
     with days as (
       select generate_series(
@@ -355,8 +350,7 @@ async function loadWeekHeat(db: Db): Promise<WorkbenchHeatDay[]> {
     left join ${event}
       on ${event.created_at} >= now() - interval '8 days'
       and (${event.created_at} at time zone 'Asia/Shanghai')::date = days.day
-      and ${event.actor_kind} = 'user'
-      and ${event.action} in (${learningActions})
+      and ${learningActivitySql()}
     group by days.day
     order by days.day
   `);

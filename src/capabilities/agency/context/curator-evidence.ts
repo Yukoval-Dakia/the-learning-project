@@ -1,9 +1,9 @@
-import { type SQL, and, asc, eq, gt, inArray, lte, notInArray } from 'drizzle-orm';
+import { type SQL, and, asc, eq, gt, inArray, lte, notInArray, or } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
+import { learningActivitySql } from '@/kernel/read-models/learner-activity';
 import { learnerEvidenceSql } from '../server/memory/learner-evidence';
-import { CURATOR_ACTIVITY_ACTIONS } from './activity-contract';
 import { gradedOutcomesForAnswerRows } from './answer-outcome';
 import { readTopics, withdrawnTopicEvidence } from './topics';
 
@@ -12,7 +12,7 @@ import { readTopics, withdrawnTopicEvidence } from './topics';
 // reflected in the projection; replaying their requests would undo a later undo.
 //
 // The one owner of the evidence-window rule: derivation policy ∩ learner
-// evidence ∩ user actor ∩ activity/goal actions ∩ withdrawal exclusion ∩
+// evidence ∩ qualifying activity or user goal actions ∩ withdrawal exclusion ∩
 // (as_of, anchor] window. Any read that must stay inside that window composes
 // this scope instead of restating the clauses.
 export async function curatorEvidenceScope(db: Db | Tx, anchorId?: string): Promise<SQL> {
@@ -29,13 +29,17 @@ export async function curatorEvidenceScope(db: Db | Tx, anchorId?: string): Prom
       ? notInArray(event.id, [...withdrawnTopicEvidence(digest)])
       : undefined,
     learnerEvidenceSql(),
-    eq(event.actor_kind, 'user'),
-    inArray(event.action, [
-      ...CURATOR_ACTIVITY_ACTIONS,
-      'rate',
-      'experimental:goal_status_update',
-      'experimental:goal_scope_update',
-    ]),
+    or(
+      learningActivitySql(),
+      and(
+        eq(event.actor_kind, 'user'),
+        inArray(event.action, [
+          'rate',
+          'experimental:goal_status_update',
+          'experimental:goal_scope_update',
+        ]),
+      ),
+    ),
     lte(event.created_at, anchor.at),
     gt(event.created_at, new Date(digest.as_of ?? anchor.at.getTime() - 30 * 86400000)),
   ) as SQL;
