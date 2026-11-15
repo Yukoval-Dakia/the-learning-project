@@ -30,6 +30,7 @@ export const startHintClient: PracticeClient['solveHint'] = async (
   hintIndex,
   issuanceId,
   requestId,
+  draftFocus,
 ) =>
   JSON.parse(
     await createStartHintRequestFunction({
@@ -41,6 +42,7 @@ export const startHintClient: PracticeClient['solveHint'] = async (
           hint_index: hintIndex,
           issuance_id: issuanceId,
           request_id: requestId,
+          draft_focus: draftFocus,
         }),
       },
     }),

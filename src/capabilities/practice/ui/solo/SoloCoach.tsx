@@ -77,6 +77,9 @@ export function SoloCoach({
               ? '这题已经交了，现在看提示不影响这次的记录。'
               : '查看新提示或恢复旧提示都会计入援助；没有提示时，只打开这里不算。'}
             越往后越接近答案，已看过的提示可以回看。
+            {!submitted &&
+              readSavedDraft &&
+              '下一阶仅使用点击时已保存的作答，不含未保存改动和附件。'}
           </p>
           {session > 0 && (
             <HintLadder
