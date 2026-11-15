@@ -14,6 +14,7 @@ type SavedCause = AttemptCauseWrite['cause'];
 
 export interface LearnerCauseSeed {
   attemptEventId: string;
+  options?: AttemptCauseOptions['options'];
   current?: {
     source: 'user' | 'agent';
     primary_category: string;
@@ -50,14 +51,15 @@ interface Entry {
 
 function initialState(target: LearnerCauseSeed): Entry {
   return {
-    status: 'idle',
-    options: [],
+    status: target.options ? 'ready' : 'idle',
+    options: target.options ?? [],
     current: target.current ?? null,
     selected: target.current?.primary_category ?? null,
     selectionEdited: false,
     note: target.current?.note ?? '',
     noteKnown: target.current?.note !== undefined,
     noteEdited: false,
+    reason: target.options?.length === 0 ? '这个科目现在还没有可选的错因。' : undefined,
   };
 }
 

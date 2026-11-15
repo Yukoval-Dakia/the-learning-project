@@ -61,10 +61,17 @@ import {
 } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
+import { answerClassCompatible } from '@/subjects/question-kind';
 import { rotationClassForKind } from '../../scheduling/public';
 // Stable fingerprint lives in a runtime-free module so operator tooling can derive a target
 // without loading this scanner's readers.
 import { type BandLevelTarget, resolveBandLevelTarget } from './band-level';
+import {
+  SUPPLY_CAUSE_RECURRENCE_THRESHOLD,
+  type SupplyCauseSignals,
+  loadSupplyCauseSignals,
+  supplyKindForWeakPoint,
+} from './cause-driven-supply';
 import { targetFingerprint } from './target-fingerprint';
 
 // ── Types（Task 13 Step 1，prompt 字面给定的形状即权威）────────────────────────
@@ -198,6 +205,9 @@ export interface FrontierKnowledgeInput {
 
 export interface ScanInput {
   frontier: FrontierKnowledgeInput[];
+  causeSignals?: SupplyCauseSignals;
+  /** Covered learnable KCs added by recurrence only; do not widen the generic pool rules. */
+  causeOnlyKnowledgeIds?: string[];
   /**
    * 现有**可发**题池（loadQuestionPool 过滤 draft/suspended，assembleScanInput 再取
    * `readAutomaticallyServableQuestionIds` 的准入集）。只有学习者真能被发到的题算真覆盖——
@@ -334,7 +344,7 @@ export const COVERAGE_DEPTH_THRESHOLD = 2;
  *                         （desiredCount 补齐到阈值；建脚手架，band=near）。
  *   R2 source_quality   : 某 KC 只有低获取档（档 3 llm-only/草稿）题 → 一个更高获取档目标（minSourceTier=2）。
  *   R3 diagnostic       : 某 KC **没有近-θ̂ 题**（无题 effectiveB 落 'near' band）→ 一个 calibrationCandidate 目标（band=near）。
- *   R4 format_diversity : 某 KC **只有 recall 题** → 一个 application/transfer 目标。
+ *   R4 format_diversity : 只有 recall 题，或同错因独立失败 ≥3 次且缺训练去向所需题型。
  *
  * 触发面 = **全部 open-goal KC**（FSRS 入册态不停止扫描）。零题 KC 只产
  * R1（无池可分析 tier/band/kind）；有题但仍 thin（< 阈值）的 KC 既产 R1（补深度）也走 R2-R4（补质量/
@@ -345,6 +355,7 @@ export function scanCoverageGaps(
   makeId: () => string = () => Math.random().toString(36).slice(2),
 ): QuestionSupplyTarget[] {
   const targets: QuestionSupplyTarget[] = [];
+  const causeOnlyKnowledgeIds = new Set(input.causeOnlyKnowledgeIds);
 
   // 现有题按 KC 索引（一题挂多 KC → 每个 KC 桶都收）。
   const questionsByKid = new Map<string, PoolQuestion[]>();
@@ -366,6 +377,7 @@ export function scanCoverageGaps(
       minSourceTier: 1 | 2 | 3;
       reason: string;
       constraints: QuestionSupplyTarget['constraints'];
+      priority?: number;
     },
   ) => {
     const fingerprint = targetFingerprint({
@@ -387,6 +399,12 @@ export function scanCoverageGaps(
       maxBudgetMicroUsd: input.evidenceDemandControl?.maxBudgetMicroUsd,
       maxAttempts: input.evidenceDemandControl?.maxAttempts,
     });
+    const existing = targets.find((target) => target.fingerprint === fingerprint);
+    if (existing) {
+      existing.priority = Math.max(existing.priority, fields.priority ?? 0);
+      existing.reason += `; ${fields.reason}`;
+      return;
+    }
     targets.push({
       id: makeId(),
       fingerprint,
@@ -404,7 +422,7 @@ export function scanCoverageGaps(
       ...(routePreference.includes('quiz_gen') && input.generationMethodBySubject?.[f.subjectId]
         ? { preferredGenerationMethod: input.generationMethodBySubject[f.subjectId] }
         : {}),
-      priority: computePriority(gapKind, f.evidenceCount),
+      priority: fields.priority ?? computePriority(gapKind, f.evidenceCount),
       reason: fields.reason,
       constraints: fields.constraints,
       context: evidenceDemandToTargetContext(demand),
@@ -413,12 +431,28 @@ export function scanCoverageGaps(
 
   for (const f of input.frontier) {
     const pool = questionsByKid.get(f.knowledgeId) ?? [];
+    const causes = (input.causeSignals?.weak_points.weak_points ?? []).filter(
+      (point) =>
+        point.knowledge_id === f.knowledgeId &&
+        point.failure_count >= SUPPLY_CAUSE_RECURRENCE_THRESHOLD,
+    );
+    const misconceptions =
+      input.causeSignals?.active_misconceptions.find(
+        (entry) => entry.knowledge_id === f.knowledgeId,
+      )?.items ?? [];
+    const causeOnly = causeOnlyKnowledgeIds.has(f.knowledgeId);
+    const causeReason = (point: (typeof causes)[number]) =>
+      `错因驱动: ${point.cause_label} (${point.cause_category}), ` +
+      `${point.failure_count} independent failures; ${point.training_destination}; ${point.target_md}` +
+      (misconceptions.length > 0
+        ? `; active misconceptions on this KC: ${misconceptions.map((item) => item.id).join(', ')}`
+        : '');
 
     // ── R1: 可发题数 < 覆盖深度阈值 → coverage 目标（补齐到阈值）─────────────
     // pool 已是**可发**题（draft/suspended 在 loadQuestionPool 过滤，准入在 assembleScanInput 过滤）。
     // 阈值化（< COVERAGE_DEPTH_THRESHOLD）让只有 1 道可发题（已入册但 thin）的 KC
     // 仍能补到目标深度（架构 doc §Scanner Rules 1）。
-    if (pool.length < COVERAGE_DEPTH_THRESHOLD) {
+    if (!causeOnly && pool.length < COVERAGE_DEPTH_THRESHOLD) {
       push(f, 'frontier_zero', {
         kind: 'any',
         difficultyBand: 'near',
@@ -427,9 +461,10 @@ export function scanCoverageGaps(
         // 新知点该有至少一道中高可信源题（架构 doc §Scanner Rules 1）。
         minSourceTier: 2,
         reason:
-          pool.length === 0
+          (pool.length === 0
             ? `frontier/new-check knowledge ${f.knowledgeId} has zero questions`
-            : `knowledge ${f.knowledgeId} is below coverage depth (${pool.length}/${COVERAGE_DEPTH_THRESHOLD} usable questions); needs more depth`,
+            : `knowledge ${f.knowledgeId} is below coverage depth (${pool.length}/${COVERAGE_DEPTH_THRESHOLD} usable questions); needs more depth`) +
+          (pool.length === 0 && causes.length > 0 ? `; ${causes.map(causeReason).join('; ')}` : ''),
         constraints: {},
       });
       if (pool.length === 0) continue; // 零题无池可分析 R2/R3/R4。
@@ -438,7 +473,7 @@ export function scanCoverageGaps(
     // ── R2: 只有低获取档（档 3）题 → 一个更高获取档目标 ──────────────────────
     const tiers = pool.map(acquisitionTierForQuestion);
     const hasHighTier = tiers.some((t) => t <= 2);
-    if (!hasHighTier) {
+    if (!causeOnly && !hasHighTier) {
       push(f, 'source_quality', {
         kind: 'any',
         difficultyBand: 'near',
@@ -469,7 +504,7 @@ export function scanCoverageGaps(
       if (q.calibrationB === null) return false; // 无可靠锚（无 item_calibration 行）不算近-θ̂ 锚。
       return difficultyBandFor(q.calibrationB, f.thetaHat) === 'near';
     });
-    if (!hasNearTheta) {
+    if (!causeOnly && !hasNearTheta) {
       push(f, 'diagnostic', {
         // 校准目标必须是**客观题**（exact/keyword 判分），否则拿回的非客观题
         // 永远产不出 active-PPI 校准标签。choice 判分恒 exact（OBJECTIVE_KINDS / R3_CALIBRATION_KIND）。
@@ -486,7 +521,7 @@ export function scanCoverageGaps(
 
     // ── R4: 只有 recall 题 → 一个 application/transfer 目标 ──────────────────
     const allRecall = pool.every((q) => isRecallKind(q.kind));
-    if (allRecall) {
+    if (!causeOnly && allRecall) {
       push(f, 'format_diversity', {
         kind: 'short_answer', // application/transfer 代表题型（ADR-0030 application class）。
         difficultyBand: 'near',
@@ -494,6 +529,21 @@ export function scanCoverageGaps(
         minSourceTier: 3, // 题型多样性属探索级，生成题可接受。
         reason: `knowledge ${f.knowledgeId} has only recall-style items; need an application/transfer item`,
         constraints: { kindRequired: true },
+      });
+    }
+
+    for (const point of causes) {
+      const kind = supplyKindForWeakPoint(point);
+      if (pool.some((question) => answerClassCompatible(question.kind, kind))) continue;
+      push(f, 'format_diversity', {
+        kind,
+        difficultyBand: 'near',
+        desiredCount: 1,
+        minSourceTier: 3,
+        reason: `${causeReason(point)}; missing answer-class-compatible practice for ${kind} (not a literal-kind or cause-treatment guarantee)`,
+        constraints: { kindRequired: true },
+        // Cause recurrence stays below zero-evidence cold-start coverage (priority 1).
+        priority: misconceptions.length > 0 ? 0.9 : 0.8,
       });
     }
   }
@@ -713,7 +763,10 @@ async function loadQuestionPool(db: Db | Tx, frontierKids: string[]): Promise<Po
  *     + scanCoverageGaps 拿缺口 targets，单次 DB 遍历出完整覆盖蓝图。
  */
 export async function assembleScanInput(db: Db | Tx): Promise<ScanInput> {
-  const { entries, frontierOnlyKids } = await loadFrontierKnowledge(db);
+  const [{ entries, frontierOnlyKids }, causeSignals] = await Promise.all([
+    loadFrontierKnowledge(db),
+    loadSupplyCauseSignals(db),
+  ]);
   const allKids = entries.map((f) => f.knowledgeId);
   const pool = await loadQuestionPool(db, allKids);
   // Draft/suspension is not the usable-question boundary: the scanner and the covered-KC filter
@@ -725,10 +778,31 @@ export async function assembleScanInput(db: Db | Tx): Promise<ScanInput> {
   );
   const questions = pool.filter((q) => admittedIds.has(q.id));
   const coveredKids = new Set(questions.flatMap((q) => q.knowledgeIds));
-  // A covered frontier KC stays out of the new scan surface so this source cannot widen R2-R4
-  // to the whole frontier; only the "nothing servable" case joins the scan.
+  // Covered learnable KCs enter only for a missing cause-required format. They do not widen
+  // the generic quality/calibration rules to the whole learnable frontier.
+  const causeOnlyKnowledgeIds = entries
+    .filter(
+      (f) =>
+        frontierOnlyKids.has(f.knowledgeId) &&
+        coveredKids.has(f.knowledgeId) &&
+        causeSignals.weak_points.weak_points.some(
+          (point) =>
+            point.knowledge_id === f.knowledgeId &&
+            point.failure_count >= SUPPLY_CAUSE_RECURRENCE_THRESHOLD &&
+            !questions.some(
+              (q) =>
+                q.knowledgeIds.includes(f.knowledgeId) &&
+                answerClassCompatible(q.kind, supplyKindForWeakPoint(point)),
+            ),
+        ),
+    )
+    .map((f) => f.knowledgeId);
+  const causeOnlyKids = new Set(causeOnlyKnowledgeIds);
   const frontier = entries.filter(
-    (f) => !frontierOnlyKids.has(f.knowledgeId) || !coveredKids.has(f.knowledgeId),
+    (f) =>
+      !frontierOnlyKids.has(f.knowledgeId) ||
+      !coveredKids.has(f.knowledgeId) ||
+      causeOnlyKids.has(f.knowledgeId),
   );
 
   // 按 subjectId 播种 routePreference + 生成方法偏好（去重——同 subject 只算一次 seed）。
@@ -749,6 +823,8 @@ export async function assembleScanInput(db: Db | Tx): Promise<ScanInput> {
 
   return {
     frontier,
+    causeSignals,
+    causeOnlyKnowledgeIds,
     questions,
     routePreferenceBySubject,
     generationMethodBySubject,
