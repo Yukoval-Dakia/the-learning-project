@@ -1854,13 +1854,13 @@ function PaperVisit({
           <h1>{detail.title}</h1>
         </div>
         <p role="status">{positionCopy}。只恢复服务器已确认保存的草稿与位置。</p>
-        <div className="pf-pp-index" aria-label="选择题目">
+        <nav className="pf-pp-index" aria-label="选择题目">
           {slots.map((s, i) => (
             <Button key={slotKey(s)} variant="secondary" onClick={() => goPos(i)}>
               第 {i + 1} 题
             </Button>
           ))}
-        </div>
+        </nav>
       </div>
     );
   return (

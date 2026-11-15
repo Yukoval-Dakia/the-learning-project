@@ -72,7 +72,7 @@ async function readLocked(
   const [paper] = session.artifact_id
     ? await tx.select().from(artifact).where(eq(artifact.id, session.artifact_id))
     : [];
-  if (!paper || paper.type !== 'tool_quiz' || !isPaperIntentSource(paper.intent_source))
+  if (paper?.type !== 'tool_quiz' || !isPaperIntentSource(paper.intent_source))
     throw new ApiError('paper_unavailable', '指定会话的卷已不可用', 404);
   let binding: Awaited<ReturnType<typeof readPaperAssessmentBinding>>;
   try {

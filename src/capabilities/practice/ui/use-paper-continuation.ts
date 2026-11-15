@@ -91,7 +91,7 @@ export function usePaperContinuation(artifactId: string, initial: PaperDetail['c
   }, [send, report]);
 
   const navigate = (issuanceId: string) => {
-    if (!initial || initial.target !== 'answer') return false;
+    if (initial?.target !== 'answer') return false;
     if (['conflict', 'unknown', 'paused'].includes(statusRef.current)) return false;
     pending.current = issuanceId;
     update('saving');
