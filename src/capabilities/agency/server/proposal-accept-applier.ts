@@ -12,6 +12,7 @@ import { createLearningIntentNote } from '@/kernel/records/learning-intent-note-
 import { type BossDispatch, dispatchNoteGeneration } from '@/kernel/records/note-handoff-protocol';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
+import { acceptGoalCompletionProposal } from './goals/completion';
 import { createLearningIntentKnowledgeNode } from './learning-intent';
 import { learningIntentTopic, sealLearningIntentOutlineReceipt } from './learning-intent-request';
 import {
@@ -88,7 +89,9 @@ export const learningItemProposalAcceptApplier: ProposalAcceptApplier = async (
 
 export const completionProposalAcceptApplier: ProposalAcceptApplier = async (db, input, runtime) =>
   wrap(
-    await acceptCompletionProposal(
+    await (input.proposal.payload.target.subject_kind === 'goal'
+      ? acceptGoalCompletionProposal
+      : acceptCompletionProposal)(
       db as Db,
       input.proposalId,
       inboxView(input),

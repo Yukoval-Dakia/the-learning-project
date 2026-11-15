@@ -28,6 +28,21 @@ export interface RunGoalScopeAndWriteParams {
   runTaskFn: TaskTextRunFn;
   env?: unknown;
   subjectProfile?: SubjectProfile;
+  /**
+   * Deterministic proposal event id for cross-retry dedup. The nightly passes
+   * `goal_scope_proposal_<sha256(bossJobId)>` so a pg-boss retry (same job.id)
+   * detects the already-written pending proposal instead of repurchasing a
+   * proposal. Omit → a fresh `newId()` (direct callers, unchanged).
+   */
+  proposalId?: string;
+  /**
+   * Stable ai_task_runs PK for cross-retry paid-at-most-once. The nightly
+   * passes `goal_scope_task_run_<sha256(bossJobId)>`; runner honors it on
+   * attempt 1 and the pre-send `ai_task_runs` running-row PK insert fail-closes
+   * a concurrent duplicate. Omit → runner generates a fresh id (direct
+   * callers, unchanged).
+   */
+  taskRunId?: string;
 }
 
 export interface RunGoalScopeAndWriteResult {
@@ -123,6 +138,7 @@ export async function runGoalScopeAndWrite(
     llmAttempted = true;
     const result = await params.runTaskFn('GoalScopeTask', input, {
       subjectProfile: params.subjectProfile,
+      ...(params.taskRunId !== undefined ? { taskRunId: params.taskRunId } : {}),
     });
     const parsed = parseGoalScopeOutput(result.text);
 
@@ -132,6 +148,7 @@ export async function runGoalScopeAndWrite(
 
     const goalId = newId();
     const proposalId = await writeAiProposal(params.db, {
+      id: params.proposalId,
       actor_ref: 'goal_scope',
       outcome: 'partial',
       payload: {

@@ -32,13 +32,21 @@ export async function projectCompletionForLearner(
   row: ProposalInboxRow,
 ): Promise<void> {
   if (row.payload.kind !== 'completion') return;
+  const subjectKind = row.target.subject_kind === 'goal' ? 'goal' : 'learning_item';
+  const goalTitle =
+    typeof row.payload.proposed_change.goal_title === 'string'
+      ? row.payload.proposed_change.goal_title
+      : '';
   const parsed = parseCompletionReceipt(row.payload.proposed_change.receipt);
   const allowed =
     parsed !== null &&
+    (row.target.subject_kind === 'goal' || row.target.subject_kind === 'learning_item') &&
     parsed.item_id === row.target.subject_id &&
-    (await completionReceiptDisplayAllowed(db, parsed));
+    row.payload.proposed_change[subjectKind === 'goal' ? 'goal_id' : 'learning_item_id'] ===
+      parsed.item_id &&
+    (await completionReceiptDisplayAllowed(db, parsed, subjectKind));
   const summary = allowed
-    ? completionReceiptSummary(parsed)
+    ? completionReceiptSummary(parsed, subjectKind === 'goal' ? goalTitle : undefined)
     : '这条完成建议的依据暂不可用；可以忽略它。';
   row.payload = parseAiProposalPayload({
     ...row.payload,
@@ -46,7 +54,9 @@ export async function projectCompletionForLearner(
     learner_summary: summary,
     evidence_refs: [],
     proposed_change: {
-      learning_item_id: row.target.subject_id,
+      ...(subjectKind === 'goal'
+        ? { goal_id: row.target.subject_id, ...(allowed ? { goal_title: goalTitle } : {}) }
+        : { learning_item_id: row.target.subject_id }),
       ...(allowed
         ? {
             completion_summary: {
@@ -60,7 +70,9 @@ export async function projectCompletionForLearner(
           }
         : {}),
     },
-    rollback_plan: { action: '撤回后恢复原学习计划状态' },
+    rollback_plan: {
+      action: subjectKind === 'goal' ? '撤回后恢复原目标状态' : '撤回后恢复原学习计划状态',
+    },
   });
   if (!allowed) {
     row.not_acceptable_reason = 'completion_evidence_unavailable';
