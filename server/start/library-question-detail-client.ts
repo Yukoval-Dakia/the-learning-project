@@ -13,12 +13,14 @@ export const startLibraryQuestionDetailClient: LibraryClient['getQuestionFull'] 
     }),
   );
 
-export const startLibraryPublishedQuestionVersionClient: NonNullable<
-  LibraryClient['getPublishedQuestionVersion']
-> = async (id) =>
-  JSON.parse(
-    await getStartLibraryPublishedQuestionVersionFunction({
-      fetch: authenticatedStartFetch,
-      data: id,
-    }),
-  );
+export const startLibraryPublishedQuestionVersionClient: Required<
+  Pick<LibraryClient, 'getPublishedQuestionVersion'>
+> = {
+  getPublishedQuestionVersion: async (id) =>
+    JSON.parse(
+      await getStartLibraryPublishedQuestionVersionFunction({
+        fetch: authenticatedStartFetch,
+        data: id,
+      }),
+    ),
+};

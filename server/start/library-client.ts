@@ -32,5 +32,5 @@ export const startLibraryClient: LibraryClient = {
   getQuestionKnowledgeOptions: () => startKnowledgeTreeClient(),
   getDraftDetail: startLibraryDraftDetailClient,
   getQuestionFull: startLibraryQuestionDetailClient,
-  getPublishedQuestionVersion: startLibraryPublishedQuestionVersionClient,
+  ...startLibraryPublishedQuestionVersionClient,
 };
