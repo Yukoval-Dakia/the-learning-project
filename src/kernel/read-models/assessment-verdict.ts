@@ -21,7 +21,6 @@ import {
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { ZodError } from 'zod';
-import { loadAcceptedProcesses } from '@/kernel/records/assessment-accepted-process';
 import {
   evaluationMemberFromRows,
   freezeEvaluationInput,
@@ -34,8 +33,8 @@ import {
 import { GroupInputContractError } from '@/core/schema/assessment/group-input';
 import {
   type AcceptedLearnerProcessT,
-  type EvaluationRecordT,
   EvaluationInputSnapshot,
+  type EvaluationRecordT,
 } from '@/core/schema/assessment/judgment';
 import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
 import {
@@ -62,6 +61,7 @@ import {
   getEffectiveTruths,
   newerEventRow,
 } from '@/kernel/events';
+import { loadAcceptedProcesses } from '@/kernel/records/assessment-accepted-process';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;

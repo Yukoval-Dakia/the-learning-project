@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { acceptedProcessEventId } from '@/core/schema/assessment/judgment';
 import {
   containsRenderedImage,
   hasInlineQuestionImage,
@@ -9,6 +8,7 @@ import type {
   PendingStateT,
   VersionedAssetRefT,
 } from '@/core/schema/assessment';
+import { acceptedProcessEventId } from '@/core/schema/assessment/judgment';
 import type { LearnerHandwritingMarkerT } from '@/core/schema/assessment/materials';
 import type { Db } from '@/db/client';
 import { readFigureMaterialMarkers } from '@/kernel/read-models/figure-origin';

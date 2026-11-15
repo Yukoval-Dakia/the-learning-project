@@ -42,7 +42,6 @@ import {
   type EvaluationRecordT,
 } from '@/core/schema/assessment/judgment';
 import { FsrsRating } from '@/core/schema/business';
-import { loadAcceptedProcesses } from '@/kernel/records/assessment-accepted-process';
 import type { Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
@@ -58,6 +57,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
+import { loadAcceptedProcesses } from '@/kernel/records/assessment-accepted-process';
 
 export const ASSESSMENT_ACTIVATION_ACTION = 'experimental:assessment_activation';
 export const ASSESSMENT_ACTIVATION_VERSION = 1 as const;

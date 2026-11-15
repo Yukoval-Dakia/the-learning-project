@@ -22,7 +22,6 @@ import {
   question_revision,
 } from '@/db/schema';
 import { LearningScope } from '@/kernel/read-models/assessment-learning-scope';
-import { projectAcceptedProcesses } from '@/kernel/records/assessment-accepted-process';
 import {
   type NativeReviewOccurrence,
   projectNativeReviewOccurrences,
@@ -31,6 +30,7 @@ import {
   nativeAttemptOutcome,
   projectGroupVerdicts,
 } from '@/kernel/read-models/assessment-verdict';
+import { projectAcceptedProcesses } from '@/kernel/records/assessment-accepted-process';
 import type { Row } from './csv';
 
 function jsonCell(value: unknown): unknown {

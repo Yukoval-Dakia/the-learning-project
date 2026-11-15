@@ -9,7 +9,6 @@
 //
 
 import { randomUUID } from 'node:crypto';
-import { acceptedProcessEventId } from '@/core/schema/assessment/judgment';
 import { AgentRunError, isProviderSessionWallClockBudgetError } from '@/ai/agent-run-error';
 import type { RunTaskResult } from '@/ai/task-result';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
@@ -25,6 +24,7 @@ import type {
   RubricCriterionT,
 } from '@/core/schema/assessment';
 import { isOriginalEvidenceQuote } from '@/core/schema/assessment/evidence-quote';
+import { acceptedProcessEventId } from '@/core/schema/assessment/judgment';
 import { AssessmentRubricDecision } from '@/core/schema/assessment/model-decision';
 import type { Db } from '@/db/client';
 import {

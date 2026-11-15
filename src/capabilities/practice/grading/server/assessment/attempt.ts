@@ -21,8 +21,8 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import type { FormalAttemptPreview } from '@/kernel/judge';
 import { lockAssessmentAttemptCapture } from '@/kernel/locks/grading';
-import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { recordAcceptedProcess } from '@/kernel/records/assessment-accepted-process';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import {
   EvaluateSubmissionError,
   activateSubmissionCandidate,
