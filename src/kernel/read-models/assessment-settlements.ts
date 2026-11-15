@@ -1,7 +1,7 @@
 // Sealed assessment settlement ledger shared by settlement and learner reads.
 // Write, replay and candidate reconstruction remain with the settlement owner.
 
-import { and, eq, gte, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, or, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import { settlementReversions } from '@/core/assessment-settlement-liveness';
 import type {
@@ -12,6 +12,7 @@ import type {
 import type { KcObservation } from '@/core/schema/assessment';
 import type { KcEvidenceApply, KcWrongCauseT } from '@/core/schema/assessment/kc-mastery-evidence';
 import type { FsrsRating } from '@/core/schema/business';
+import type { StructuralGuessing } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
@@ -98,6 +99,8 @@ export interface SettlementPlan {
   /** Which KC dragged the attempt. null only on plans sealed before this field existed. */
   kcWrongCause?: KcWrongCauseT;
   theta: ThetaApply | { applied: false; abstainReason: string };
+  /** Frozen even when theta abstains, so later corrections keep the original math version. */
+  thetaGuessing?: StructuralGuessing;
   /** exact only when every unit was deterministic. Mixed routes must not look exact. */
   judgeRoute: string;
   difficultyLabelStreamItemId: string | null;
@@ -185,7 +188,41 @@ function planFromPayload(raw: unknown): SettlementPlan | null {
       return null;
     }
   }
+  if (p.thetaGuessing !== undefined) {
+    const guessing = p.thetaGuessing;
+    if (
+      guessing === null ||
+      typeof guessing !== 'object' ||
+      !('version' in guessing) ||
+      guessing.version !== 1 ||
+      !('choiceCount' in guessing) ||
+      typeof guessing.choiceCount !== 'number' ||
+      !Number.isSafeInteger(guessing.choiceCount) ||
+      guessing.choiceCount < 2
+    )
+      return null;
+  }
   return p as unknown as SettlementPlan;
+}
+
+/** The first settlement receipt pins this submission's math through correction and retraction. */
+export async function readOriginalThetaGuessing(
+  tx: Tx,
+  submissionId: string,
+): Promise<{ guessing: StructuralGuessing | undefined } | null> {
+  const [row] = await tx
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, ASSESSMENT_SETTLEMENT_ACTION),
+        sql`${event.payload}->>'submission_id' = ${submissionId}`,
+      ),
+    )
+    .orderBy(asc(event.created_at), asc(event.id))
+    .limit(1);
+  if (!row) return null;
+  return { guessing: planFromPayload(row.payload.replay_inputs)?.thetaGuessing };
 }
 
 /** A missing or unreadable family_fold is null. There is then no fold to undo. */

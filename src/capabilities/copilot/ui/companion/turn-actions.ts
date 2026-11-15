@@ -133,7 +133,7 @@ export function createTurnActions(ctx: CompanionCtx): TurnActions {
     acceptCorrectiveChip,
     selectCorrection: (turnId, turnNumber) => ctx.set({ correctionTarget: { turnId, turnNumber } }),
     clearCorrection: () => ctx.set({ correctionTarget: null }),
-    setDraft: (draft) => ctx.set({ draft }),
+    setDraft: ctx.drafts.edit,
     setPolicy: (policy) => {
       ctx.set({ derivationPolicy: policy });
       saveCopilotDerivationPreference(policy);

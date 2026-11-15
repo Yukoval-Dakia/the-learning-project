@@ -57,6 +57,7 @@ import {
   savePaperAnswer,
 } from './practice-api';
 import { usePracticeClient } from './practice-client';
+import { usePaperCompanionFocus } from './use-paper-companion-focus';
 // YUK-784 — 采集判据与装配复用 PfSolo 先例（YUK-444 / #1069），不在本面重写判据：
 // shouldOfferProcessBox 决定过程框挂不挂，buildCaptureFields 负责 trim 判空 + 防御性截断
 // +「空值不发字段」。两者随 PfSolo 的提交引擎移到 use-practice-submit（YUK-1473）。
@@ -136,6 +137,7 @@ export function restoreEvidenceFromSlots(slots: readonly PaperSlot[]): EvidenceA
 type SlotAssessment = NonNullable<PaperSlot['assessment']>;
 type EvidenceTarget = SlotAssessment['group_evidence'][number]['target'];
 interface ServerSlotDraft {
+  assessment: SlotAssessment;
   text: string;
   files: string[];
   epoch: number;
@@ -166,6 +168,7 @@ function openEntryFileIds(responseSet: ResponseSetT | undefined): string[] {
 
 function serverSlotDraft(assessment: SlotAssessment): ServerSlotDraft {
   return {
+    assessment,
     text: nativeAnswerText(assessment, assessment.response_set),
     files: [
       ...assessment.group_evidence.map((item) => item.evidence.asset.asset_id),
@@ -461,6 +464,12 @@ function PaperVisit({
   );
   const nativeResponsesRef = useRef<Record<string, ResponseSetT>>(restored.nativeResponses);
   const nativeEpochs = useRef<Record<string, number>>({ ...restored.nativeEpochs });
+  // Each proof covers one whole response_set at an exact server epoch, never per-field ACKs.
+  const savedDrafts = useRef<Record<string, SlotAssessment>>(
+    Object.fromEntries(
+      slots.flatMap((slot) => (slot.assessment ? [[slotKey(slot), slot.assessment] as const] : [])),
+    ),
+  );
   // YUK-1051 — 卷级证据附件（整页解题照默认绑定整个 evaluation group=本卷；可在
   // EvaluationGroupPanel 改绑子集）。slot 草稿/提交的 image_refs 从这里按绑定范围展开。
   const [evidence, setEvidence] = useState<EvidenceAttachment[]>(restored.evidence);
@@ -773,6 +782,7 @@ function PaperVisit({
     if (conflictsRef.current[key]) return Promise.resolve(false);
     // A question handed in during this visit (here or elsewhere) has no draft left to save.
     if (submittedDuringAttemptsRef.current.has(key)) return Promise.resolve(true);
+    delete savedDrafts.current[key];
     const refs = imageRefs ?? evidenceIdsForSlot(evidenceRef.current, key);
     const seq = (saveSeq.current[key] ?? 0) + 1;
     saveSeq.current[key] = seq;
@@ -782,6 +792,7 @@ function PaperVisit({
     // YUK-1488 — the flag is UI state: a save that settles after the visit unmounted (the
     // unmount flush included) still lands on the server but never sets state.
     const markFailed = () => {
+      delete savedDrafts.current[key];
       delete ackedAnswers.current[key];
       if (componentActiveRef.current) setSaveFailed((f) => ({ ...f, [key]: true }));
     };
@@ -804,6 +815,8 @@ function PaperVisit({
       // Reads the epoch when it actually sends, so a save queued behind a chain uses its ACK.
       const send = (resent = false): Promise<boolean> => {
         try {
+          const assessment = nativePayloadFor(key);
+          const bound = slots.find((slot) => slotKey(slot) === key)?.assessment;
           return savePaperAnswer(
             artifactId,
             {
@@ -812,7 +825,7 @@ function PaperVisit({
               part_ref: partRef,
               answer_md: v,
               image_refs: refs,
-              assessment: nativePayloadFor(key),
+              assessment,
               expected_save_epoch: draftEpoch(key, chained),
             },
             { keepalive },
@@ -824,6 +837,12 @@ function PaperVisit({
                   ack.save_epoch,
                 );
               if (isLatest()) {
+                if (assessment && bound && ack?.save_epoch !== undefined)
+                  savedDrafts.current[key] = {
+                    ...bound,
+                    ...assessment,
+                    save_epoch: ack.save_epoch,
+                  };
                 ackedAnswers.current[key] = v;
                 if (componentActiveRef.current)
                   setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
@@ -972,6 +991,7 @@ function PaperVisit({
       sameEvidence(payload?.group_evidence ?? [], server.group_evidence)
     ) {
       nativeEpochs.current[key] = server.epoch;
+      savedDrafts.current[key] = assessment;
       ackedAnswers.current[key] = text;
       setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
       return 'adopted';
@@ -1161,6 +1181,7 @@ function PaperVisit({
       server.group_evidence.map((item) => [item.evidence.asset.asset_id, item.target]),
     );
     nativeEpochs.current[key] = Math.max(nativeEpochs.current[key] ?? 0, server.epoch);
+    savedDrafts.current[key] = server.assessment;
     ackedAnswers.current[key] = server.text;
     // A failure flag from an earlier failed re-read is moot: the slot now holds the stored draft.
     setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
@@ -1314,6 +1335,7 @@ function PaperVisit({
   // re-armed with this render's closure on each commit, so it flushes the latest drafts.
   const attachPagehide = usePagehideTransition(
     () => {
+      clearFocus();
       stopTimingSegment();
       // Guard the flush so a throw can't skip the session pause — the orphan sweep is the only
       // other backstop for a session left open on teardown.
@@ -1394,6 +1416,7 @@ function PaperVisit({
     // synchronous; `exiting`/`submitting` also disable the buttons.
     if (exitingRef.current || submittingRef.current) return;
     exitingRef.current = true;
+    clearFocus();
     setExiting(true);
     stopTimingSegment();
     // Fire any not-yet-fired debounce, then wait for ALL in-flight saves — those just fired
@@ -1483,6 +1506,54 @@ function PaperVisit({
       Object.values(bySlot).some((list) => list.length > 0),
     ) ||
     unanswerableKeys.size > 0;
+  const { attachFocus, attachReader, clearFocus } = usePaperCompanionFocus({
+    questionId: cur.question_id,
+    issuanceId: cur.assessment?.issuance_id,
+    revisionId: cur.assessment?.practice_dto.revision_id,
+    title: `第 ${pos + 1} 题（已保存内容）`,
+    available: !answerLocked && !unanswerableKeys.has(curKey) && !refreshFailed,
+    readSavedDraft: () => {
+      const saved = savedDrafts.current[curKey];
+      const current = latestSlots().find((slot) => slotKey(slot) === curKey);
+      const currentAssessment = current?.assessment;
+      const payload = nativePayloadFor(curKey);
+      if (
+        !componentActiveRef.current ||
+        slotKey(slots[posRef.current]) !== curKey ||
+        exitingRef.current ||
+        submittingRef.current ||
+        submittedDuringAttemptsRef.current.has(curKey) ||
+        current?.slot_state.submission?.submitted ||
+        conflictsRef.current[curKey] ||
+        saveTimers.current[curKey] ||
+        inFlightSaves.current.has(curKey) ||
+        chainedSaves.current[curKey] ||
+        uploading ||
+        [...blockUploads].some((key) => key.startsWith(`${curKey}::`)) ||
+        Object.values(blockUnreceipted[curKey] ?? {}).some((files) => files.length > 0) ||
+        !saved ||
+        !currentAssessment ||
+        !Number.isSafeInteger(saved.save_epoch) ||
+        saved.save_epoch <= 0 ||
+        saved.save_epoch !== nativeEpochs.current[curKey] ||
+        ackedAnswers.current[curKey] !== answersRef.current[curKey] ||
+        currentAssessment.issuance_id !== saved.issuance_id ||
+        currentAssessment.practice_dto.revision_id !== saved.practice_dto.revision_id ||
+        currentAssessment.save_epoch > saved.save_epoch ||
+        payload?.issuance_id !== saved.issuance_id ||
+        saved.practice_dto.issuance_id !== saved.issuance_id ||
+        !sameResponses(payload?.response_set, saved.response_set) ||
+        !sameEvidence(payload?.group_evidence ?? [], saved.group_evidence)
+      )
+        return undefined;
+      return {
+        question_id: cur.question_id,
+        issuance_id: saved.issuance_id,
+        revision_id: saved.practice_dto.revision_id,
+        save_epoch: saved.save_epoch,
+      };
+    },
+  });
   const curSelectedIds = curOptions.filter((o) => o.text_md === curAnswerText).map((o) => o.id);
   const answeredCount = slots.filter(
     (s) =>
@@ -1646,6 +1717,7 @@ function PaperVisit({
     const next = Math.max(0, Math.min(slots.length - 1, n));
     setPos(next);
     if (next === posRef.current) return;
+    clearFocus();
     const leaving = slots[posRef.current];
     if (leaving) {
       const leftKey = slotKey(leaving);
@@ -1675,6 +1747,7 @@ function PaperVisit({
     )
       return;
     submittingRef.current = true;
+    clearFocus();
     setSubmitting(true);
     // YUK-1521 — the pre-submit gate: nothing is sent unless every open slot agrees with the
     // server's newest draft (or has been adopted). The conflict panel or the toast says why.
@@ -1830,8 +1903,8 @@ function PaperVisit({
         })}
       </div>
 
-      <div className="pf-pp-sheet">
-        <div className="pf-pp-qhead">
+      <div className="pf-pp-sheet" ref={attachReader}>
+        <div className="pf-pp-qhead" ref={attachFocus}>
           <span className="pf-pp-qno">
             <b>{pos + 1}</b>/{slots.length}
           </span>

@@ -62,6 +62,9 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
             and(
               eq(event.action, 'experimental:auto_enroll_observed'),
               eq(event.subject_kind, 'question_block'),
+              eq(event.actor_kind, 'agent'),
+              eq(event.actor_ref, 'workflow_judge'),
+              sql`${event.payload}->>'generated_by' = 'workflow_judge'`,
               inArray(event.subject_id, blockIds),
             ),
           )

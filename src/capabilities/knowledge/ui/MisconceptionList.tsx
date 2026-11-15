@@ -4,7 +4,7 @@
 // PORT 自设计源 docs/design/loom-refresh/project/screen-knowledge-a5.jsx 的 MisconceptionList /
 // MisconceptionCard（line 125-172）。三处 wire↔design 偏离（map FLAG）：
 //   ① DROP `{mc.note}` —— 节点页 wire 的 MisconceptionRow 无 note 字段；trace 只渲 evidence
-//      event 回链 chips，绝不编造 note。
+//      event 回链，绝不编造 note。
 //   ② `segment` 驱动两段区分（mock 无 segment 处理）：confirmed 用 `data-tone=<status>` +
 //      复发中/消退中 status badge；candidate 用 `data-tone="candidate"` + 「猜想 · 候选」tag
 //      （dashed/muted，同 frontier 的「建议」tag）。诚实标候选「猜想」，绝不暗示已证（⑥）。
@@ -21,7 +21,12 @@
 // soft-track 后端 slice + PR-3 promote flag OFF → confirmed 段 day-one 空）。
 
 import { Check, CircleAlert, History, RotateCcw, Sparkles, X } from 'lucide-react';
-import { useState } from 'react';
+import { type Ref, useCallback, useState } from 'react';
+import {
+  type MisconceptionTraceTarget,
+  misconceptionCardId,
+  withMisconceptionOrigin,
+} from '@/ui/lib/misconception-evidence-routes';
 import { scopedPracticeHref } from '@/ui/lib/routes';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
@@ -32,6 +37,8 @@ export interface MisconceptionListProps {
   items: MisconceptionRow[];
   /** 当前详情页 KC；「针对性练习」必须把它带进 practice scope，不能退回通用日流。 */
   knowledgeId: string;
+  returnToPlan?: boolean;
+  traceTarget?: MisconceptionTraceTarget;
   /** 读模型加载中 → loading 态（别折叠成业务空态，CodeRabbit）。 */
   isLoading?: boolean;
   /** 读模型失败 → 错误 + 重试（别误显示成空态）。 */
@@ -84,7 +91,7 @@ const SOURCE_LABEL: Record<MisconceptionRow['source'], string> = {
 
 /**
  * 纯渲染体（trace / verdict 由父注入）。抽出来让 renderToString 单测能钉 trace 开态的
- * evidence chips + verdict 的「已纠偏」卡，并让 element-tree 浅遍历直接命中三个 onClick。
+ * evidence 入口 + verdict 的「已纠偏」卡，并让 element-tree 浅遍历直接命中三个 onClick。
  */
 export function MisconceptionCardView({
   mc,
@@ -92,6 +99,8 @@ export function MisconceptionCardView({
   verdict,
   error,
   knowledgeId,
+  returnToPlan = false,
+  cardRef,
   navigate,
   onToggleTrace,
   onVerdictWrong,
@@ -102,6 +111,8 @@ export function MisconceptionCardView({
   /** B (PR-5): 乐观 verdict 回滚后的内联诚实错误（null = 无错误）。 */
   error?: string | null;
   knowledgeId: string;
+  returnToPlan?: boolean;
+  cardRef?: Ref<HTMLElement>;
   navigate: (to: string) => void;
   onToggleTrace: () => void;
   onVerdictWrong: () => void;
@@ -125,11 +136,13 @@ export function MisconceptionCardView({
   const cardTone = isConfirmed ? mc.status : 'candidate';
   // D (PR-5): `?? []` 防御（schema 上 evidence 是 notNull default []，纯防御冗余但 cheap，
   // 防 API 漂移传 null 时崩）。E (PR-5): Set 去重——读模型不去重 evidence ids，重复 event ref
-  // 会同时产生重复 React key（警告 + 不稳定 reconciliation）与重复显示 chip；去重一并消除两者。
+  // 会同时产生重复 React key（警告 + 不稳定 reconciliation）与重复入口；去重一并消除两者。
   const evidence = [...new Set(mc.evidence ?? [])];
+  const cardId = misconceptionCardId({ misconceptionId: mc.id, segment: mc.segment });
+  const traceId = `trace-${cardId}`;
 
   return (
-    <article className="kn-misc" data-tone={cardTone}>
+    <article id={cardId} ref={cardRef} tabIndex={-1} className="kn-misc" data-tone={cardTone}>
       <div className="kn-misc-top">
         <span className="kn-misc-ic" aria-hidden="true">
           {/* confirmed = 确认误区（alert）；candidate = AI 猜想（sparkle，不拉警报）。 */}
@@ -157,21 +170,47 @@ export function MisconceptionCardView({
         <span>{`复现 ${mc.seen} 次`}</span>
       </div>
       {trace && (
-        <p className="kn-misc-trace">
+        <div id={traceId} className="kn-misc-trace">
           {evidence.length > 0 ? (
-            <span>来自 {evidence.length} 条学习记录。</span>
+            <>
+              <p>关联的学习记录；打开后核对原事件与更正状态。</p>
+              <ul className="kn-misc-evidence" aria-label="关联学习记录">
+                {evidence.map((eventId, index) => (
+                  <li key={eventId}>
+                    <a
+                      className="kn-misc-evidence-link"
+                      href={withMisconceptionOrigin(`/events/${encodeURIComponent(eventId)}`, {
+                        knowledgeId,
+                        misconceptionId: mc.id,
+                        segment: mc.segment,
+                        returnToPlan,
+                      })}
+                    >
+                      <span>查看学习记录 {index + 1}</span>
+                      <span className="kn-misc-evidence-id">记录 ID：{eventId}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
           ) : (
             // wire 偏离①：无 mc.note；evidence 为空时诚实标，绝不编造依据。
             <span>目前还没有可回看的学习记录。</span>
           )}
-        </p>
+        </div>
       )}
       <div className="kn-misc-acts">
         <Button size="sm" onClick={() => navigate(scopedPracticeHref(knowledgeId))}>
           <RotateCcw size={14} aria-hidden="true" />
           针对性练习
         </Button>
-        <button type="button" className="kn-link un-hit" onClick={onToggleTrace}>
+        <button
+          type="button"
+          className="kn-link un-hit"
+          aria-expanded={trace}
+          aria-controls={trace ? traceId : undefined}
+          onClick={onToggleTrace}
+        >
           <History size={14} aria-hidden="true" />
           追溯
         </button>
@@ -221,17 +260,29 @@ export function MisconceptionCardView({
 export function MisconceptionCard({
   mc,
   knowledgeId,
+  returnToPlan = false,
+  initialTrace = false,
   navigate,
   onVeto,
 }: {
   mc: MisconceptionRow;
   knowledgeId: string;
+  returnToPlan?: boolean;
+  initialTrace?: boolean;
   navigate: (to: string) => void;
   onVeto: MisconceptionListProps['onVeto'];
 }) {
-  const [trace, setTrace] = useState(false);
+  const [trace, setTrace] = useState(initialTrace);
   const [verdict, setVerdict] = useState<'wrong' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const restoreCard = useCallback(
+    (element: HTMLElement | null) => {
+      if (!initialTrace || !element) return;
+      element.focus({ preventScroll: true });
+      element.scrollIntoView({ block: 'start' });
+    },
+    [initialTrace],
+  );
   return (
     <MisconceptionCardView
       mc={mc}
@@ -239,6 +290,8 @@ export function MisconceptionCard({
       verdict={verdict}
       error={error}
       knowledgeId={knowledgeId}
+      returnToPlan={returnToPlan}
+      cardRef={restoreCard}
       navigate={navigate}
       onToggleTrace={() => setTrace((v) => !v)}
       onVerdictWrong={() => {
@@ -254,6 +307,8 @@ export function MisconceptionList({
   isError = false,
   onRetry,
   knowledgeId,
+  returnToPlan = false,
+  traceTarget,
   navigate,
   onVeto,
 }: MisconceptionListProps) {
@@ -275,9 +330,13 @@ export function MisconceptionList({
     <div className="kn-misc-list">
       {items.map((mc) => (
         <MisconceptionCard
-          key={mc.id}
+          key={`${mc.segment}:${mc.id}`}
           mc={mc}
           knowledgeId={knowledgeId}
+          returnToPlan={returnToPlan}
+          initialTrace={
+            traceTarget?.misconceptionId === mc.id && traceTarget.segment === mc.segment
+          }
           navigate={navigate}
           onVeto={onVeto}
         />

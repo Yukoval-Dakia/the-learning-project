@@ -6,6 +6,7 @@ import {
   loadKnowledgeDetailPage,
 } from '@/capabilities/knowledge/ui-public';
 import { NoteBodyPreview } from '@/capabilities/notes/ui-public';
+import { readMisconceptionTraceTarget } from '@/ui/lib/misconception-evidence-routes';
 import { startKnowledgeEdgeCreateClient } from '../knowledge-edge-create-client';
 import { startKnowledgeEdgeProposalsClient } from '../knowledge-edge-proposals-client';
 import { startKnowledgeEdgesClient } from '../knowledge-edges-client';
@@ -32,13 +33,14 @@ export const Route = createFileRoute('/knowledge/$id')({
   ssr: false,
   validateSearch: (search: Record<string, unknown>) => ({
     returnToPlan: search.returnTo === 'learning-plan',
+    traceTarget: readMisconceptionTraceTarget(search),
   }),
   component: KnowledgeDetailPage,
 });
 
 function KnowledgeDetailPage() {
   const { id } = Route.useParams();
-  const { returnToPlan } = Route.useSearch();
+  const { returnToPlan, traceTarget } = Route.useSearch();
   return (
     <StartWorkbenchShell pathname={`/knowledge/${encodeURIComponent(id)}`}>
       <KnowledgeClientProvider value={knowledgeClient}>
@@ -47,6 +49,7 @@ function KnowledgeDetailPage() {
             id={id}
             navigate={startNavigate}
             returnToPlan={returnToPlan}
+            traceTarget={traceTarget}
             NoteBodyPreview={NoteBodyPreview}
           />
         </Suspense>

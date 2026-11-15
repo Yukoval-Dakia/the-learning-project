@@ -37,6 +37,14 @@ export {
   isDifficultyBand,
   resolveBandLevelTarget,
 } from './server/band-level';
+export {
+  SUPPLY_CAUSE_RECURRENCE_THRESHOLD,
+  type SupplyCauseRequirement,
+  countSupplyKindCoverage,
+  loadSupplyCauseSignals,
+  supplyCauseRef,
+  supplyKindForWeakPoint,
+} from './server/cause-driven-supply';
 export { loadCoverageLattice } from './server/coverage-lattice';
 export type { CoverageLatticeRead } from './server/coverage-lattice-core';
 export type { DispatchResult } from './server/dispatcher';
@@ -174,6 +182,7 @@ export {
 } from './server/placement-starter-store';
 export { isUnanchoredSupplyPaused } from './server/spend-gate';
 export {
+  checkSupplyPlanDemandConstraints,
   checkSupplyPlanKnowledgeIds,
   checkSupplyPlanStructure,
   parseSupplyPlanOutput,

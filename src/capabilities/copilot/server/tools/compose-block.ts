@@ -341,14 +341,13 @@ export function createComposeBlockTool(
           // The dedicated lane draws in the background; the stored block is
           // the drawing pointer and the reply gets its placeholder immediately.
           const request = drawingRequestPort();
+          const sourceEventId = ctx.learnerAskEventId ?? ctx.causedByEventId;
           const outcome = await request(
             {
               db: ctx.db,
               sessionId: ctx.sessionId,
               taskRunId: ctx.logTaskRunId ?? ctx.taskRunId,
-              ...(ctx.causedByEventId !== undefined
-                ? { causedByEventId: ctx.causedByEventId }
-                : {}),
+              ...(sourceEventId !== undefined ? { causedByEventId: sourceEventId } : {}),
               actorRef: ctx.callerActor.ref,
               ...(ctx.sourceLedger !== undefined ? { ledger: ctx.sourceLedger } : {}),
               ...(ctx.answerOnly !== undefined ? { answerOnly: ctx.answerOnly } : {}),

@@ -28,7 +28,9 @@ import {
 } from '@/kernel/records/assessment-issuance';
 import { countPaperSlots } from '../../session/public';
 import { knowledgeLabels } from './knowledge-labels';
-import { readQuestionPace } from './question-pace';
+import { attachPaperQuestionCounts } from './paper-rank';
+import { readQuestionPacesForQuestions, readQuestionPacesForStreamItems } from './question-pace';
+import { storedStreamExceedsBudget } from './stored-stream-budget';
 import { type DailyPracticePace, estimateStreamItemMinutes } from './stream-budget';
 import { isUploadPracticeRow } from './upload-ready';
 
@@ -359,23 +361,45 @@ export async function getStreamViewItem(
 ): Promise<StreamViewItem> {
   const [metadata, pace] = await Promise.all([
     resolveStreamItemMetadata(db, [row]),
-    questionMinutes === undefined ? readQuestionPace(db) : null,
+    questionMinutes === undefined
+      ? readQuestionPacesForQuestions(db, row.item_kind === 'question' ? [row.ref_id] : [])
+      : null,
   ]);
   return toStreamViewItem(
     row,
     metadata.get(row.id) ?? EMPTY_STREAM_ITEM_METADATA,
-    questionMinutes ?? pace?.minutes ?? DEFAULT_QUESTION_MINUTES,
+    questionMinutes ??
+      (row.item_kind === 'paper'
+        ? pace?.unscoped.minutes
+        : pace?.byQuestion.get(row.ref_id)?.minutes) ??
+      DEFAULT_QUESTION_MINUTES,
   );
 }
 
 async function projectStreamViewItems(
   db: DbLike,
   rows: StreamItemRow[],
-  questionMinutes: number,
+  questionMinutes?: number,
 ): Promise<StreamViewItem[]> {
-  const metadata = await resolveStreamItemMetadata(db, rows);
+  const [metadata, paces] = await Promise.all([
+    resolveStreamItemMetadata(db, rows),
+    questionMinutes === undefined
+      ? readQuestionPacesForQuestions(
+          db,
+          rows.filter((row) => row.item_kind === 'question').map((row) => row.ref_id),
+        )
+      : null,
+  ]);
   return rows.map((row) =>
-    toStreamViewItem(row, metadata.get(row.id) ?? EMPTY_STREAM_ITEM_METADATA, questionMinutes),
+    toStreamViewItem(
+      row,
+      metadata.get(row.id) ?? EMPTY_STREAM_ITEM_METADATA,
+      questionMinutes ??
+        (row.item_kind === 'paper'
+          ? paces?.unscoped.minutes
+          : paces?.byQuestion.get(row.ref_id)?.minutes) ??
+        DEFAULT_QUESTION_MINUTES,
+    ),
   );
 }
 
@@ -394,7 +418,7 @@ export async function buildStreamView(input: {
   questionMinutes?: number;
 }): Promise<StreamView> {
   const { db, date, rows, budget, scope, openingLine } = input;
-  const questionMinutes = input.questionMinutes ?? (await readQuestionPace(db)).minutes;
+  const questionMinutes = input.questionMinutes;
   const done = rows.filter((row) => row.status === 'done').length;
   const items = await projectStreamViewItems(db, rows, questionMinutes);
   const estimatedTotalMinutes = items.reduce((sum, item) => sum + item.estimated_minutes, 0);
@@ -414,5 +438,27 @@ export async function buildStreamView(input: {
       estimated_total_minutes: estimatedTotalMinutes,
       estimated_remaining_minutes: estimatedRemainingMinutes,
     },
+  };
+}
+
+/** Budget the same scoped question prices and paper slots that the stream projects. */
+export async function readStreamBudget(
+  db: DbLike,
+  rows: StreamItemRow[],
+  recoveryRowIds: ReadonlySet<string>,
+  budgetMinutes: number,
+): Promise<{ exceedsBudget: boolean; questionMinutes: number }> {
+  const paces = await readQuestionPacesForStreamItems(
+    db,
+    await attachPaperQuestionCounts(db, rows),
+  );
+  return {
+    exceedsBudget: storedStreamExceedsBudget({
+      rows: paces.items,
+      recoveryRowIds,
+      budgetMinutes,
+      questionMinutes: paces.unscoped.minutes,
+    }),
+    questionMinutes: paces.unscoped.minutes,
   };
 }

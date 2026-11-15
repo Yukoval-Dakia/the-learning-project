@@ -21,6 +21,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { evidenceWeight, priorTau, updateDifficultyPosterior } from '@/core/difficulty-posterior';
+import type { ResponseSetT } from '@/core/schema/assessment';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   assessment_issuance,
@@ -35,12 +36,15 @@ import {
   material_fsrs_state,
   question,
   question_group_lifecycle,
+  question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import {
   type NormalizableQuestionRow,
   type PartRow,
+  contractIntegrityDigest,
   normalizeQuestionGroupToContract,
   normalizeQuestionRowToContract,
 } from '@/kernel/records/assessment-normalization';
@@ -97,10 +101,45 @@ async function seedQuestionRow(id: string, opts: SeedQuestionOpts & { parentId?:
   });
 }
 
-async function publishAdmittedForGroup(qid: string) {
+async function publishAdmittedForGroup(qid: string, nativeChoice = false) {
   const db = testDb();
   const [row] = await db.select().from(question).where(eq(question.id, qid)).limit(1);
   const n = normalizeQuestionRowToContract(row as NormalizableQuestionRow);
+  if (nativeChoice) {
+    const slot = n.response_spec.slots[0];
+    const unit = n.scoring_basis.units[0];
+    if (slot.kind !== 'single_choice' || unit.criterion.kind !== 'option_set_key') {
+      throw new Error('single-choice fixture required');
+    }
+    n.response_spec.slots = [
+      {
+        slot_id: slot.slot_id,
+        part_id: slot.part_id,
+        kind: 'select',
+        pick: 'one',
+        choice_order: slot.choice_order,
+        items: slot.options.map((option) => ({ item_id: option.option_id, label_md: option.text })),
+      },
+    ];
+    unit.criterion = { kind: 'select_key', accepted_item_ids: unit.criterion.accepted_option_ids };
+    unit.rule = {
+      version: 1,
+      cases: [
+        {
+          when: { hit: { eq: 1 }, wrong: { eq: 0 }, miss: { eq: 0 } },
+          award: { points: 1 },
+        },
+      ],
+      otherwise: { points: 0 },
+    };
+    n.execution_plan.assignments = [
+      {
+        scoring_unit_ids: [unit.scoring_unit_id],
+        executor: { kind: 'deterministic', comparator: 'set_compare' },
+      },
+    ];
+    n.integrity_digest = contractIntegrityDigest(n);
+  }
   const result = await publishQuestionGroup(db, {
     group_id: n.group_id,
     contract: {
@@ -156,7 +195,14 @@ async function writeIndependentReceipt(
 /** 单 submission group + head 同事务（§11 原子不变量）。 */
 async function seedChain(
   prefix: string,
-  opts: { kcs?: string[]; submittedAt?: Date; question?: SeedIds } = {},
+  opts: {
+    kcs?: string[];
+    submittedAt?: Date;
+    question?: SeedIds;
+    nativeChoice?: boolean;
+    choiceCount?: 2 | 4;
+    durationMs?: number;
+  } = {},
 ): Promise<SeedIds> {
   const db = testDb();
   const qid = opts.question?.qid ?? `${prefix}_q`;
@@ -165,7 +211,31 @@ async function seedChain(
   const submissionId = `${prefix}_sub`;
   const submittedAt = opts.submittedAt ?? NOW;
   if (!opts.question) await seedQuestionRow(qid, { kcs: opts.kcs });
-  const { revisionId } = opts.question ?? (await publishAdmittedForGroup(qid));
+  if (opts.nativeChoice)
+    await db
+      .update(question)
+      .set({ choices_md: ['甲', '乙', '丙', '丁'].slice(0, opts.choiceCount ?? 4) })
+      .where(eq(question.id, qid));
+  const { revisionId } = opts.question ?? (await publishAdmittedForGroup(qid, opts.nativeChoice));
+  let responseSet: ResponseSetT = { entries: [] };
+  if (opts.nativeChoice) {
+    const [revision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, revisionId));
+    const slot = revision.response_spec.slots[0];
+    if (slot.kind !== 'select') throw new Error('select fixture required');
+    responseSet = {
+      entries: [
+        {
+          slot_id: slot.slot_id,
+          kind: 'select',
+          state: 'answered',
+          item_ids: [slot.items[1].item_id],
+        },
+      ],
+    };
+  }
   await db.insert(assessment_issuance).values({
     issuance_id: issuanceId,
     revision_id: revisionId,
@@ -188,7 +258,7 @@ async function seedChain(
       issuance_id: issuanceId,
       revision_id: revisionId,
       evaluation_group_id: groupId,
-      response_set: { entries: [] },
+      response_set: responseSet,
       group_evidence: [],
       idempotency_key: `${prefix}_idem`,
       submitted_at: submittedAt,
@@ -200,6 +270,24 @@ async function seedChain(
     });
   });
   await writeIndependentReceipt(db, `${prefix}_receipt`, submissionId, submittedAt);
+  if (opts.durationMs !== undefined) {
+    await writeEvent(db, {
+      id: assessmentAttemptEventId(submissionId),
+      action: 'experimental:assessment_attempt',
+      subject_kind: 'question',
+      subject_id: qid,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      outcome: null,
+      payload: {
+        submission_id: submissionId,
+        hints_used: 0,
+        final_hint_level: 0,
+        duration_ms: opts.durationMs,
+      },
+      created_at: submittedAt,
+    });
+  }
   return { qid, revisionId, issuanceId, groupId, submissionId };
 }
 
@@ -474,10 +562,16 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     ).toEqual(expect.arrayContaining(originals));
   });
 
-  it('首次激活全对单 KC：FSRS good 卡 + θ̂ success 一次（bounded adapter 恰一次）+ snapshot brackets', async () => {
+  // @invariant grading: frozen single-choice chance and SRT share an observation scale, while duplicate delivery and correction keep one integer PFA contribution
+  // @fails-if guessing reverses a positive correct SRT residual, time stops reducing its magnitude, binary endpoints change, or correction double-counts evidence
+  it('settles frozen single-choice theta once and preserves its version through correction', async () => {
     const db = testDb();
     await seedKnowledge('kc_a', { domain: 'dom_x' });
-    const seed = await seedChain('s1', { kcs: ['kc_a'] });
+    const seed = await seedChain('s1', { kcs: ['kc_a'], nativeChoice: true, durationMs: 0 });
+    await db
+      .update(question)
+      .set({ choices_md: ['changed placeholder'] })
+      .where(eq(question.id, seed.qid));
     const unitId = `${seed.qid}::u`;
     await seedEvaluation(seed, 's1_ev1', {
       unitResults: [unitResult(unitId, 1)],
@@ -517,6 +611,77 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
         e.id === `${settleEvent?.id}:checkpoint:fsrs`,
     );
     expect(bracketEvents).toHaveLength(2);
+    expect(settleEvent?.payload).toMatchObject({
+      replay_inputs: { thetaGuessing: { version: 1, choiceCount: 4 } },
+    });
+    expect(m?.theta_hat).toBeCloseTo(0.045, 14);
+    expect((await activate('s1_ev1', { effectiveId: null, generation: 0 })).status).toBe(
+      'already_effective',
+    );
+    expect(await masteryRow('kc_a')).toEqual(m);
+    await seedEvaluation(seed, 's1_ev2', {
+      attempt: 2,
+      unitResults: [unitResult(unitId, 0)],
+      aggregate: { kind: 'points_total', points: 0, policy: { kind: 'sum' } },
+    });
+    expect((await activate('s1_ev2', { effectiveId: 's1_ev1', generation: 1 })).status).toBe(
+      'activated',
+    );
+    const corrected = await masteryRow('kc_a');
+    expect(corrected).toMatchObject({ evidence_count: 1, success_count: 0, fail_count: 1 });
+    expect(corrected?.theta_hat).toBeCloseTo(-0.075, 14);
+    expect(
+      (await settlementEvents(seed.groupId)).find((row) => row.payload.evaluation_id === 's1_ev2')
+        ?.payload,
+    ).toMatchObject({
+      replay_inputs: { thetaGuessing: { version: 1, choiceCount: 4 } },
+    });
+
+    await seedKnowledge('kc_timed', { domain: 'dom_timed' });
+    const timed = await seedChain('s1_timed', {
+      kcs: ['kc_timed'],
+      nativeChoice: true,
+      choiceCount: 2,
+      durationMs: 20000,
+    });
+    const timedUnit = `${timed.qid}::u`;
+    await seedEvaluation(timed, 's1_timed_correct', { unitResults: [unitResult(timedUnit, 1)] });
+    expect((await activate('s1_timed_correct', { effectiveId: null, generation: 0 })).status).toBe(
+      'activated',
+    );
+    expect((await masteryRow('kc_timed'))?.theta_hat).toBeCloseTo(0.013, 14);
+    expect((await masteryRow('dom_timed', 'ability_global'))?.theta_hat).toBeCloseTo(0.00156, 14);
+    expect((await settlementEvents(timed.groupId))[0]?.payload).toMatchObject({
+      replay_inputs: {
+        theta: { responseTimeMs: 20000 },
+        thetaGuessing: { version: 1, choiceCount: 2 },
+      },
+    });
+    await seedKnowledge('kc_slower', { domain: 'dom_slower' });
+    const slower = await seedChain('s1_slower', {
+      kcs: ['kc_slower'],
+      nativeChoice: true,
+      choiceCount: 2,
+      durationMs: 30000,
+    });
+    await seedEvaluation(slower, 's1_slower_correct', {
+      unitResults: [unitResult(`${slower.qid}::u`, 1)],
+    });
+    expect((await activate('s1_slower_correct', { effectiveId: null, generation: 0 })).status).toBe(
+      'activated',
+    );
+    expect((await masteryRow('kc_slower'))?.theta_hat).toBeCloseTo(0.0045, 14);
+    await seedEvaluation(timed, 's1_timed_wrong', {
+      attempt: 2,
+      unitResults: [unitResult(timedUnit, 0)],
+      aggregate: { kind: 'points_total', points: 0, policy: { kind: 'sum' } },
+    });
+    expect(
+      (await activate('s1_timed_wrong', { effectiveId: 's1_timed_correct', generation: 1 })).status,
+    ).toBe('activated');
+    const timedCorrection = await masteryRow('kc_timed');
+    expect(timedCorrection).toMatchObject({ evidence_count: 1, success_count: 0, fail_count: 1 });
+    expect(timedCorrection?.theta_hat).toBeCloseTo(-0.073, 14);
   });
 
   // @invariant grading: a per-KC partial verdict settles as ineligible because FSRS and θ̂ both abstain, while the settlement receipt preserves no_kc_evidence
@@ -793,9 +958,16 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       .toMatchObject({ evidence_count: 2, success_count: 1, fail_count: 1 });
   });
 
-  it('D15 manual/self_report：只写 FSRS，θ̂ 不写（无 self-report θ̂）', async () => {
+  // @invariant grading: manual evidence cannot move ability, and an unversioned timed attempt keeps its 1PL SRT credit when corrected automatically
+  // @fails-if manual evidence moves theta or a historical receipt silently acquires the new chance model
+  it('keeps manual ability excluded and an unversioned automatic correction on 1PL', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
-    const seed = await seedChain('s5', { kcs: ['kc_a'] });
+    const seed = await seedChain('s5', {
+      kcs: ['kc_a'],
+      nativeChoice: true,
+      choiceCount: 2,
+      durationMs: 20000,
+    });
     const unitId = `${seed.qid}::u`;
     await seedEvaluation(seed, 's5_ev1', {
       unitResults: [unitResult(unitId, 1)],
@@ -809,6 +981,27 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       rating_source?: string;
     };
     expect(payload.rating_source).toBe('user');
+    const original = (await settlementEvents(seed.groupId))[0];
+    const legacyInputs = { ...(original.payload.replay_inputs as Record<string, unknown>) };
+    delete legacyInputs.thetaGuessing;
+    await testDb()
+      .update(event)
+      .set({ payload: { ...original.payload, replay_inputs: legacyInputs } })
+      .where(eq(event.id, original.id));
+    await seedEvaluation(seed, 's5_ev2', { attempt: 2, unitResults: [unitResult(unitId, 1)] });
+    expect((await activate('s5_ev2', { effectiveId: 's5_ev1', generation: 1 })).status).toBe(
+      'activated',
+    );
+    const corrected = await masteryRow('kc_a');
+    expect(corrected).toMatchObject({ evidence_count: 1, success_count: 1, fail_count: 0 });
+    expect(corrected?.theta_hat).toBeCloseTo(0.026, 14);
+    const receipt = (await settlementEvents(seed.groupId)).find(
+      (row) => row.payload.evaluation_id === 's5_ev2',
+    );
+    if (!receipt) throw new Error('corrected settlement receipt missing');
+    expect(
+      (receipt.payload.replay_inputs as Record<string, unknown>).thetaGuessing,
+    ).toBeUndefined();
   });
 
   it('unsupported verdict ⇒ ineligible：不写任何学习态，receipt 如实记', async () => {
@@ -876,6 +1069,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(newPayload.reverted_settlement_event_ids).toContain(oldEv?.id);
   });
 
+  // @invariant grading: out-of-order settlement retains the sealed legacy math and scope while counting each original occurrence once
+  // @fails-if replay upgrades an unversioned receipt to guessing credit, changes its scope, or duplicates or drops an evidence contribution
   it.each([1, 2])(
     '有序 replay：早期证据晚到，保留封存 scope v%i 和原 occurrence',
     async (scopeVersion) => {
@@ -942,6 +1137,11 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       const m = await masteryRow('kc_a');
       expect(m?.evidence_count).toBe(2);
       expect(m?.success_count).toBe(2);
+      const replayInputs = reApplied[0]?.payload.replay_inputs as
+        | { thetaGuessing?: unknown }
+        | undefined;
+      expect(replayInputs?.thetaGuessing).toBeUndefined();
+      expect(m?.theta_hat).toBeCloseTo(0.06 + 0.12 * (1 - 1 / (1 + Math.exp(-0.0672))), 14);
       expect(new Date(m?.last_outcome_at ?? 0).toISOString()).toBe(t2.toISOString());
     },
   );

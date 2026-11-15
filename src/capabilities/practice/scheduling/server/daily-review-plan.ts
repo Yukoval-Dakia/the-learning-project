@@ -6,7 +6,7 @@
 import type { Db, Tx } from '@/db/client';
 import type { DailyReviewPlanFacts } from '@/kernel/read-models/daily-review-plan';
 import { REVIEW_DUE_LIMIT_MAX, queryReviewDue } from './due-list';
-import { readQuestionPace } from './question-pace';
+import { readQuestionPacesForQuestions } from './question-pace';
 import { resolveDailyPracticeBudget } from './stream-inputs';
 
 type DbLike = Db | Tx;
@@ -15,11 +15,15 @@ export async function readDailyReviewPlanFacts(
   db: DbLike,
   now: Date,
 ): Promise<DailyReviewPlanFacts> {
-  const [{ rows }, budget, pace] = await Promise.all([
+  const [{ rows }, budget] = await Promise.all([
     queryReviewDue(db, { limit: REVIEW_DUE_LIMIT_MAX, now }),
     resolveDailyPracticeBudget(db),
-    readQuestionPace(db, now),
   ]);
+  const { overall: pace } = await readQuestionPacesForQuestions(
+    db,
+    rows.map((row) => row.question_id),
+    now,
+  );
   return {
     due_rows: rows,
     budget_minutes: budget.minutes,

@@ -40,7 +40,7 @@ import type { CollectedSignal } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { completeDailyStreamIfDone } from './daily-stream-close';
 import { attachPaperQuestionCounts } from './paper-rank';
-import { readQuestionPace } from './question-pace';
+import { readQuestionPacesForStreamItems } from './question-pace';
 import { selectScopedKnowledgeFill } from './scoped-fill';
 import {
   type SelectionObservationInput,
@@ -52,17 +52,21 @@ import {
   composeSoftmaxStream,
 } from './softmax-selection';
 import { withdrawStalePendingDueLines } from './stale-due-lines';
-import { planStoredStreamBudgetTrim, storedStreamExceedsBudget } from './stored-stream-budget';
-import { estimateStreamItemMinutes } from './stream-budget';
+import { planStoredStreamBudgetTrim } from './stored-stream-budget';
 import { carryForwardOpenStreamItems } from './stream-carry-forward';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
-import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
+import {
+  collectComposerInputs,
+  resolveDailyPracticeBudget,
+  resolveScopedPracticeBudget,
+} from './stream-inputs';
 import { type StreamMixNote, streamMixNote, writeStreamMixNote } from './stream-mix-note';
 import {
   type StreamScope,
   type StreamView,
   buildStreamView,
   filterProspectiveStreamQuestions,
+  readStreamBudget,
 } from './stream-view';
 import {
   isUploadPracticeRow,
@@ -819,17 +823,7 @@ async function getKnowledgeScopedStream(
       : [];
   }
 
-  const [dailyBudget, questionPace] = await Promise.all([
-    resolveDailyPracticeBudget(db),
-    readQuestionPace(db),
-  ]);
-  const budget = {
-    pace: dailyBudget.pace,
-    minutes: Math.min(
-      dailyBudget.minutes,
-      SCOPED_QUESTION_LIMIT * estimateStreamItemMinutes('question', questionPace.minutes),
-    ),
-  };
+  const budget = await resolveScopedPracticeBudget(db, rows, SCOPED_QUESTION_LIMIT);
   const scope: StreamScope = {
     kind: 'knowledge',
     id: knowledgeId,
@@ -843,7 +837,6 @@ async function getKnowledgeScopedStream(
     rows,
     budget,
     scope,
-    questionMinutes: questionPace.minutes,
     openingLine: scopedOpeningLine(knowledgeRow.name, rows.length, preparing),
   });
 }
@@ -863,8 +856,12 @@ async function trimStoredPendingItemsToBudget(
       .orderBy(asc(practice_stream_item.position));
 
     const { rows: eligible, recoveryRowIds } = await filterProspectiveStreamQuestions(tx, current);
+    const paces = await readQuestionPacesForStreamItems(
+      tx,
+      await attachPaperQuestionCounts(tx, eligible),
+    );
     const deleteIds = planStoredStreamBudgetTrim({
-      rows: await attachPaperQuestionCounts(tx, eligible),
+      rows: paces.items,
       recoveryRowIds,
       budgetMinutes,
       questionMinutes,
@@ -972,20 +969,19 @@ export async function getStream(
       .orderBy(asc(practice_stream_item.position));
   }
 
-  const [budget, questionPace] = await Promise.all([
+  const [budget, gated] = await Promise.all([
     resolveDailyPracticeBudget(db),
-    readQuestionPace(db),
+    filterProspectiveStreamQuestions(db, rows),
   ]);
-  const gated = await filterProspectiveStreamQuestions(db, rows);
   rows = gated.rows;
-  const exceedsBudget = storedStreamExceedsBudget({
-    rows: await attachPaperQuestionCounts(db, rows),
-    recoveryRowIds: gated.recoveryRowIds,
-    budgetMinutes: budget.minutes,
-    questionMinutes: questionPace.minutes,
-  });
-  if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && exceedsBudget) {
-    rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes, questionPace.minutes);
+  const streamBudget = await readStreamBudget(db, rows, gated.recoveryRowIds, budget.minutes);
+  if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && streamBudget.exceedsBudget) {
+    rows = await trimStoredPendingItemsToBudget(
+      db,
+      date,
+      budget.minutes,
+      streamBudget.questionMinutes,
+    );
   }
 
   rows = (await filterProspectiveStreamQuestions(db, rows)).rows;
@@ -994,7 +990,6 @@ export async function getStream(
     date,
     rows,
     budget,
-    questionMinutes: questionPace.minutes,
     scope: null,
     // Templated opening; composer_nightly may replace it with AI text.
     openingLine:
