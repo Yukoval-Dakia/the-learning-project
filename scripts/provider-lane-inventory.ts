@@ -372,6 +372,11 @@ export const PROVIDER_LANES = [
     },
     callers: [
       {
+        path: 'src/capabilities/practice/question-bank/jobs/publication_embed.ts',
+        imports: ['@/server/ai/embed', './embed_backfill'],
+        calls: ['runQuestionEmbedding'],
+      },
+      {
         path: 'src/capabilities/practice/question-bank/jobs/embed_backfill.ts',
         imports: ['@/server/ai/embed'],
       },
@@ -392,6 +397,10 @@ export const PROVIDER_LANES = [
     directImporters: [
       { path: 'src/capabilities/ingestion/server/knowledge-namer.ts', kind: 'runtime' },
       { path: 'src/capabilities/practice/question-bank/jobs/embed_backfill.ts', kind: 'runtime' },
+      {
+        path: 'src/capabilities/practice/question-bank/jobs/publication_embed.ts',
+        kind: 'runtime',
+      },
       {
         path: 'src/capabilities/practice/question-bank/server/admission/solution-prior-vectors.ts',
         kind: 'runtime',
@@ -439,16 +448,16 @@ export const PROVIDER_LANES = [
       attemptsPerInvocation: {
         kind: 'dynamic',
         multiplierRationale:
-          'embedMany emits ceil(input_count / 10) sequential requests; the fixed 200-row backfill cap yields 20 requests before pg-boss redelivery',
+          'embedMany emits ceil(input_count / 10) sequential requests; publication embeds one question, while nightly runs at most 100 per-question calls, 10 knowledge chunks, and the existing bounded per-part solution-prior facet calls',
       },
       durableIdentity:
-        'one provider_attempt per chunk; one operation identity spans the embedMany invocation',
+        'one provider_attempt per chunk under the caller operation anchor; publication and nightly question sends share the embed_backfill/question_embedding paid identity keyed by question row version and exact text/model/embed-version/dimensions, independently of delivery id',
       timeout: '15 seconds per chunk with AbortController cancellation',
       clientRetry: 'none; the fetch executes once per attempt wrapper invocation',
       redelivery:
-        'API calls are not redelivered; llm worker jobs have retryLimit 2, so the 20-attempt backfill ceiling composes to at most 60 wire attempts per logical job',
+        'API calls are not redelivered; llm queues allow two retries, but question receipt-ready/applied results replay without payment and sending/unknown outcomes stay held; knowledge and solution-prior calls retain their existing queue retry behavior',
       fanOut:
-        'sequential ceil(input_count / 10) chunks per embedMany call; the nightly backfill reads at most 100 questions plus 100 knowledge rows, bounding one job at 20 wire attempts',
+        'publication sends at most one question text per admitted question/revision job; nightly reads at most 100 questions, 100 knowledge rows and 100 solution-prior parts, with sequential chunks of at most 10 texts and the prior owner enforcing facet bounds/deadline',
       evidence: [
         {
           path: 'src/server/ai/embed.ts',
@@ -461,6 +470,30 @@ export const PROVIDER_LANES = [
           contains: ['operationAnchor: jobs[0]?.id', 'runEmbedBackfill(db, 100'],
         },
         {
+          path: 'src/capabilities/practice/question-bank/jobs/embed_backfill.ts',
+          calls: [
+            'reservePaidEffect',
+            'recordPaidEffectResult',
+            'recordPaidEffectApplication',
+            'markPaidEffectUnknown',
+          ],
+          contains: [
+            "family: 'embed_backfill'",
+            "unit: 'question_embedding'",
+            "effect.kind === 'held'",
+          ],
+        },
+        {
+          path: 'src/capabilities/practice/question-bank/jobs/publication_embed.ts',
+          calls: ['runQuestionEmbedding'],
+          contains: ['operationAnchor: job.id'],
+        },
+        {
+          path: 'src/capabilities/practice/question-bank/server/admission/solution-prior-vectors.ts',
+          calls: ['solutionPriorFacetTexts'],
+          contains: ['.limit(limit)', 'DEADLINE_MARGIN_MS'],
+        },
+        {
           path: 'src/server/boss/queue-config.ts',
           imports: ['@/server/boss/client'],
           contains: ['JOB_RETRY_LIMIT = 2'],
@@ -468,7 +501,7 @@ export const PROVIDER_LANES = [
       ],
     },
     costSupport:
-      'provider_attempt records reported token usage and preserves unknown monetary cost',
+      'provider_attempt records reported token usage and preserves unknown monetary cost; question paid-effect receipts retain the exact vector for provider-free application recovery without treating an unknown outcome as free to retry',
   },
   {
     id: 'glm.knowledge-edge-reconcile',

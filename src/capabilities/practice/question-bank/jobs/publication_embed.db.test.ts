@@ -5,7 +5,7 @@ import { paid_effect, question } from '@/db/schema';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { EMBED_DIMS, type embedMany } from '@/server/ai/embed';
 import { _resetBossForTests, createBoss } from '@/server/boss/client';
-import { resetDb } from '../../../../../../tests/helpers/db';
+import { resetDb } from '../../../../../tests/helpers/db';
 import { enqueuePublicationEmbed } from '../server/publication-embed-enqueue';
 import { questionVectorInvalidReason, runQuestionEmbedding } from './embed_backfill';
 import {

@@ -43,7 +43,8 @@ const embedState = vi.hoisted((): { vector: number[]; onBatch: (() => Promise<vo
     return v;
   })(),
 }));
-vi.mock('@/server/ai/embed', () => ({
+vi.mock('@/server/ai/embed', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/server/ai/embed')>()),
   EMBED_MODEL: 'text-embedding-v4',
   embedText: async () => embedState.vector,
   embedMany: async (texts: string[]) => {
