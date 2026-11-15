@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
-import { ReviewTimingJsonSchema } from '@/core/schema/learner-judgment';
+import {
+  AbilityClaimSchema,
+  ComponentDisagreementSchema,
+  EvidenceAgeSchema,
+  ReviewTimingJsonSchema,
+} from '@/core/schema/learner-judgment';
 import { RetentionReadingSchema } from '@/core/schema/scheduling-state';
 import { SubjectProfileSchema } from '@/subjects/profile-schema';
 
@@ -209,6 +214,25 @@ export const KnowledgeNodePageResponseSchema = z.object({
   last_evidence_at: z.string().nullable(),
   mastery_decay_bucket: z.enum(['untrained', 'fresh', 'mild', 'stale', 'unknown']),
   review_timing: ReviewTimingJsonSchema,
+  // Focal-item projection of the same readLearnerJudgments batch that feeds
+  // mastery/retention above. Publishes only what the canonical item already
+  // carries; would_change_it/patterns/corrections stay server-side while they
+  // remain unknown.
+  judgment: z.object({
+    ability_claim: AbilityClaimSchema,
+    uncertainty: z.object({
+      evidence_age: EvidenceAgeSchema,
+      component_disagreement: ComponentDisagreementSchema,
+    }),
+    judgement: z.string(),
+    batch: z.object({
+      version: z.literal('v0-incumbent'),
+      calibration: z.literal('uncalibrated'),
+      // Evaluation instant the judgments were read at — not a historical
+      // cutoff or input watermark.
+      as_of: z.string(),
+    }),
+  }),
   subject_profile: SubjectProfileSchema.pick({
     id: true,
     displayName: true,

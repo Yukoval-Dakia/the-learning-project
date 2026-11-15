@@ -292,6 +292,7 @@ export default function KnowledgeDetailPage({
           retention: node.retention,
           evidenceCount: node.evidence_count,
         }}
+        judgment={node.judgment}
       />
 
       <div className="kn-detail-grid">
