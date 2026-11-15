@@ -38,7 +38,7 @@ function FrozenRecord({ record, lookups }: { record: MistakeRecord; lookups: Lib
             {record.promptMaterials.map((material, index) => {
               const label = material.alt_text || material.caption || `原题材料 ${index + 1}`;
               return (
-                <li key={`${material.material_id}:${index}`}>
+                <li key={material.material_id}>
                   <figure className="ql-mistake-material">
                     {material.availability === 'inline' ? (
                       <MathMarkdown notation={notation}>{material.content_md}</MathMarkdown>
@@ -84,7 +84,7 @@ function FrozenRecord({ record, lookups }: { record: MistakeRecord; lookups: Lib
         {record.wrongAnswerImages.length > 0 && (
           <ol className="ql-mistake-materials" aria-label="我的原始作答照片">
             {record.wrongAnswerImages.map((assetId, index) => (
-              <li key={`${assetId}:${index}`}>
+              <li key={assetId}>
                 <figure className="ql-mistake-material">
                   <AssetEvidencePreview
                     assetId={assetId}
