@@ -431,6 +431,33 @@
     font-weight: var(--un-fw-semibold);
   }
 
+  & .nt-generation-state {
+    display: grid;
+    gap: var(--un-sp-3);
+    margin-bottom: var(--un-sp-5);
+    padding: var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-md-sys-color-surface-container);
+  }
+
+  & .nt-generation-title {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-2);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .nt-generation-copy {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-prose);
+  }
+
+  & .nt-generation-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2);
+  }
+
   /* YUK-1772 — unresolved issues the note's author left; absent on a clean note. */
   & .nt-issues {
     display: grid;
