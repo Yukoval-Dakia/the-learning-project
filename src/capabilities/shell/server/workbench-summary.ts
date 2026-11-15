@@ -335,7 +335,7 @@ async function listActiveSessions(db: Db): Promise<WorkbenchSessionRow[]> {
 }
 
 async function loadWeekHeat(db: Db): Promise<WorkbenchHeatDay[]> {
-  // 近 7 天（含今天）按 BJT 日界分天，活动证据和用途限制由共享读口裁定。
+  // 近 7 天（含今天）按 BJT 日界分天，只计 user 活动；资格和用途限制由共享读口裁定。
   // generate_series 在 SQL 侧补零天；join 条件带 created_at 预过滤（宽放 8 天）。
   const rows = await db.execute<{ day: string; count: number }>(sql`
     with days as (
@@ -350,6 +350,7 @@ async function loadWeekHeat(db: Db): Promise<WorkbenchHeatDay[]> {
     left join ${event}
       on ${event.created_at} >= now() - interval '8 days'
       and (${event.created_at} at time zone 'Asia/Shanghai')::date = days.day
+      and ${event.actor_kind} = 'user'
       and ${learningActivitySql()}
     group by days.day
     order by days.day
