@@ -1,36 +1,44 @@
-// author_question seed core for knowledge|material questions.
+// author_question seed core for teaching_draft / knowledge / material questions.
 //
-// One call writes one original draft through QuestionAuthorTask; the copilot orchestrates
-// repeated calls. The row is inserted as draft_status='draft' and a question_draft proposal
-// is written in the same transaction. Accept promotes and FSRS-enrolls. Keeping the row at
-// propose time is required for same-turn write_quiz, which needs a real question_id.
-// No cooldown or dedup: several questions on one KC in one turn is intended.
+// YUK-1914：伙伴拟题不再走 legacy question 行 + question_draft 收件箱提案 —
+// 一律经 teaching draft 声明文档 → persistDeclaredQuestionGroup 单缝入库，
+// 与备题员切换共用同一条 save+submit+准入门，产出在题库可见的待准入题。
+// knowledge/material 仍调 QuestionAuthorTask 产内容，但其输出也转成 v2
+// 声明文档进同一缝。同一 task run 同内容重复调用靠确定性 request_id 重放。
 
-import { createId } from '@paralleldrive/cuid2';
+import { createHash } from 'node:crypto';
 import { and, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { QuestionAuthorIntentSchema } from '@/ai/task-intents';
-import { aiAgentRef } from '@/ai/task-result';
 import { answerClassForKindLabel } from '@/core/schema/answer-class';
-import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
+import { AgentRef } from '@/core/schema/business';
 import {
   type QuestionAuthorDraftT,
   normalizeAuthorStructured,
 } from '@/core/schema/question_author';
 import {
+  type QuestionDraftDocumentT,
+  structuredQuestionToDraftDocument,
+} from '@/core/schema/question-draft';
+import {
   type QuestionAnswerAnchorT,
   validateSourceLocatorBytes,
 } from '@/core/schema/question-generation-grounding';
-import type { Db } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
-import { writeAiProposal } from '@/kernel/proposals/writer';
+import { canonicalQuestionContentHash } from '@/capabilities/practice/question-bank/server/quiz/content-fingerprint';
+import type { Db, Tx } from '@/db/client';
+import { knowledge } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
-import { withAnswerClass } from '@/kernel/records/answer-class-write';
+import { draftCanonicalIdentity } from '@/kernel/records/question-draft-contract';
 import type { ToolContext } from '@/kernel/tools/types';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import {
+  type DeclaredGroupPersistResult,
+  persistDeclaredQuestionGroup,
+} from '@/server/questions/shared-submit';
+import { canonicalJson } from '@/server/questions/submit-decision';
+import type { SubmitResult, SubmitUnitOutcome } from '@/server/questions/submit-question';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
-import { assertGeneratedQuestionHasJudgeContract } from '../../grading/public';
 import { parseQuestionAuthorOutput } from '../../tasks/question-author';
 import {
   type PrepareQuestionGenerationInput,
@@ -39,8 +47,6 @@ import {
   markQuestionGenerationFailed,
   prepareQuestionGeneration,
 } from '../question-generation-grounding';
-
-const PROMPT_PREVIEW_CHARS = 120;
 
 // The single canonical kind a material plan defaults to when none is requested.
 // A persisted plan's kind must equal the prompt kind and the verifier's
@@ -71,13 +77,133 @@ export interface QuestionAuthorDeps {
   /** actor_ref for the written proposal (ctx.callerActor.ref). */
   actorRef: string;
   taskRunId: string;
+  sessionId?: string;
   causedByEventId?: string;
   runTaskFn: TaskTextRunFn;
 }
 
-export type RunQuestionAuthorResult =
-  | { status: 'proposed'; proposalId: string; questionId: string }
-  | { status: 'skipped:knowledge_not_found' };
+// ---------- shared submit seam ----------
+
+export interface CopilotDraftSubmitDeps {
+  db: Db;
+  /** ctx.callerActor.ref — 归属与发布 actor 前缀。 */
+  actorRef: string;
+  taskRunId: string;
+  /** Copilot 会话 id：草稿提交回执的会话谱系，准入 purpose 判定的来源。 */
+  sessionId?: string;
+  causedByEventId?: string;
+  beforeWrite?: (tx: Tx) => Promise<void>;
+}
+
+export type CopilotDraftSubmitResult =
+  | {
+      status: 'submitted';
+      questionId: string;
+      /** 提交缝回执的准入态（新题通常 'withheld' = 已入库待准入跑完）。 */
+      admission: 'admitted' | 'withheld' | 'pending';
+      revisionId?: string;
+      perUnit: SubmitUnitOutcome[];
+      replayed: boolean;
+    }
+  | { status: 'withheld'; published: false; detail: string; perUnit: SubmitUnitOutcome[] }
+  | { status: 'conflict'; reason: string; detail: string; questionId?: string }
+  | { status: 'declaration_failed'; detail: string };
+
+function submitReceiptToResult(submit: SubmitResult, replayed = false): CopilotDraftSubmitResult {
+  if (submit.status === 'conflict') {
+    return {
+      status: 'conflict',
+      reason: submit.reason,
+      detail: submit.detail,
+      ...(submit.question_id != null ? { questionId: submit.question_id } : {}),
+    };
+  }
+  if ('published' in submit) {
+    return { status: 'withheld', published: false, detail: submit.detail, perUnit: submit.per_unit };
+  }
+  return {
+    status: 'submitted',
+    questionId: submit.question_id,
+    admission: submit.status,
+    ...(submit.revision_id != null ? { revisionId: submit.revision_id } : {}),
+    perUnit: submit.per_unit,
+    replayed,
+  };
+}
+
+/**
+ * 声明文档 → 题库待准入的唯一写口。request_id 由内容指纹派生：同 run 重复
+ * 同参调用按原回执重放，不同内容各自落新题 —— 一轮出多题是本意，不冷却。
+ * metadata.teaching_draft 走 sourced 系统通道入 question.metadata；
+ * doc.metadata 的副本只是草稿层留痕，不作权威。
+ */
+export async function submitCopilotAuthoredDraft(
+  doc: QuestionDraftDocumentT,
+  init: { question_kind: string; difficulty?: number },
+  deps: CopilotDraftSubmitDeps,
+): Promise<CopilotDraftSubmitResult> {
+  const requestId = `author_question:${createHash('sha256')
+    .update(canonicalJson({ document: doc, question_kind: init.question_kind }))
+    .digest('hex')
+    .slice(0, 24)}`;
+  const result: DeclaredGroupPersistResult = await persistDeclaredQuestionGroup(deps.db, {
+    document: doc,
+    idNamespace: `yuk1914-author:${requestId}`,
+    saveRequestId: `${requestId}:save`,
+    submitRequestId: `${requestId}:submit`,
+    availability: 'general_pool',
+    sourced: {
+      canonical_content_hash: canonicalQuestionContentHash(draftCanonicalIdentity(doc)),
+      created_by: AgentRef.parse({
+        by: 'ai',
+        task_kind: 'author_question',
+        task_run_id: deps.taskRunId,
+      }),
+      ...(init.difficulty !== undefined ? { difficulty: init.difficulty } : {}),
+      metadata: {
+        teaching_draft: {
+          question_kind: init.question_kind,
+          chat_origin: {
+            ...(deps.sessionId != null ? { session_id: deps.sessionId } : {}),
+            ...(deps.causedByEventId != null ? { turn_id: deps.causedByEventId } : {}),
+          },
+        },
+      },
+    },
+    ctx: {
+      actorRef: deps.actorRef,
+      actorKind: 'agent',
+      ...(deps.beforeWrite ? { beforeWrite: deps.beforeWrite } : {}),
+      sessionId: deps.sessionId ?? null,
+      taskRunId: deps.taskRunId,
+      causedByEventId: deps.causedByEventId ?? null,
+    },
+  });
+  switch (result.status) {
+    case 'replayed':
+      return submitReceiptToResult(result.receipt, true);
+    case 'request_id_reused':
+      return { status: 'conflict', reason: 'request_id_reused', detail: result.detail };
+    case 'submit_rolled_back':
+      return submitReceiptToResult(result.submit);
+    case 'declaration_failed':
+      return {
+        status: 'declaration_failed',
+        detail: result.issues.map((issue) => `${issue.code}: ${issue.detail}`).join('; '),
+      };
+    case 'save_failed':
+      return {
+        status: 'conflict',
+        reason: result.save.status,
+        detail:
+          'detail' in result.save ? result.save.detail : `draft save ${result.save.status}`,
+      };
+    case 'completed':
+      return submitReceiptToResult(result.submit);
+    case 'submit_conflict':
+      return submitReceiptToResult(result.submit);
+  }
+}
 
 async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) {
   if (seed.seed_mode === 'material' && !seed.material_body_md?.trim()) {
@@ -178,10 +304,15 @@ export async function prepareQuestionAuthorTask(
   return { input: prepared.input, ctx: prepared.ctx };
 }
 
+export type RunQuestionAuthorResult =
+  | CopilotDraftSubmitResult
+  | { status: 'skipped:knowledge_not_found' };
+
 /**
- * Generate ONE draft question seeded by knowledge nodes and/or pasted material,
- * INSERT it as draft_status='draft', and write the paired `question_draft`
- * proposal in the same transaction.
+ * Generate ONE question seeded by knowledge nodes and/or pasted material via
+ * QuestionAuthorTask, then route the produced draft through the shared
+ * save+submit seam — the question lands in the bank awaiting admission, with
+ * no inbox proposal.
  *
  * Soft-skips (returns a status) only on a fully-invalid knowledge seed; every
  * other failure (LLM outage / parse failure / malformed tree) THROWS — the
@@ -200,7 +331,6 @@ export async function runQuestionAuthor(
   let preparedGrounding:
     | Awaited<ReturnType<typeof prepareQuestionGeneration<QuestionAuthorDraftT>>>
     | undefined;
-  let result: Awaited<ReturnType<QuestionAuthorDeps['runTaskFn']>>;
   let draft: QuestionAuthorDraftT;
   if (seed.seed_mode === 'material' && seed.material_body_md && seed.material_answer_anchor) {
     // Inline material IS the authoritative source; hash its exact UTF-8 bytes so
@@ -263,9 +393,8 @@ export async function runQuestionAuthor(
     }
     if (!generationResult) throw new Error('QuestionAuthorTask completed without a task result');
     draft = preparedGrounding.generated;
-    result = generationResult;
   } else {
-    result = await deps.runTaskFn('QuestionAuthorTask', input, runCtx);
+    const result = await deps.runTaskFn('QuestionAuthorTask', input, runCtx);
     draft = parseQuestionAuthorOutput(result.text);
   }
 
@@ -280,100 +409,50 @@ export async function runQuestionAuthor(
     // derive (and require non-empty) prompt_md / reference_md.
     const normalized = normalizeAuthorStructured(draft.structured);
 
-    // judge-executability contract, the SAME gate quiz_gen has run
-    // since/ (shared helper in judge/question-contract.ts): shape-valid
-    // is not enough — a draft routing to keyword without keywords, semantic
-    // without required_points, or an LLM-graded kind pinned to 'exact' is
-    // ungradeable and must be rejected BEFORE the row + proposal persist.
-    // Runs after normalizeAuthorStructured so the error label carries the
-    // derived prompt_md, and inside the try so a contract failure triggers
-    // the same plan-failed cleanup as any other persist error.
-    // pass runCtx.subjectProfile so the contract resolves the route
-    // the runtime invoker will dispatch for THIS subject (the row persists
-    // judge_kind_override = draft.judge_kind_override ?? null, so a null
-    // override goes through the profile-aware preferredRoutes ladder at judge
-    // time — the gate must resolve the same way).
-    assertGeneratedQuestionHasJudgeContract(
-      { ...draft, prompt_md: normalized.prompt_md },
-      'question_author',
-      runCtx.subjectProfile,
+    // The LLM tree becomes the declared v2 document — the same conversion the
+    // draft seam already owns for legacy structured trees. Judge-executability
+    // is the new seam's contract + admission gates, not the old kind-route
+    // contract (assertGeneratedQuestionHasJudgeContract is retired on this path).
+    const doc: QuestionDraftDocumentT = structuredQuestionToDraftDocument(normalized.structured);
+    doc.knowledge_ids = questionKnowledgeIds;
+    doc.source = { kind: 'generated', note: `author_question:${seed.seed_mode}` };
+    doc.metadata = {
+      ...doc.metadata,
+      teaching_draft: {
+        question_kind: draft.kind,
+        chat_origin: {
+          ...(deps.sessionId != null ? { session_id: deps.sessionId } : {}),
+          ...(deps.causedByEventId != null ? { turn_id: deps.causedByEventId } : {}),
+        },
+      },
+    };
+
+    const submitted = await submitCopilotAuthoredDraft(
+      doc,
+      { question_kind: draft.kind, difficulty: draft.difficulty },
+      {
+        db,
+        actorRef: deps.actorRef,
+        taskRunId: deps.taskRunId,
+        ...(deps.sessionId != null ? { sessionId: deps.sessionId } : {}),
+        ...(deps.causedByEventId != null ? { causedByEventId: deps.causedByEventId } : {}),
+      },
     );
 
-    const now = new Date();
-    const questionId = createId();
-    const promptPreview =
-      normalized.prompt_md.length > PROMPT_PREVIEW_CHARS
-        ? `${normalized.prompt_md.slice(0, PROMPT_PREVIEW_CHARS)}…`
-        : normalized.prompt_md;
-
-    let proposalId = '';
-    await db.transaction(async (tx) => {
-      await tx.insert(question).values(
-        withAnswerClass({
-          id: questionId,
-          kind: draft.kind,
-          prompt_md: normalized.prompt_md,
-          reference_md: normalized.reference_md,
-          structured: normalized.structured,
-          choices_md: draft.choices_md ?? null,
-          rubric_json: draft.rubric_json ?? null,
-          judge_kind_override: draft.judge_kind_override ?? null,
-          knowledge_ids: questionKnowledgeIds,
-          difficulty: draft.difficulty,
-          // Zero-DDL QuestionSource enum value (business.ts) — question.source is text.
-          source: 'copilot_authored',
-          source_ref: null,
-          // Option-B gate (quiz_gen precedent): invisible to pool / review / FSRS
-          // until the question_draft proposal is accepted.
-          draft_status: LEGACY_DRAFT_STATUS.DRAFT,
-          created_by: aiAgentRef('QuestionAuthorTask', result),
-          metadata: {
-            author_question: {
-              seed_mode: seed.seed_mode,
-              ...(seed.material_url ? { material_url: seed.material_url } : {}),
-              ...(seed.material_title ? { material_title: seed.material_title } : {}),
-            },
-          },
-          created_at: now,
-          updated_at: now,
-        }),
-      );
-      if (preparedGrounding) {
+    // Material-grounding evidence binds to the real question row after the
+    // seam commits; a persist failure still marks the plan failed below.
+    if (submitted.status === 'submitted' && preparedGrounding) {
+      await db.transaction(async (tx) => {
         await bindGeneratedQuestion(tx, {
-          questionId,
+          questionId: submitted.questionId,
           plan: preparedGrounding.plan,
           anchor: preparedGrounding.anchor,
           generated: { kind: draft.kind },
         });
-      }
-
-      proposalId = await writeAiProposal(tx, {
-        actor_ref: deps.actorRef,
-        payload: {
-          kind: 'question_draft',
-          target: { subject_kind: 'question', subject_id: questionId },
-          reason_md: `copilot 拟题（seed=${seed.seed_mode}）：${promptPreview}`,
-          evidence_refs: questionKnowledgeIds.map((id) => ({ kind: 'knowledge' as const, id })),
-          proposed_change: {
-            question_id: questionId,
-            kind: draft.kind,
-            difficulty: draft.difficulty,
-            knowledge_ids: questionKnowledgeIds,
-            seed_mode: seed.seed_mode,
-            prompt_preview: promptPreview,
-            ...(seed.material_url ? { material_url: seed.material_url } : {}),
-          },
-          rollback_plan: {
-            action: 'dismiss proposal; the draft question stays inert (never pooled)',
-          },
-        },
-        task_run_id: deps.taskRunId,
-        caused_by_event_id: deps.causedByEventId ?? null,
-        cost_usd: result.cost_usd,
       });
-    });
+    }
 
-    return { status: 'proposed', proposalId, questionId };
+    return submitted;
   } catch (error) {
     // Best-effort durable failure marker: a cleanup throw must NOT mask the
     // original error — log it and always rethrow the original cause.
