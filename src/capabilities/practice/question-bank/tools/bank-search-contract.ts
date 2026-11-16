@@ -48,7 +48,14 @@ export const BankAssessmentSchema = z
   .object({
     ref: z.string(),
     parts: z.array(z.string()).min(1).max(20),
-    checks: z.array(Decision.extend({ condition: z.string() })).max(10),
+    checks: z
+      .array(
+        Decision.extend({
+          // Quoted original text is accepted and normalized to the id at validation.
+          condition: z.string().describe('The conditions[].id this judgment answers (e.g. "r1").'),
+        }),
+      )
+      .max(10),
     joint: Decision,
   })
   .strict();

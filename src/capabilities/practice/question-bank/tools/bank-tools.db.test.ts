@@ -965,6 +965,66 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(JSON.stringify(paper.tool_state)).not.toContain(assessment.joint.evidence[0].quote);
   });
 
+  // @invariant security: caller judgments bind this receipt's own condition ids — a verbatim
+  // copy of the original condition text resolves to that condition's id, and anything else
+  // is refused while naming the usable ids and texts
+  // @fails-if verbatim text is rejected, an unknown condition fails without listing the
+  // available ids/texts, or a ref outside the search hits collapses into the condition error
+  it('accepts verbatim condition text as its condition id and distinguishes foreign refs', async () => {
+    const { owner, search, assessment } = await receiptFixture('receipt-condition-text');
+    const conditionText = search.conditions[0].text;
+    await expect(
+      writeQuizTool.execute(owner, {
+        search_id: search.search_id,
+        assessments: [{ ...assessment, ref: 'ref-not-in-search' }],
+      }),
+    ).rejects.toThrow('not a hit of this search');
+    await expect(
+      writeQuizTool.execute(owner, {
+        search_id: search.search_id,
+        assessments: [
+          {
+            ...assessment,
+            checks: [{ ...assessment.checks[0], condition: '不存在的条件原文' }],
+          },
+        ],
+      }),
+    ).rejects.toThrow(`${search.conditions[0].id} "${conditionText}"`);
+    await expect(
+      writeQuizTool.execute(owner, {
+        search_id: search.search_id,
+        assessments: [
+          {
+            ...assessment,
+            checks: [
+              { ...assessment.checks[0], condition: conditionText },
+              ...assessment.checks.slice(1),
+              assessment.checks[0],
+            ],
+          },
+        ],
+      }),
+    ).rejects.toThrow('one check per condition id');
+    const verbatim = assessment.checks.map((c) => ({ ...c, condition: conditionText }));
+    await writeQuizTool.execute(owner, {
+      search_id: search.search_id,
+      assessments: [{ ...assessment, checks: verbatim }],
+    });
+    const [snapshot] = await db
+      .select()
+      .from(schema.bank_search_snapshot)
+      .where(eq(schema.bank_search_snapshot.search_id, search.search_id));
+    const decisions = (
+      snapshot.payload as {
+        decisions: Record<string, { assessments: { checks: { condition: string }[] }[] }>;
+      }
+    ).decisions;
+    const stored = Object.values(decisions).flatMap((d) =>
+      d.assessments.flatMap((a) => a.checks.map((c) => c.condition)),
+    );
+    expect(stored).toEqual(search.conditions.map((c) => c.id));
+  });
+
   // @invariant security: private receipt quotes never reach learner tool activity or mirrored events
   // @fails-if assessment quotes or demand prose survive the live, persisted or tool_use projection
   it('keeps receipt evidence out of learner-visible tool activity', async () => {

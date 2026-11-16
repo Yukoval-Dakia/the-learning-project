@@ -314,22 +314,48 @@ function assessBankReceipt(receipt: BankReceipt, raw: BankAssessment[]) {
     throw new BankSearchError('Duplicate candidate assessment');
   const accepted: string[] = [];
   const acceptedRefs: string[] = [];
+  const conditionIds = new Set(receipt.output.conditions.map((c) => c.id));
+  const conditionListing = receipt.output.conditions.map((c) => `${c.id} "${c.text}"`).join('; ');
+  // Models quote the original condition text verbatim; it resolves to that
+  // condition's id only when the text is unique among this search's conditions.
+  const resolveConditionId = (raw: string) => {
+    if (conditionIds.has(raw)) return raw;
+    const byText = receipt.output.conditions.filter((c) => c.text === raw);
+    return byText.length === 1 ? byText[0].id : null;
+  };
   for (const assessment of assessments) {
     const hit = receipt.output.hits.find((h) => h.ref === assessment.ref);
-    if (!hit?.available || assessment.parts.some((p) => !hit.parts.includes(p)))
+    if (!hit)
+      throw new BankSearchError(
+        `Assessed ref '${assessment.ref.slice(0, 120)}' is not a hit of this search — assess a hit by its ref: ${
+          receipt.output.hits.flatMap((h) => (h.ref ? [h.ref] : [])).join(', ') ||
+          '(no hits carry a ref)'
+        }`,
+      );
+    if (!hit.available || assessment.parts.some((p) => !hit.parts.includes(p)))
       throw new BankSearchError('Assessment selects unavailable candidate or foreign part');
     // Missing input is a deterministic unknown, regardless of a caller's opinion.
     if (hit.missing.some((m) => assessment.parts.includes(m.part))) {
       assessment.checks = assessment.checks.map((c) => ({ ...c, verdict: 'unknown' as const }));
       assessment.joint = { ...assessment.joint, verdict: 'unknown' };
     }
-    const checks = assessment.checks;
+    const checks = assessment.checks.map((c) => {
+      const resolved = resolveConditionId(c.condition);
+      return resolved === null || resolved === c.condition ? c : { ...c, condition: resolved };
+    });
+    const unknown = checks.filter((c) => !conditionIds.has(c.condition));
+    if (unknown.length)
+      throw new BankSearchError(
+        `Unknown judgment condition '${unknown[0].condition.slice(0, 160)}' — checks[].condition must be a conditions[].id from this search: ${conditionListing}`,
+      );
     if (
       new Set(checks.map((c) => c.condition)).size !== checks.length ||
-      checks.length !== receipt.output.conditions.length ||
-      checks.some((c) => !receipt.output.conditions.some((r) => r.id === c.condition))
+      checks.length !== receipt.output.conditions.length
     )
-      throw new BankSearchError('Each original condition needs exactly one judgment');
+      throw new BankSearchError(
+        `Each original condition needs exactly one judgment — one check per condition id: ${[...conditionIds].join(', ') || '(none)'}`,
+      );
+    assessment.checks = checks;
     const validate = (decision: BankAssessment['joint']) => {
       if (decision.verdict === 'unknown') return;
       if (!decision.evidence.length)
