@@ -11,6 +11,7 @@ import { artifact, question } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import type { ToolContext } from '@/kernel/tools/types';
 import { dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { writeQuizTool } from './write-quiz';
 
@@ -32,6 +33,7 @@ async function seedQuestion(opts: {
   /** YUK-308 — non-copilot draft sources (e.g. 'quiz_gen' verify-failed). */
   source?: string;
   metadata?: Record<string, unknown>;
+  published?: boolean;
 }): Promise<void> {
   await testDb()
     .insert(question)
@@ -48,6 +50,22 @@ async function seedQuestion(opts: {
       created_at: BASE,
       updated_at: BASE,
     });
+  if (opts.published !== false) {
+    await publishQuestionGroupFromRow(testDb(), {
+      rootId: opts.id,
+      admission: {
+        state: 'admitted',
+        evidence: {
+          marking_provenance: 'official',
+          verification: { structural_check_passed: true, independent_verification: null },
+          model_slice: null,
+        },
+      },
+      availability: opts.draft ? 'container_only' : 'general_pool',
+      actorRef: 'test:write-quiz-fixture',
+      now: BASE,
+    });
+  }
 }
 
 describe('write_quiz DomainTool (ADR-0031 lane B)', () => {
@@ -69,10 +87,18 @@ describe('write_quiz DomainTool (ADR-0031 lane B)', () => {
           artifact_id: 'art_x',
           question_count: 3,
           knowledge_ids: [],
-          practice_path: '/practice/art_x',
+          practice_path: '/practice?paper=art_x',
         },
       ).length,
     ).toBeLessThanOrEqual(120);
+  });
+
+  it('rejects a retained draft without an issued-ready contract before creating a paper', async () => {
+    await seedQuestion({ id: 'q_unpublished', draft: true, published: false });
+    await expect(writeQuizTool.execute(ctx(), { question_ids: ['q_unpublished'] })).rejects.toThrow(
+      'no usable verified publication',
+    );
+    expect(await testDb().select().from(artifact)).toHaveLength(0);
   });
 
   it('assembles DRAFT questions into a runnable paper (RP-2 opposite precondition)', async () => {
@@ -85,7 +111,7 @@ describe('write_quiz DomainTool (ADR-0031 lane B)', () => {
       question_ids: ['q_draft', 'q_pool'],
     });
     expect(out.question_count).toBe(2);
-    expect(out.practice_path).toBe(`/practice/${out.artifact_id}`);
+    expect(out.practice_path).toBe(`/practice?paper=${encodeURIComponent(out.artifact_id)}`);
     expect(out.knowledge_ids.sort()).toEqual(['k_a', 'k_b', 'k_c']);
 
     const [row] = await db.select().from(artifact).where(eq(artifact.id, out.artifact_id));

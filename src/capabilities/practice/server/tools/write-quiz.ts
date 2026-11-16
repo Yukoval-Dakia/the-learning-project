@@ -2,7 +2,7 @@
 //
 // The copilot (the orchestrator, 决定1) assembles questions it just authored
 // (author_question knowledge|material → draft rows) and/or existing pool
-// questions into ONE runnable tool_quiz paper + a /practice/<id> link it embeds
+// questions into ONE runnable tool_quiz paper + a /practice?paper=<id> link it embeds
 // in its reply. Pure local write — no LLM call.
 //
 // PRECONDITION CONTRAST (RP-2, docs/adr/0032-domaintool-surface-redesign.md:73):
@@ -10,8 +10,8 @@
 // runnable from the verified pool); write_quiz deliberately ALLOWS drafts — a
 // question authored THIS TURN is still draft_status='draft' until the user
 // accepts its question_draft proposal, yet the user asked for the paper NOW.
-// The /practice runtime does not filter drafts, so the paper is fully runnable
-// pre-accept; FSRS/pool entry still waits for the accept (决定5).
+// A verified frozen revision can be used before pool acceptance. Question-pool
+// enrollment still waits for acceptance; scored answers use the native learning pipeline.
 //
 // YUK-308 — the draft allowance is NARROW, code-enforced: a draft row is
 // admitted only when it is a still-live copilot draft, i.e. EITHER
@@ -80,7 +80,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { Db, Tx } from '@/db/client';
-import { artifact, question } from '@/db/schema';
+import { artifact, question, question_group_lifecycle, question_revision } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { acquireProposalDecisionLock } from '@/server/proposals/applier-helpers';
@@ -143,6 +143,7 @@ async function executeWriteQuiz(
   const rows = await ctx.db
     .select({
       id: question.id,
+      parent_question_id: question.parent_question_id,
       knowledge_ids: question.knowledge_ids,
       draft_status: question.draft_status,
       source: question.source,
@@ -283,6 +284,16 @@ async function executeWriteQuiz(
     // in the same check-then-act gap.
     const racedTombstoned: string[] = [];
     const racedUncovered: string[] = [];
+    const groupIds = [...new Set(rows.map((row) => row.parent_question_id ?? row.id))].sort();
+    // Publication locks group roots before parts. Match that order while checking
+    // readiness, so a verifier or editor cannot replace the contract mid-write.
+    for (const groupId of groupIds) {
+      await tx
+        .select({ id: question.id })
+        .from(question)
+        .where(eq(question.id, groupId))
+        .for('update');
+    }
     for (const id of [...questionIds].sort()) {
       const locked = (
         await tx
@@ -290,6 +301,7 @@ async function executeWriteQuiz(
             draft_status: question.draft_status,
             source: question.source,
             metadata: question.metadata,
+            parent_question_id: question.parent_question_id,
           })
           .from(question)
           .where(eq(question.id, id))
@@ -300,6 +312,9 @@ async function executeWriteQuiz(
         // No hard-delete path exists today — fail closed anyway if a future
         // one removes the row between the pre-check and this lock.
         throw new Error(`write_quiz: question_id no longer exists (removed concurrently): [${id}]`);
+      }
+      if (locked.parent_question_id !== byId.get(id)?.parent_question_id) {
+        throw new Error(`write_quiz: question group changed concurrently: [${id}]`);
       }
       // A row promoted draft→active by a racing accept is now a normal
       // pooled question — admissible as-is. Only a STILL-draft row can
@@ -321,6 +336,37 @@ async function executeWriteQuiz(
     if (racedUncovered.length > 0) {
       throw new Error(
         `write_quiz: draft question_id(s) are neither copilot-authored drafts nor covered by a pending question_draft proposal (only author_question drafts may enter a paper pre-accept): [${racedUncovered.join(',')}]`,
+      );
+    }
+
+    const published = await tx
+      .select({
+        group_id: question_group_lifecycle.group_id,
+        state: question_group_lifecycle.scoring_admission_state,
+        suspended: question_group_lifecycle.suspended,
+        withdrawn: question_group_lifecycle.withdrawn,
+        parts: question_revision.structure,
+      })
+      .from(question_group_lifecycle)
+      .innerJoin(
+        question_revision,
+        eq(question_group_lifecycle.current_revision_id, question_revision.revision_id),
+      )
+      .where(inArray(question_group_lifecycle.group_id, groupIds));
+    const byGroup = new Map(published.map((row) => [row.group_id, row]));
+    const unavailable = questionIds.filter((id) => {
+      const rootId = byId.get(id)?.parent_question_id ?? id;
+      const state = byGroup.get(rootId);
+      return (
+        state?.state !== 'admitted' ||
+        state.suspended ||
+        state.withdrawn ||
+        (rootId !== id && !state.parts.parts.some((part) => part.part_id === id))
+      );
+    });
+    if (unavailable.length) {
+      throw new Error(
+        `write_quiz: question_id(s) have no usable verified publication; resolve their draft/verification before creating a practice paper: [${unavailable.join(',')}]`,
       );
     }
 
@@ -360,14 +406,14 @@ async function executeWriteQuiz(
     artifact_id: artifactId,
     question_count: questionIds.length,
     knowledge_ids: knowledgeIds,
-    practice_path: `/practice/${artifactId}`,
+    practice_path: `/practice?paper=${encodeURIComponent(artifactId)}`,
   };
 }
 
 export const writeQuizTool: DomainTool<WriteQuizInput, WriteQuizOutput> = {
   name: 'write_quiz',
   description:
-    'Assemble questions into ONE runnable tool_quiz practice paper and return a /practice/<id> link to embed in the reply. question_ids may include draft questions authored this turn via author_question (drafts are runnable in the paper pre-accept; pool/FSRS entry still waits for the proposal accept) as well as existing pool questions found via query_questions. Only author_question drafts are admitted — drafts from other pipelines, or ones whose proposal was dismissed, are rejected. Every question must carry at least one knowledge_id. Pure local write — call it once, after authoring/selecting all the questions for the paper (a second call in the same run is refused).',
+    'Assemble questions with usable verified publications into ONE tool_quiz practice paper and return its /practice?paper=<id> link. question_ids may include verified author_question drafts before public-pool acceptance and existing pool questions found via query_questions. Unverified, suspended, withdrawn, dismissed, or unrelated pipeline drafts are rejected. Every question must carry at least one knowledge_id. Saving a draft alone does not establish practice readiness; a successful result supplies the real practice entry. Pure local write — call once after selecting all questions; a second paper in the same run is refused.',
   effect: 'write',
   inputSchema: WriteQuizInputSchema,
   outputSchema: WriteQuizOutputSchema,

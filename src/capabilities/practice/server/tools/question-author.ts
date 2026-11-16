@@ -25,7 +25,12 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { QuestionAuthorIntentSchema } from '@/ai/task-intents';
-import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
+import {
+  LEGACY_DRAFT_STATUS,
+  MARKING_RULE_PROVENANCE,
+  QUESTION_AVAILABILITY,
+  SCORING_ADMISSION_WITHHELD_REASON,
+} from '@/core/schema/assessment/lifecycle';
 import {
   type QuestionAuthorDraftT,
   normalizeAuthorStructured,
@@ -38,6 +43,7 @@ import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import type { ToolContext } from '@/kernel/tools/types';
 import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
@@ -51,6 +57,7 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { parseQuestionAuthorOutput } from '../../tasks/question-author';
 import { assertGeneratedQuestionHasJudgeContract } from '../judge/question-contract';
+import { runSolveCheck } from '../quiz/verify-framework';
 
 const PROMPT_PREVIEW_CHARS = 120;
 
@@ -272,8 +279,39 @@ export async function runQuestionAuthor(
       runCtx.subjectProfile,
     );
 
-    const now = new Date();
     const questionId = createId();
+    const verificationRuns: Array<{ task_kind: string; task_run_id: string | null }> = [];
+    const solveCheck = await runSolveCheck(
+      {
+        id: questionId,
+        kind: draft.kind,
+        prompt_md: normalized.prompt_md,
+        reference_md: normalized.reference_md,
+        choices_md: draft.choices_md ?? null,
+        judge_kind_override: draft.judge_kind_override ?? null,
+        rubric_json: draft.rubric_json ?? null,
+        knowledge_ids: questionKnowledgeIds,
+      },
+      {
+        runTaskFn: async (kind, taskInput, taskContext) => {
+          const verifiedRun = await deps.runTaskFn(kind, taskInput, taskContext);
+          verificationRuns.push({ task_kind: kind, task_run_id: verifiedRun.task_run_id ?? null });
+          return verifiedRun;
+        },
+        profile: { id: runCtx.subjectProfile.id, full: runCtx.subjectProfile },
+        db,
+        validationMode: 'release_strict',
+      },
+    );
+    const verified =
+      solveCheck.verdict === 'pass' &&
+      verificationRuns.some(
+        (run) =>
+          run.task_kind === 'SolutionGenerateTask' ||
+          run.task_kind === 'SolutionGenerateVisionTask',
+      ) &&
+      verificationRuns.every((run) => Boolean(run.task_run_id));
+    const now = new Date();
     const promptPreview =
       normalized.prompt_md.length > PROMPT_PREVIEW_CHARS
         ? `${normalized.prompt_md.slice(0, PROMPT_PREVIEW_CHARS)}…`
@@ -319,6 +357,45 @@ export async function runQuestionAuthor(
           generated: { kind: draft.kind },
         });
       }
+
+      await publishQuestionGroupFromRow(tx, {
+        rootId: questionId,
+        admission: verified
+          ? {
+              state: 'admitted',
+              evidence: {
+                marking_provenance: MARKING_RULE_PROVENANCE.SYSTEM_VERIFIED,
+                verification: {
+                  structural_check_passed: true,
+                  independent_verification: {
+                    passed: true,
+                    verifier: 'independent_model',
+                    verified_at: now.toISOString(),
+                  },
+                },
+                model_slice: null,
+              },
+            }
+          : {
+              state: 'withheld',
+              reason:
+                solveCheck.verdict === 'fail'
+                  ? SCORING_ADMISSION_WITHHELD_REASON.VERIFICATION_FAILED
+                  : SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
+            },
+        availability: QUESTION_AVAILABILITY.CONTAINER_ONLY,
+        verification: {
+          policy_id: 'copilot_question_solve@1',
+          outcome: verified ? 'passed' : solveCheck.verdict === 'fail' ? 'failed' : 'suspended',
+          evidence: {
+            author_task_run_id: result.task_run_id ?? null,
+            solve_check: solveCheck,
+            task_runs: verificationRuns,
+          },
+        },
+        actorRef: 'copilot:author_question',
+        now,
+      });
 
       proposalId = await writeAiProposal(tx, {
         actor_ref: deps.actorRef,

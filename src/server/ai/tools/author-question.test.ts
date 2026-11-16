@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAnswerDraft } from '@/capabilities/practice/api/paper-answer-route';
+import { createPaperReviewSession } from '@/capabilities/practice/api/paper-session-create';
+import { submitPaperSlot } from '@/capabilities/practice/server/paper-submit';
 import {
   authorQuestion,
   authorQuestionTool,
 } from '@/capabilities/practice/server/tools/proposal-tools';
+import { writeQuizTool } from '@/capabilities/practice/server/tools/write-quiz';
 // ADR-0032 D8 — author_question unified question-authoring core + DomainTool.
 //
 // Proves the front door delegates to the EXISTING code paths without regressing
@@ -14,11 +18,19 @@ import {
 //
 // DB-config test: imports Failure Learning / writeAiProposal / acceptAiProposal /
 // @/db, seeds a real Postgres testcontainer.
-import { knowledge, learning_record, mistake_variant, question } from '@/db/schema';
+import {
+  answer,
+  knowledge,
+  learning_record,
+  mistake_variant,
+  question,
+  question_group_lifecycle,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { ToolContext } from '@/kernel/tools/types';
 import { acceptAiProposal } from '@/server/proposals/actions';
+import { paperFixtureAssessment } from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const mockRunner = vi.hoisted(() => ({ runTask: vi.fn() }));
@@ -361,7 +373,13 @@ describe('author_question — knowledge|material seed (ADR-0031 lane B)', () => 
     });
   }
 
-  function mockAuthorModelOnce(): void {
+  function mockAuthorModelOnce(
+    options: {
+      missingSolverReceipt?: boolean;
+      solverFailure?: boolean;
+      comparison?: 'weak' | 'wrong';
+    } = {},
+  ): void {
     mockRunner.runTask.mockResolvedValueOnce({
       task_run_id: 'tr_author_model',
       text: JSON.stringify({
@@ -383,6 +401,34 @@ describe('author_question — knowledge|material seed (ADR-0031 lane B)', () => 
           criteria: [{ name: 'correctness', weight: 1, descriptor: '答出指代作用' }],
           required_points: ['代词', '指代'],
         },
+      }),
+      cost_usd: 0,
+    });
+    if (options.solverFailure) {
+      mockRunner.runTask.mockRejectedValueOnce(new Error('synthetic solver unavailable'));
+      return;
+    }
+    mockRunner.runTask.mockResolvedValueOnce({
+      ...(options.missingSolverReceipt ? {} : { task_run_id: 'tr_independent_solution' }),
+      text: JSON.stringify({
+        reference_solution: {
+          expected_signals: ['之作动词宾语，指代所学内容'],
+          final_answer: '代词。',
+          answer_equivalents: ['指代学习的内容'],
+        },
+        worked_solution_md: '「之」是「习」的宾语，承接前面的「学」，所以是代词。',
+        confidence: 0.95,
+      }),
+      cost_usd: 0,
+    });
+    mockRunner.runTask.mockResolvedValueOnce({
+      task_run_id: 'tr_independent_comparison',
+      text: JSON.stringify({
+        score: options.comparison === 'wrong' ? 0 : 1,
+        coarse_outcome: options.comparison === 'wrong' ? 'incorrect' : 'correct',
+        confidence: options.comparison === 'weak' ? 0.4 : 0.95,
+        feedback_md: '二者均指出代词及宾语指代作用。',
+        evidence_json: { matched_points: ['代词', '指代'], missing_points: [] },
       }),
       cost_usd: 0,
     });
@@ -440,6 +486,189 @@ describe('author_question — knowledge|material seed (ADR-0031 lane B)', () => 
     expect(result.status).toBe('proposed');
     const input = mockRunner.runTask.mock.calls[0][1] as { material?: { body_md?: string } };
     expect(input.material?.body_md).toBe('学而时习之，不亦说乎。');
+  });
+
+  it('opens an authored single-question paper before pool acceptance', async () => {
+    await seedKnowledgeNode();
+    mockAuthorModelOnce();
+    const authored = await authorQuestion(
+      { seed_mode: 'knowledge', knowledge_ids: ['k_zhi'] },
+      deps(),
+    );
+    const paper = await writeQuizTool.execute(ctx(), {
+      title: '之的用法练习',
+      question_ids: authored.question_ids ?? [],
+    });
+
+    const opened = await createPaperReviewSession(paper.artifact_id);
+    expect(opened.created).toBe(true);
+    const rows = await testDb().select().from(question);
+    expect(rows.find((q) => q.id === authored.question_ids?.[0])?.draft_status).toBe('draft');
+    expect(await listProposalInboxRows(testDb(), { status: 'pending' })).toHaveLength(1);
+    const [lifecycle] = await testDb().select().from(question_group_lifecycle);
+    expect(lifecycle).toMatchObject({
+      availability: 'container_only',
+      scoring_admission_state: 'admitted',
+    });
+    const questionId = authored.question_ids?.[0];
+    if (!questionId) throw new Error('author did not return a question');
+    const assessment = await paperFixtureAssessment(
+      testDb(),
+      opened.sessionId,
+      questionId,
+      '「之」是代词，作「习」的宾语，指代所学内容。',
+    );
+    const saved = await createAnswerDraft(
+      new Request(`http://localhost/api/papers/${paper.artifact_id}/answer`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          session_id: opened.sessionId,
+          question_id: questionId,
+          input_kind: 'text',
+          content_md: '「之」是代词，作「习」的宾语，指代所学内容。',
+          image_refs: [],
+          assessment,
+        }),
+      }),
+      { id: paper.artifact_id },
+    );
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({ created: true, save_epoch: 1 });
+    const submitted = await submitPaperSlot(
+      {
+        sessionId: opened.sessionId,
+        paperArtifactId: paper.artifact_id,
+        questionId,
+        assessment,
+        answerMd: '「之」是代词，作「习」的宾语，指代所学内容。',
+      },
+      testDb(),
+    );
+    expect(submitted.answerId).toBeTruthy();
+    // This rule has no admitted automatic executor; recording an answer does not invent a grade.
+    expect(submitted.status).toBe('review_required');
+    expect(submitted.score).toBeNull();
+    const [captured] = await testDb().select().from(answer);
+    expect(captured.submitted_at).not.toBeNull();
+  });
+
+  it.each([
+    {
+      label: 'missing independent solver receipt',
+      options: { missingSolverReceipt: true },
+      reason: 'unverified_rules',
+    },
+    { label: 'unavailable solver', options: { solverFailure: true }, reason: 'unverified_rules' },
+    {
+      label: 'weak semantic agreement',
+      options: { comparison: 'weak' as const },
+      reason: 'unverified_rules',
+    },
+    {
+      label: 'confident disagreement',
+      options: { comparison: 'wrong' as const },
+      reason: 'verification_failed',
+    },
+  ])('retains a draft but refuses a runnable paper after $label', async ({ options, reason }) => {
+    await seedKnowledgeNode();
+    mockAuthorModelOnce(options);
+    const authored = await authorQuestion(
+      { seed_mode: 'knowledge', knowledge_ids: ['k_zhi'] },
+      deps(),
+    );
+    expect(authored.status).toBe('proposed');
+    const [lifecycle] = await testDb().select().from(question_group_lifecycle);
+    expect(lifecycle).toMatchObject({
+      availability: 'container_only',
+      scoring_admission_state: 'withheld',
+      scoring_admission_withheld_reason: reason,
+    });
+    await expect(
+      writeQuizTool.execute(ctx(), { question_ids: authored.question_ids ?? [] }),
+    ).rejects.toThrow('no usable verified publication');
+    expect(await listProposalInboxRows(testDb(), { status: 'pending' })).toHaveLength(1);
+  });
+
+  it('scores a verified objective draft without accepting it into the public pool', async () => {
+    await testDb().insert(knowledge).values({
+      id: 'k_distribution',
+      name: '整数乘法与分配律',
+      domain: 'math',
+      created_at: BASE,
+      updated_at: BASE,
+    });
+    mockRunner.runTask.mockResolvedValueOnce({
+      task_run_id: 'tr_math_author',
+      cost_usd: 0,
+      text: JSON.stringify({
+        kind: 'choice',
+        difficulty: 2,
+        knowledge_ids: ['k_distribution'],
+        structured: {
+          id: 'model_draft',
+          role: 'standalone',
+          prompt_text: '运用乘法分配律计算 98×6，以下哪一步正确？',
+          answers: ['A'],
+          analysis: '将 98 写作 100−2，再分别乘 6，得 600−12=588。',
+        },
+        choices_md: [
+          '(100−2)×6=600−12=588',
+          '(100−2)×6=600−2=598',
+          '(100+2)×6=600+12=612',
+          '98×6=98+6=104',
+        ],
+        judge_kind_override: 'exact',
+      }),
+    });
+    mockRunner.runTask.mockResolvedValueOnce({
+      task_run_id: 'tr_math_solver',
+      cost_usd: 0,
+      text: JSON.stringify({
+        reference_solution: {
+          expected_signals: ['98=100−2', '两项都乘6'],
+          final_answer: 'A',
+          answer_equivalents: [],
+        },
+        worked_solution_md: '(100−2)×6=100×6−2×6=588，因此选 A。',
+        confidence: 0.98,
+      }),
+    });
+    const authored = await authorQuestion(
+      { seed_mode: 'knowledge', knowledge_ids: ['k_distribution'], requested_kind: 'choice' },
+      deps(),
+    );
+    const paper = await writeQuizTool.execute(ctx(), { question_ids: authored.question_ids ?? [] });
+    const opened = await createPaperReviewSession(paper.artifact_id);
+    const questionId = authored.question_ids?.[0];
+    if (!questionId) throw new Error('author did not return a question');
+    const assessment = await paperFixtureAssessment(testDb(), opened.sessionId, questionId, 'A');
+    const result = await submitPaperSlot(
+      {
+        sessionId: opened.sessionId,
+        paperArtifactId: paper.artifact_id,
+        questionId,
+        assessment,
+        answerMd: 'A',
+      },
+      testDb(),
+    );
+    expect(result).toMatchObject({ status: 'effective', coarseOutcome: 'correct', score: 1 });
+    expect(await listProposalInboxRows(testDb(), { status: 'pending' })).toHaveLength(1);
+    const [lifecycle] = await testDb().select().from(question_group_lifecycle);
+    expect(lifecycle.availability).toBe('container_only');
+    const again = await submitPaperSlot(
+      {
+        sessionId: opened.sessionId,
+        paperArtifactId: paper.artifact_id,
+        questionId,
+        assessment,
+        answerMd: 'A',
+      },
+      testDb(),
+    );
+    expect(again.answerId).toBe(result.answerId);
+    expect(await testDb().select().from(answer)).toHaveLength(1);
   });
 
   it('soft-skips knowledge_not_found without an LLM call', async () => {
