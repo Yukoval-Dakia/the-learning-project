@@ -1,0 +1,6 @@
+ M scripts/worker.ts
+ M src/server/boss/shutdown.test.ts
+ M src/server/boss/shutdown.ts
+?? .yuk980-evidence/
+?? src/server/boss/worker-boot.db.test.ts
+?? src/server/boss/worker-boot.ts

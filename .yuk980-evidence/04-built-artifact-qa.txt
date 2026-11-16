@@ -1,0 +1,42 @@
+[qa] === case a: pre-consumption SIGTERM ===
+[qa] seen: boot underway (pre-DB)
+[qa] ok: boot blocked at recoverToolOperationsOnBoot (pre-consumption)
+[qa] PASS: a: exit code (1)
+[qa] PASS: a: logs boot window (honest fast exit)
+[qa] PASS: a: no graceful stop attempted
+[qa] PASS: a: no tail wait
+[qa] === case b1: mid-registration SIGTERM, clean bounded tail-wait + drain ===
+[qa] seen: boot underway
+[qa] ok: tail blocked at ai_task_runs reconcile
+[qa] ok: echo job in flight (state=active)
+[qa] seen: tail settled, drain started
+[qa] PASS: b1: exit code (0)
+[qa] PASS: b1: waited for the startup tail
+[qa] PASS: b1: no timeout needed
+[qa] PASS: b1: no false boot-window exit
+[qa] PASS: b1: stopped cleanly
+[qa] ok: b1: in-flight echo job COMPLETED by the drain
+[qa] PASS: b1: echo business row updated (output reversed) (dcba)
+[qa] === case b2: mid-registration SIGTERM, tail outlives the 9s bound ===
+[qa] seen: boot underway
+[qa] ok: tail blocked at ai_task_runs reconcile
+[qa] ok: echo job in flight (state=active)
+[qa] seen: bounded tail wait fired
+[qa] seen: drain started after timeout
+[qa] PASS: b2: exit code (0)
+[qa] PASS: b2: timeout warn present
+[qa] PASS: b2: no false boot-window exit
+[qa] PASS: b2: stopped cleanly
+[qa] ok: b2: in-flight echo job COMPLETED despite tail timeout
+[qa] === case c: ready SIGTERM drains in-flight job ===
+[qa] seen: worker fully ready
+[qa] ok: echo job in flight (state=active)
+[qa] seen: drain started
+[qa] PASS: c: exit code (0)
+[qa] PASS: c: no boot-window path when ready
+[qa] PASS: c: no tail wait when ready
+[qa] PASS: c: stopped cleanly
+[qa] ok: c: in-flight echo job COMPLETED by the drain
+[qa] PASS: c: echo business row updated (dcba)
+[qa] 
+[qa] SUMMARY: 19 passed, 0 failed

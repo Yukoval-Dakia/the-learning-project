@@ -1,0 +1,295 @@
+diff --git a/scripts/worker.ts b/scripts/worker.ts
+index f7a5e98ff..1637c8290 100644
+--- a/scripts/worker.ts
++++ b/scripts/worker.ts
+@@ -12,12 +12,14 @@
+ //
+ // M1-T5 (YUK-314)：启动配方（XIAOMI warn + YUK-259 两段 23505 防护 +
+ // registerHandlers）抽到 src/server/boss/start-worker.ts，与新栈
+-// server/index.ts 的 RW_WORKER=1 进程内 worker 共用。本文件只剩独立进程
+-// 专属纪律：process-level last-resort handlers + shutdown 安装。
++// server/index.ts 的 RW_WORKER=1 进程内 worker 共用。YUK-980 又把启动
++// 生命周期（shutdown 安装 + 装配顺序 + 尾段协调）抽到
++// src/server/boss/worker-boot.ts 的 bootWorker()，本文件只剩独立进程专属
++// 纪律：loadEnv / runtime pre-flight / process-level last-resort handlers /
++// 顶层 catch。
+ 
+-import { capabilities } from '@/capabilities';
+ import { assertAgentSdkRuntimeUser } from '@/server/ai/runtime-preflight';
+-import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
++import { bootWorker } from '@/server/boss/worker-boot';
+ import { warnFlipOrder } from '@/server/projections/sot-flag';
+ import { loadEnv } from '../server/env';
+ 
+@@ -57,28 +59,7 @@ process.on('uncaughtException', (err) => {
+ });
+ 
+ async function main() {
+-  // YUK-980：shutdown handler 先于一切装配安装——SIGTERM 落在注册/启动窗口此前按
+-  // Node 默认立即退出（无 graceful）。getBoss 惰性解析：窗口内 exit(1) 交容器重启，
+-  // boss 就绪后走与 installShutdownHandler 同款的 graceful stop。
+-  const { installBootShutdownHandler } = await import('@/server/boss/shutdown');
+-  let boss: import('pg-boss').PgBoss | null = null;
+-  installBootShutdownHandler(() => boss);
+-
+-  // YUK-328：独立 worker 不经过 server/index.ts，必须在注册 handlers 前自行装配
+-  // 完整 DomainTool inventory；任何 manifest/load 错误让进程 fail-fast，避免任务在
+-  // 消费后才因缺工具失败并进入重投。
+-  await registerCapabilityTools(capabilities);
+-  console.log('[worker] capability tools registered');
+-
+-  // Dynamic import AFTER loadEnv(): @/db/client reads DATABASE_URL at module top
+-  // (throws if unset), and start-worker pulls the client in transitively. Mirrors
+-  // server/index.ts's RW_WORKER=1 branch, which dynamic-imports for the same reason.
+-  const [{ db }, { startBossWorker }] = await Promise.all([
+-    import('@/db/client'),
+-    import('@/server/boss/start-worker'),
+-  ]);
+-  boss = await startBossWorker(db);
+-  console.log('[worker] running, handlers registered');
++  await bootWorker();
+ }
+ 
+ main().catch((err) => {
+diff --git a/src/server/boss/shutdown.test.ts b/src/server/boss/shutdown.test.ts
+index 7e8e67521..e707f56c8 100644
+--- a/src/server/boss/shutdown.test.ts
++++ b/src/server/boss/shutdown.test.ts
+@@ -220,3 +220,134 @@ describe('installBootShutdownHandler (YUK-980)', () => {
+     expect(exitSpy).toHaveBeenCalledWith(0);
+   });
+ });
++
++describe('installBootShutdownHandler startup-tail coordination (YUK-980)', () => {
++  let exitSpy: MockInstance;
++  let warnSpy: MockInstance;
++  let logSpy: MockInstance;
++  let errorSpy: MockInstance;
++  const registered: Record<string, (signal: NodeJS.Signals) => void> = {};
++  let onSpy: MockInstance;
++
++  beforeEach(() => {
++    exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
++    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
++    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
++    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
++    onSpy = vi.spyOn(process, 'on').mockImplementation(((
++      event: string,
++      cb: (signal: NodeJS.Signals) => void,
++    ) => {
++      registered[event] = cb;
++      return process;
++    }) as never);
++  });
++
++  afterEach(() => {
++    exitSpy.mockRestore();
++    warnSpy.mockRestore();
++    logSpy.mockRestore();
++    errorSpy.mockRestore();
++    onSpy.mockRestore();
++    delete registered.SIGTERM;
++    delete registered.SIGINT;
++  });
++
++  it('waits for the pending startup promise BEFORE stopping — registration cannot race the stop', async () => {
++    const order: string[] = [];
++    let settleTail!: () => void;
++    const startup = new Promise<void>((resolve) => {
++      settleTail = resolve;
++    });
++    const stop = vi.fn(async () => {
++      order.push('stop');
++    });
++    const boss = { stop, getWipData: vi.fn(() => []) } as unknown as PgBoss;
++
++    installBootShutdownHandler(
++      () => boss,
++      () => startup,
++    );
++    const handled = registered.SIGTERM('SIGTERM');
++    // Macrotask boundary: every pending microtask of the handler has run — it
++    // must be parked on the startup promise, NOT on stop.
++    await new Promise((resolve) => setTimeout(resolve, 0));
++    expect(stop).not.toHaveBeenCalled();
++
++    order.push('tail-settled');
++    settleTail();
++    await handled;
++
++    expect(order).toEqual(['tail-settled', 'stop']);
++    expect(stop).toHaveBeenCalledWith({ graceful: true, timeout: 30_000 });
++    expect(exitSpy).toHaveBeenCalledWith(0);
++  });
++
++  it('still stops and exits 0 when the startup tail REJECTS during the wait (drain continues)', async () => {
++    const stop = vi.fn(async () => undefined);
++    const boss = { stop, getWipData: vi.fn(() => []) } as unknown as PgBoss;
++    const startup = Promise.reject(new Error('registration boom'));
++
++    installBootShutdownHandler(
++      () => boss,
++      () => startup,
++    );
++    await registered.SIGTERM('SIGTERM');
++
++    expect(stop).toHaveBeenCalledWith({ graceful: true, timeout: 30_000 });
++    expect(warnSpy).toHaveBeenCalledWith(
++      expect.stringContaining('startup failed while shutting down'),
++      expect.any(Error),
++    );
++    expect(exitSpy).toHaveBeenCalledWith(0);
++  });
++
++  it('stops after the bounded wait when the startup never settles (compose grace budget)', async () => {
++    const stop = vi.fn(async () => undefined);
++    const boss = { stop, getWipData: vi.fn(() => []) } as unknown as PgBoss;
++    const never = new Promise<void>(() => {});
++
++    installBootShutdownHandler(
++      () => boss,
++      () => never,
++      15,
++    );
++    await registered.SIGTERM('SIGTERM');
++
++    expect(stop).toHaveBeenCalledTimes(1);
++    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('did not settle within 15ms'));
++    expect(exitSpy).toHaveBeenCalledWith(0);
++  });
++
++  it('a second signal during the tail wait is a no-op (single stop, single exit owner)', async () => {
++    let settleTail!: () => void;
++    const startup = new Promise<void>((resolve) => {
++      settleTail = resolve;
++    });
++    const stop = vi.fn(async () => undefined);
++    const boss = { stop, getWipData: vi.fn(() => []) } as unknown as PgBoss;
++
++    installBootShutdownHandler(
++      () => boss,
++      () => startup,
++    );
++    const handled = registered.SIGTERM('SIGTERM');
++    await registered.SIGTERM('SIGTERM'); // repeat signal mid-wait — ignored
++    settleTail();
++    await handled;
++
++    expect(stop).toHaveBeenCalledTimes(1);
++    expect(exitSpy).toHaveBeenCalledTimes(1);
++  });
++
++  it('ownsExit() reports false until a signal arrives, true from then on', async () => {
++    const stop = vi.fn(async () => undefined);
++    const boss = { stop, getWipData: vi.fn(() => []) } as unknown as PgBoss;
++    const handle = installBootShutdownHandler(() => boss);
++    expect(handle.ownsExit()).toBe(false);
++
++    await registered.SIGINT('SIGINT');
++
++    expect(handle.ownsExit()).toBe(true);
++  });
++});
+diff --git a/src/server/boss/shutdown.ts b/src/server/boss/shutdown.ts
+index 3a0438291..3f05974b8 100644
+--- a/src/server/boss/shutdown.ts
++++ b/src/server/boss/shutdown.ts
+@@ -103,15 +103,63 @@ export function installShutdownHandler(boss: PgBoss): void {
+  * registerCapabilityTools()/startBossWorker()（此前 SIGTERM 落在注册/启动窗口时进程
+  * 按 Node 默认立即退出——可能正在装配、正在起 boss、正在消费首批 job，无 graceful）。
+  *
+- * getBoss 惰性取 boss：
+- * - 信号到达时 boss 尚为 null（注册/启动窗口）→ 无 job 可 drain（handlers 未注册），
+- *   直接 exit(1) 交给容器重启策略，不假装 graceful；
+- * - boss 就绪后 → 与 installShutdownHandler 完全同款的 graceful stop。
++ * 三个窗口，两种行为：
++ * - 信号到达时 boss 尚未 start（装配/pre-consumption 窗口，getBoss() → null）→
++ *   无 job 可 drain（handlers 未注册），直接 exit(1) 交容器重启策略，不假装 graceful；
++ * - boss 已 start 但 startBossWorker 尚未返回（startup-tail 窗口：markBossStarted
++ *   已执行、consumers 已在消费，registerCapabilityJobs→reconcile 仍在注册）→
++ *   【有界】等待 startup promise 落定再 drain：drain 与注册并发会让后续 work()/send()
++ *   撞上 stopping/stopped boss（work() 直接 throw 'Workers are disabled'），并与
++ *   boot owner 的退出码赛跑。镜像 API 进程的先例（server/index.ts installApiShutdown
++ *   await workerStartup），但 worker 独自持有 drain 预算，必须封顶；
++ * - startup 已完成 → 与 installShutdownHandler 完全同款的 graceful stop。
++ *
++ * getStartup() 的 promise 无论是 resolve 还是 reject 都继续 drain（注册失败≠丢弃
++ * in-flight job）；超时也继续 stop（残余注册步撞上 stopped boss 会 reject，由 boot
++ * owner 吞掉——exit 只有一个 owner）。返回的 handle 让 boot owner 查询 ownsExit()，
++ * 避免它的 startup-catch 在 shutdown 进行中抢 exit(1)。
+  *
+  * worker.ts 用它替换原「启动后才 install」的调用；installShutdownHandler(boss) 保留给
+  * 既有测试与其他调用方，不重复注册。
+  */
+-export function installBootShutdownHandler(getBoss: () => PgBoss | null): void {
++export type BootShutdownHandle = {
++  /** True once a signal has been received — from then on this handler alone owns process.exit. */
++  ownsExit: () => boolean;
++};
++
++// docker-compose worker stop_grace_period=40s；stopBossGracefully 已占 30s drain。
++// startup-tail 等待必须装进余下预算——独立的 30s 等待 + 30s drain 一定会被 SIGKILL
++// 掐断 drain。9s 留 ~1s 信号/退出开销，总上界 39s < 40s。
++export const STARTUP_TAIL_WAIT_MS = 9_000;
++
++type StartupTailOutcome =
++  | { kind: 'settled' }
++  | { kind: 'rejected'; err: unknown }
++  | { kind: 'timeout' };
++
++/**
++ * Race the startup promise against a timer. On timeout the REAL promise stays
++ * pending — its eventual rejection is already handled twice over (the rejection
++ * branch here subscribes, and the boot owner awaits the same promise), so a
++ * late failure can never surface as an unhandledRejection.
++ */
++function startupTailOutcome(startup: Promise<unknown>, ms: number): Promise<StartupTailOutcome> {
++  let timer: ReturnType<typeof setTimeout> | undefined;
++  const timedOut = new Promise<StartupTailOutcome>((resolve) => {
++    timer = setTimeout(() => resolve({ kind: 'timeout' }), ms);
++  });
++  const settled = startup.then(
++    () => ({ kind: 'settled' }) as StartupTailOutcome,
++    (err: unknown) => ({ kind: 'rejected', err }) as StartupTailOutcome,
++  );
++  return Promise.race([settled, timedOut]).finally(() => clearTimeout(timer));
++}
++
++export function installBootShutdownHandler(
++  getBoss: () => PgBoss | null,
++  getStartup: () => Promise<unknown> | null = () => null,
++  startupTailWaitMs: number = STARTUP_TAIL_WAIT_MS,
++): BootShutdownHandle {
+   let shuttingDown = false;
+   const handler = async (signal: NodeJS.Signals) => {
+     if (shuttingDown) return;
+@@ -124,6 +172,23 @@ export function installBootShutdownHandler(getBoss: () => PgBoss | null): void {
+       process.exit(1);
+       return;
+     }
++    const startup = getStartup();
++    if (startup) {
++      console.log(
++        `[boss] ${signal} while registration is still finishing — waiting up to ${startupTailWaitMs}ms for the startup tail before draining`,
++      );
++      const outcome = await startupTailOutcome(startup, startupTailWaitMs);
++      if (outcome.kind === 'rejected') {
++        console.warn(
++          '[boss] startup failed while shutting down — continuing the graceful drain (restart is supervised)',
++          outcome.err,
++        );
++      } else if (outcome.kind === 'timeout') {
++        console.warn(
++          `[boss] startup tail did not settle within ${startupTailWaitMs}ms — stopping anyway; late registration errors are expected and logged by the boot owner`,
++        );
++      }
++    }
+     try {
+       await stopBossGracefully(boss, signal);
+       process.exit(0);
+@@ -133,4 +198,5 @@ export function installBootShutdownHandler(getBoss: () => PgBoss | null): void {
+   };
+   process.on('SIGTERM', handler);
+   process.on('SIGINT', handler);
++  return { ownsExit: () => shuttingDown };
+ }
