@@ -1,0 +1,11 @@
+import postgres from 'postgres';
+const target = 'loom_dev_t3_4b5cded0_b66fdc2f';
+const admin = postgres('postgres://loom_dev:loom_dev@127.0.0.1:5434/postgres');
+const dbs = await admin`select datname from pg_database where datname like 'loom_dev_%'`;
+console.log('dev dbs:', dbs.map((d) => d.datname));
+if (!dbs.some((d) => d.datname === target)) throw new Error('target db missing');
+await admin`select pg_terminate_backend(pid) from pg_stat_activity where datname = ${target} and pid <> pg_backend_pid()`;
+await admin.unsafe(`drop database "${target}"`);
+const after = await admin`select datname from pg_database where datname like 'loom_dev_%'`;
+console.log('after:', after.map((d) => d.datname));
+await admin.end();
