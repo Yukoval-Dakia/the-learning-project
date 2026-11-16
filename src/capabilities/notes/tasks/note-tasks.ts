@@ -72,7 +72,7 @@ function buildNoteGeneratePrompt(profile: SubjectProfile): string {
 artifact_type 只能是 note_atomic / note_long / note_hub。
 输入若带 revision_context（上一版正文 body_blocks 与检查发现的问题 issues），本次是修订任务：逐条修正所列问题，尤其数学与事实性陈述错误，保留其余正确内容、结构与链接纪律，仍按 NOTE v1 全文输出。
 
-只输出一份 NOTE v1 内容文档。第一行就是 NOTE v1，最后一行就是 @end。不要写开场白，不要在 @end 之后写任何字，也不要把收尾套话写进最后一段。不要输出 JSON，不要输出 TipTap / ProseMirror，不要用 markdown 代码围栏包住整篇。语言规则里提到的 JSON 字段名不是本任务的输出格式。
+只输出一份 NOTE v1 内容文档。第一行就是 NOTE v1，最后一行就是 @end。不要写开场白，不要在 @end 之后写任何字，也不要把收尾套话写进最后一段：笔记在最后一条内容处结束，不要加「以上就是本篇」「希望对你有帮助」「如有疑问欢迎继续提问」「祝你学习进步」这类寒暄收尾。不要输出 JSON，不要输出 TipTap / ProseMirror，不要用 markdown 代码围栏包住整篇。语言规则里提到的 JSON 字段名不是本任务的输出格式。
 公式用 $...$ 或各自独占一行的 $$。多行公式不要把开头的 $$ 和公式写在同一行。LaTeX 反斜杠只写一个，例如 $\\frac{x^2}{a^2}$，不要写成 JSON 转义。引号用「」或英文双引号，原文照写。
 
 格式（标记必须独占一行）：
