@@ -248,6 +248,13 @@ export interface DispatchDeps {
   transformSupplyTrace?: (trace: SupplyTraceV1T) => unknown;
   /** Claim-owned transactions require enqueue/event failures to abort rather than degrade. */
   atomic?: boolean;
+  /**
+   * Bind a stable delivery identity instead of sending. The built job payload is
+   * persisted on the dispatch event under `delivery` and `jobId` is returned as the
+   * dispatch result's job id; the owning domain's drain sends after commit under this
+   * exact id. The engine is not called from inside the dispatch transaction.
+   */
+  deliveryBinding?: { jobId: string; startAfter?: Date };
 }
 
 /**
@@ -337,6 +344,12 @@ export async function dispatchSupplyTarget(
   let persistedSupplyTrace: SupplyTraceV1T | null = null;
   /** The supply demand this dispatch continues (trace demand_id) or minted for it. */
   let dispatchedDemandId: string | null = null;
+  /** Bound-mode send contract persisted on the dispatch event for the domain drain. */
+  let boundDelivery: {
+    queue: DispatchQueue;
+    job_data: unknown;
+    start_after?: string;
+  } | null = null;
 
   if (!anchorKid) {
     // 防御：扫描器永远给至少一个 KC，但 dispatch 不该在无锚时盲发。
@@ -471,43 +484,62 @@ export async function dispatchSupplyTarget(
       };
       if (queue === 'supply_execute')
         dispatchedDemandId = (placementTrace ?? dispatchTrace)?.demand_id ?? executorDemandId;
-      try {
-        let jobId: string | null;
-        if (queue === 'quiz_gen' && deps.enqueueQuizGen) {
-          if (!quizGenData) throw new Error('quiz_gen payload was not constructed');
-          jobId = await deps.enqueueQuizGen(quizGenData);
-        } else if (queue === 'supply_execute' && deps.enqueueSupplyExecute) {
-          jobId = await deps.enqueueSupplyExecute(executorData);
-        } else if (quizGenData) {
-          const { trigger, ref_id, ...rest } = quizGenData;
-          jobId = await enqueue(queue, { trigger, ref_id, ...rest });
-        } else {
-          // sourcing_web（supply_execute 队列）——executor 单路由需求项。
-          jobId = await enqueue(queue, executorData);
-        }
+      if (deps.deliveryBinding) {
+        boundDelivery = {
+          queue,
+          job_data: (queue === 'quiz_gen' ? quizGenData : executorData) ?? {},
+          ...(deps.deliveryBinding.startAfter
+            ? { start_after: deps.deliveryBinding.startAfter.toISOString() }
+            : {}),
+        };
         result = {
           targetId: target.id,
           fingerprint: target.fingerprint,
           routePlan,
           chosenRoute: autoRoute,
           status: 'dispatched',
-          jobId,
-          stopCondition: `enqueued ${queue} for knowledge ${anchorKid}; satisfied when ${target.desiredCount} active question(s) ≥ tier ${target.minSourceTier} exist (verified via source_verify/quiz_verify)`,
+          jobId: deps.deliveryBinding.jobId,
+          stopCondition: `bound ${queue} delivery ${deps.deliveryBinding.jobId} for knowledge ${anchorKid}; satisfied when ${target.desiredCount} active question(s) ≥ tier ${target.minSourceTier} exist (verified via source_verify/quiz_verify)`,
           reason: target.reason,
         };
-      } catch (err) {
-        if (deps.atomic) throw err;
-        result = {
-          targetId: target.id,
-          fingerprint: target.fingerprint,
-          routePlan,
-          chosenRoute: autoRoute,
-          status: 'failed',
-          jobId: null,
-          stopCondition: `enqueue ${queue} threw: ${(err as Error).message}`,
-          reason: target.reason,
-        };
-      }
+      } else
+        try {
+          let jobId: string | null;
+          if (queue === 'quiz_gen' && deps.enqueueQuizGen) {
+            if (!quizGenData) throw new Error('quiz_gen payload was not constructed');
+            jobId = await deps.enqueueQuizGen(quizGenData);
+          } else if (queue === 'supply_execute' && deps.enqueueSupplyExecute) {
+            jobId = await deps.enqueueSupplyExecute(executorData);
+          } else if (quizGenData) {
+            const { trigger, ref_id, ...rest } = quizGenData;
+            jobId = await enqueue(queue, { trigger, ref_id, ...rest });
+          } else {
+            // sourcing_web（supply_execute 队列）——executor 单路由需求项。
+            jobId = await enqueue(queue, executorData);
+          }
+          result = {
+            targetId: target.id,
+            fingerprint: target.fingerprint,
+            routePlan,
+            chosenRoute: autoRoute,
+            status: 'dispatched',
+            jobId,
+            stopCondition: `enqueued ${queue} for knowledge ${anchorKid}; satisfied when ${target.desiredCount} active question(s) ≥ tier ${target.minSourceTier} exist (verified via source_verify/quiz_verify)`,
+            reason: target.reason,
+          };
+        } catch (err) {
+          if (deps.atomic) throw err;
+          result = {
+            targetId: target.id,
+            fingerprint: target.fingerprint,
+            routePlan,
+            chosenRoute: autoRoute,
+            status: 'failed',
+            jobId: null,
+            stopCondition: `enqueue ${queue} threw: ${(err as Error).message}`,
+            reason: target.reason,
+          };
+        }
     }
   }
 
@@ -561,6 +593,7 @@ export async function dispatchSupplyTarget(
         reason: result.reason,
         constraints: target.constraints,
         ...(dispatchedDemandId ? { demand_id: dispatchedDemandId } : {}),
+        ...(boundDelivery ? { delivery: boundDelivery } : {}),
         ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
       },
     });

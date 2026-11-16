@@ -7,13 +7,17 @@
 // text itself is caller-written and is not filtered here (YUK-1938).
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { writeEvent } from '@/kernel/events';
 import { lockSupplyTargetFingerprint } from '@/kernel/locks/question-supply';
 import { EvidenceDemandV1, type EvidenceDemandV1T } from '@/kernel/supply-contracts';
 import { getStartedBoss } from '@/server/boss/client';
-import { JOB_RETRY_DELAY_SECONDS, JOB_RETRY_LIMIT } from '@/server/boss/queue-config';
 import { SUPPLY_DISPATCH_COOLDOWN_DAYS, recentlyDispatchedFingerprints } from './dispatcher';
+import {
+  PREPARER_TICKET_SEND,
+  type PreparerDispatchBoss,
+  drainQuestionPreparerDispatch,
+  writePreparerDispatchIntent,
+} from './preparer-dispatch';
 import type { QuestionSupplyTarget } from './target-discovery';
 
 export const QUESTION_PREPARER_TICKET_ACTION = 'experimental:question_preparer_ticket';
@@ -39,10 +43,12 @@ export interface QuestionPreparerTicketScope {
 }
 
 /**
- * Enqueue one durable gap ticket under the same 7-day fingerprint cooldown as the old
- * dispatcher (same query, same days). The cooldown check, ticket/job write and the
- * dispatcher-compatible ledger share one transaction, so two same-gap filings (different
- * request/demand ids) cannot both open a paid run. The caller owns request-level idempotency.
+ * File one durable gap ticket under the same 7-day fingerprint cooldown as the old
+ * dispatcher (same query, same days). The cooldown check, ticket event, dispatch intent
+ * (complete ticket + stable delivery id) and the dispatcher-compatible ledger share one
+ * transaction, so two same-gap filings cannot both open a paid run and a lost send cannot
+ * block a new ticket: the journal drain owns the bound id until the engine accepts it.
+ * The caller owns request-level idempotency.
  */
 export async function enqueueQuestionPreparerTicket(
   db: Db,
@@ -50,11 +56,12 @@ export async function enqueueQuestionPreparerTicket(
   target: QuestionSupplyTarget,
   scope: QuestionPreparerTicketScope = {},
   now = new Date(),
+  boss?: PreparerDispatchBoss,
 ): Promise<QuestionPreparerEnqueueResult> {
   const parsed = EvidenceDemandV1.parse(ticket);
   const eventId = newId();
-  const boss = await getStartedBoss();
-  return db.transaction(async (tx) => {
+  const resolvedBoss = boss ?? ((await getStartedBoss()) as PreparerDispatchBoss);
+  const result = await db.transaction(async (tx) => {
     // Same-fingerprint serialization: the old dispatcher only throttled after the fact; the
     // transaction makes the check-then-enqueue atomic without a new ledger.
     await lockSupplyTargetFingerprint(tx, target.fingerprint);
@@ -68,7 +75,7 @@ export async function enqueueQuestionPreparerTicket(
         status: 'skipped',
         fingerprint: target.fingerprint,
         stop_condition: `cooldown: same fingerprint dispatched within last ${SUPPLY_DISPATCH_COOLDOWN_DAYS}d; skipping re-dispatch to avoid unbounded job-spam`,
-      };
+      } satisfies QuestionPreparerEnqueueResult;
     }
     await writeEvent(tx, {
       id: eventId,
@@ -89,19 +96,14 @@ export async function enqueueQuestionPreparerTicket(
       },
       created_at: now,
     });
-    const jobId = await boss.send(
-      'question_preparer_run',
-      { ticket: parsed, ticket_event_id: eventId },
-      {
-        db: fromPgBossDrizzleTx(tx),
-        retryLimit: JOB_RETRY_LIMIT,
-        retryDelay: JOB_RETRY_DELAY_SECONDS,
-        retryBackoff: true,
-      },
-    );
-    // No de-dupe key is set, so a null id means the send was not created; roll the ticket
-    // event back instead of leaving lineage without a job.
-    if (jobId === null) throw new Error('question_preparer_run was not enqueued');
+    // Bind the stable delivery identity while the fingerprint lock is held: the complete
+    // ticket rides in the intent, so a later drain resend never rebuilds it from the
+    // summary above. The engine is not called inside this transaction.
+    const jobId = await writePreparerDispatchIntent(tx, {
+      kind: 'ticket',
+      data: { ticket: parsed, ticket_event_id: eventId },
+      send: PREPARER_TICKET_SEND,
+    });
     // The old criterion reads `experimental:question_supply` with payload.status
     // 'dispatched' and a top-level fingerprint; write that same record for the next filing.
     const ledgerEventId = newId();
@@ -139,6 +141,12 @@ export async function enqueueQuestionPreparerTicket(
       event_id: eventId,
       job_id: jobId,
       ledger_event_id: ledgerEventId,
-    };
+    } satisfies QuestionPreparerEnqueueResult;
   });
+  // The obligation is committed; deliver under the bound id and let the journal drain
+  // own any retry. A throw here leaves the intent pending for the next drain pass.
+  if (result.status === 'dispatched') {
+    await drainQuestionPreparerDispatch(db, resolvedBoss, { jobId: result.job_id });
+  }
+  return result;
 }

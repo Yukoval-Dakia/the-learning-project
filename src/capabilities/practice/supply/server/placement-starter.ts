@@ -1,18 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, lte, ne, sql } from 'drizzle-orm';
-import type { SendOptions } from 'pg-boss';
 import type { Db, Tx } from '@/db/client';
 import { goal, learning_session, placement_starter_claim } from '@/db/schema';
 import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
-import {
-  JOB_RETRY_DELAY_SECONDS,
-  JOB_RETRY_LIMIT,
-  type PlacementJobQueue,
-  enqueuePlacementJob,
-  enqueuePlacementSupplyExecuteJob,
-  fromPgBossDrizzleTx,
-  placementJobState,
-} from '@/kernel/placement-jobs';
-import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
+import { type PlacementJobQueue, placementJobState } from '@/kernel/placement-jobs';
 import {
   resolveGoalPlacementScope,
   resolveNearbyPlacementScope,
@@ -20,10 +11,12 @@ import {
 import { EvidenceDemandV1, evidenceDemandToTargetContext } from '@/kernel/supply-contracts';
 import { dispatchSupplyTarget } from './dispatcher';
 import { countPlacementInventory } from './placement-inventory';
+import { PLACEMENT_STARTER_REQUIRED_COUNT } from './placement-starter-attempts';
 import {
-  PLACEMENT_QUEUE_EXPIRY_MS,
-  PLACEMENT_STARTER_REQUIRED_COUNT,
-} from './placement-starter-attempts';
+  type PlacementDispatchBoss,
+  defaultPlacementDispatchBoss,
+  drainPlacementClaimDelivery,
+} from './placement-starter-dispatch';
 import { resolvePlacementStarterGoalAuthority } from './placement-starter-store';
 import type { QuestionSupplyTarget } from './target-discovery';
 
@@ -130,17 +123,15 @@ export function buildPlacementStarterTarget(claim: ClaimRow): QuestionSupplyTarg
 }
 
 type PlacementStarterAdmission = (tx: Tx, claim: ClaimRow) => Promise<boolean>;
-type SendSupplyExecute = (
-  data: Record<string, unknown>,
-  options: SendOptions,
-) => Promise<string | null>;
 
+// The bind transaction commits the claim's delivery obligation without calling the
+// engine: the minted job id lands on the claim and the complete send contract rides
+// on the dispatch ledger event (`delivery`). `drainPlacementClaimDelivery` — this
+// domain's only sender — delivers it after commit under the same id.
 export async function dispatchPlacementStarterClaimTx(
   tx: Tx,
   claimId: string,
-  send: (queue: 'quiz_gen', data: QuizGenJobData, options: SendOptions) => Promise<string | null>,
   admit: PlacementStarterAdmission = async () => true,
-  sendSupplyExecute: SendSupplyExecute = enqueuePlacementSupplyExecuteJob,
   sendOptions?: { startAfter?: Date },
 ): Promise<string | null> {
   const [claim] = await tx
@@ -152,10 +143,11 @@ export async function dispatchPlacementStarterClaimTx(
   if (!(await admit(tx, claim))) return null;
 
   const now = new Date();
-  // Enqueue + status→queued run in a SAVEPOINT (nested tx) so a nonterminal single-flight 23505 on
-  // the pending→queued update rolls back the enqueue (no orphan quiz_gen job) without aborting the
-  // outer tx — then we leave the claim pending for a later attempt. The outer FOR UPDATE lock on
-  // the claim persists across the savepoint.
+  const boundJobId = randomUUID();
+  // Binding + status→queued run in a SAVEPOINT (nested tx) so a nonterminal single-flight 23505 on
+  // the pending→queued update rolls back the bound ledger event (no orphan obligation) without
+  // aborting the outer tx — then we leave the claim pending for a later attempt. The outer FOR
+  // UPDATE lock on the claim persists across the savepoint.
   try {
     return await tx.transaction(async (sp) => {
       const target = buildPlacementStarterTarget(claim);
@@ -177,35 +169,20 @@ export async function dispatchPlacementStarterClaimTx(
         actorRef: 'placement_starter',
         session_id: placementSession?.id ?? null,
         webSearchAvailable: () => true,
-        enqueueQuizGen: (data) =>
-          send('quiz_gen', data, {
-            db: fromPgBossDrizzleTx(sp),
-            retryLimit: JOB_RETRY_LIMIT,
-            retryDelay: JOB_RETRY_DELAY_SECONDS,
-            retryBackoff: true,
-            ...(sendOptions?.startAfter != null ? { startAfter: sendOptions.startAfter } : {}),
-          }),
-        // The supply_execute delivery carries the same transport contract the placement
-        // consumer verifies: 3 deliveries, the original backoff, and the 120-minute expiry.
-        enqueueSupplyExecute: (data) =>
-          sendSupplyExecute(data, {
-            db: fromPgBossDrizzleTx(sp),
-            retryLimit: JOB_RETRY_LIMIT,
-            retryDelay: JOB_RETRY_DELAY_SECONDS,
-            retryBackoff: true,
-            expireInSeconds: PLACEMENT_QUEUE_EXPIRY_MS / 1_000,
-            ...(sendOptions?.startAfter != null ? { startAfter: sendOptions.startAfter } : {}),
-          }),
+        deliveryBinding: { jobId: boundJobId, startAfter: sendOptions?.startAfter },
       });
       const jobId = result.jobId;
       if (!jobId)
-        throw new Error(`pg-boss returned no job id for placement starter claim ${claim.id}`);
+        throw new Error(`no delivery identity was bound for placement starter claim ${claim.id}`);
 
       await sp
         .update(placement_starter_claim)
         .set({
           status: 'queued',
           pg_boss_job_id: jobId,
+          // A bound-unacked claim stays due: the sweeper's drain leg owes it one
+          // engine pass until the acceptance receipt lands.
+          next_reconcile_at: now,
           updated_at: now,
           version: claim.version + 1,
         })
@@ -235,17 +212,17 @@ export async function dispatchPlacementStarterClaim(
   claimId: string,
   admit?: PlacementStarterAdmission,
   sendOptions?: { startAfter?: Date },
+  boss?: PlacementDispatchBoss,
 ): Promise<string | null> {
-  return db.transaction((tx) =>
-    dispatchPlacementStarterClaimTx(
-      tx,
-      claimId,
-      enqueuePlacementJob,
-      admit,
-      enqueuePlacementSupplyExecuteJob,
-      sendOptions,
-    ),
+  const jobId = await db.transaction((tx) =>
+    dispatchPlacementStarterClaimTx(tx, claimId, admit, sendOptions),
   );
+  // The obligation is committed; deliver under the bound id. A throw leaves the
+  // claim queued-unacked — the sweeper's drain leg owns the retry.
+  if (jobId) {
+    await drainPlacementClaimDelivery(db, boss ?? defaultPlacementDispatchBoss(), claimId);
+  }
+  return jobId;
 }
 
 /**

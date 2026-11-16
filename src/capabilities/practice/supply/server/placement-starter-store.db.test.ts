@@ -70,51 +70,49 @@ async function seedGoal(): Promise<void> {
 }
 
 describe('placement starter store', () => {
-  // @invariant concurrency: a new (sourcing_web) placement claim records exactly one supply_execute job, and a failed send rolls the claim back to pending
-  // @fails-if new claims still dispatch quiz_gen, a failed send leaves the claim queued, or a second dispatch sends again; the pending/queued status and sent-count assertions fail
-  it('atomically records one job and rolls back when send fails', async () => {
+  // @invariant concurrency/idempotency: a new (sourcing_web) placement claim binds exactly one durable supply_execute delivery (stable id + complete payload on the dispatch event), a failed bind rolls the claim back to pending, and a second dispatch binds nothing new
+  // @fails-if new claims still send inside the transaction, a failed bind leaves the claim queued, the delivery payload is missing or rebuilt, or a second dispatch rebinds; the pending/queued status and bound-id assertions fail
+  it('atomically binds one delivery and rolls back when the bind fails', async () => {
     await seedGoal();
     const { identities } = await db.transaction((tx) =>
       materializePlacementStartersForGoal(tx, 'goal-1'),
     );
     const identity = identities[0];
     if (!identity) throw new Error('missing placement identity');
-    const noQuizGen = async (): Promise<string | null> => {
-      throw new Error('new placement claims must not dispatch quiz_gen');
-    };
 
     await expect(
       db.transaction((tx) =>
-        dispatchPlacementStarterClaimTx(tx, identity.claimId, noQuizGen, undefined, async () => {
-          throw new Error('send failed');
+        dispatchPlacementStarterClaimTx(tx, identity.claimId, async () => {
+          throw new Error('bind failed');
         }),
       ),
-    ).rejects.toThrow('send failed');
+    ).rejects.toThrow('bind failed');
     expect((await db.select().from(placement_starter_claim))[0]?.status).toBe('pending_dispatch');
 
-    const sent: Record<string, unknown>[] = [];
-    await db.transaction((tx) =>
-      dispatchPlacementStarterClaimTx(tx, identity.claimId, noQuizGen, undefined, async (data) => {
-        sent.push(data);
-        return 'job-1';
-      }),
+    const boundJobId = await db.transaction((tx) =>
+      dispatchPlacementStarterClaimTx(tx, identity.claimId),
     );
-    await db.transaction((tx) =>
-      dispatchPlacementStarterClaimTx(tx, identity.claimId, noQuizGen, undefined, async () => {
-        throw new Error('must not send again');
-      }),
+    expect(boundJobId).toBeTruthy();
+    const second = await db.transaction((tx) =>
+      dispatchPlacementStarterClaimTx(tx, identity.claimId),
     );
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({
-      items: [{ count: 8, placement_claim_id: identity.claimId }],
-    });
-    const trace = SupplyTraceV1.parse(sent[0]?.supply_trace);
-    expect(trace.claim_id).toBe(identity.claimId);
-    expect(trace.allowed_uses).toEqual(['placement', 'diagnostic']);
+    expect(second).toBe(boundJobId);
+
     const [dispatchEvent] = await db
       .select({ payload: event.payload })
       .from(event)
       .where(eq(event.subject_id, identity.targetId));
+    const delivery = dispatchEvent?.payload.delivery as
+      | { queue: string; job_data: Record<string, unknown> }
+      | undefined;
+    expect(dispatchEvent?.payload.job_id).toBe(boundJobId);
+    expect(delivery?.queue).toBe('supply_execute');
+    expect(delivery?.job_data).toMatchObject({
+      items: [{ count: 8, placement_claim_id: identity.claimId }],
+    });
+    const trace = SupplyTraceV1.parse(delivery?.job_data.supply_trace);
+    expect(trace.claim_id).toBe(identity.claimId);
+    expect(trace.allowed_uses).toEqual(['placement', 'diagnostic']);
     expect(dispatchEvent?.payload.supply_trace).toEqual(trace);
     expect(dispatchEvent?.payload.supply_trace).toMatchObject({
       claim_id: identity.claimId,
@@ -122,7 +120,7 @@ describe('placement starter store', () => {
     });
     expect((await db.select().from(placement_starter_claim))[0]).toMatchObject({
       status: 'queued',
-      pg_boss_job_id: 'job-1',
+      pg_boss_job_id: boundJobId,
     });
   });
 });

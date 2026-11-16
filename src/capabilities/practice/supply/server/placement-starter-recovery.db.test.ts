@@ -39,7 +39,7 @@ vi.mock('@/server/boss/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/server/boss/client')>();
   return {
     ...actual,
-    getStartedBoss: async () => ({ send: bossMock.send }),
+    getStartedBoss: async () => ({ send: bossMock.send, getJobById: async () => null }),
   };
 });
 

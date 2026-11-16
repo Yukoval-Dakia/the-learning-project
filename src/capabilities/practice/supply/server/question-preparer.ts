@@ -13,7 +13,7 @@ import {
 import { QUESTION_PREPARER_TOOLS, resolveMcpAllowedTools } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
 import { currentTaskSpendScope, withTaskSpendScope } from '@/server/ai/task-spend-scope';
-import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
+import { getStartedBoss } from '@/server/boss/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   BankAssessmentSchema,
@@ -21,6 +21,11 @@ import {
   selectBankReceipt,
 } from '../../question-bank/public';
 import { questionPreparerReportSchema } from '../tasks/question-preparer';
+import {
+  type PreparerDispatchBoss,
+  drainQuestionPreparerDispatch,
+  writePreparerDispatchIntent,
+} from './preparer-dispatch';
 import {
   QuestionPreparerJobData,
   type preparerInventoryObservation,
@@ -276,12 +281,17 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
           `waiting_for_prior_segment:${previousId}`,
           true,
         );
-        await boss.send('question_preparer_run', data, {
-          db: fromPgBossDrizzleTx(tx),
-          startAfter: new Date(Date.now() + 30_000),
-          singletonKey: `question_preparer_wait:${jobId}`,
+        // The wait's successor delivery is bound in this segment transaction;
+        // the journal drain sends it under the same id after commit.
+        const successorJobId = await writePreparerDispatchIntent(tx, {
+          kind: 'wait',
+          data,
+          send: {
+            singleton_key: `question_preparer_wait:${jobId}`,
+            not_before: new Date(Date.now() + 30_000).toISOString(),
+          },
         });
-        return { terminal: deferred };
+        return { terminal: deferred, owedJobId: successorJobId };
       }
       const previous = QuestionPreparerJobData.parse(row.payload.data);
       const done = preparerTerminal.parse(terminal.payload.terminal);
@@ -338,6 +348,11 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
     await preparerRecord(tx, jobId, data, 'unstarted', contentRecord);
     return {};
   });
+  if ('owedJobId' in claim && claim.owedJobId) {
+    await drainQuestionPreparerDispatch(db, boss as unknown as PreparerDispatchBoss, {
+      jobId: claim.owedJobId,
+    });
+  }
   if ('terminal' in claim) return claim.terminal;
   if (claim.recover) {
     await recoverQuestionPreparer(db, claim.recover);

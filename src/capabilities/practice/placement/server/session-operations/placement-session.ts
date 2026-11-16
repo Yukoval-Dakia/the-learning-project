@@ -247,22 +247,25 @@ export async function startPlacementProbe(
           return (await countPlacementInventory(tx, fallbackKnowledgeIds)) < PLACEMENT_DEFAULT_CAP;
         });
       } catch (err) {
-        // The claim was materialized (committed) in Transaction A above but its quiz_gen dispatch
-        // failed. It stays 'pending_dispatch'. Two recovery paths now exist: (a) a SUBSEQUENT
+        // The claim was materialized (committed) in Transaction A above but its delivery
+        // either declined admission (still 'pending_dispatch') or committed its bound
+        // delivery identity and only the post-commit send failed ('queued' without an
+        // acceptance receipt). Two recovery paths cover both: (a) a SUBSEQUENT
         // placement/start for the same goal — materialize is idempotent on the deterministic
         // claim id and dispatchPlacementStarterClaimTx re-dispatches a still-'pending_dispatch'
-        // claim; and (b) the placement_starter_recovery job's background sweeper, which consumes
-        // placement_starter_claim_recovery_idx / next_reconcile_at on a short cron and
-        // re-drives the claim even if the learner never returns
-        // (src/capabilities/practice/supply/server/placement-starter-recovery.ts). A stranded pending
-        // claim is HARMLESS in the meantime: it is exempt from
-        // the placement_starter_claim_nonterminal_uq single-flight guard (round-2), so it blocks no
-        // later revision. If re-dispatch collides with another revision's live paid flight, its
-        // savepoint enqueue is rolled back and the claim stays pending until that flight ends —
-        // never an irreversible cancellation or a 500. We surface sourcingNeeded to the client
-        // rather than failing the whole probe.
+        // claim; and (b) the placement_starter_recovery job's background sweeper, whose drain
+        // leg delivers every queued-unacked bound identity and whose pending leg re-drives
+        // pending claims on a short cron even if the learner never returns
+        // (src/capabilities/practice/supply/server/placement-starter-recovery.ts). A stranded
+        // claim is HARMLESS in the meantime: pending is exempt from
+        // the placement_starter_claim_nonterminal_uq single-flight guard (round-2), and a
+        // queued-unacked claim is owed by the drain until the engine accepts it, so no
+        // revision is ever blocked. If re-dispatch collides with another revision's live paid
+        // flight, its savepoint bind is rolled back and the claim stays pending until that
+        // flight ends — never an irreversible cancellation or a 500. We surface
+        // sourcingNeeded to the client rather than failing the whole probe.
         console.error(
-          `[placement-starter] initial dispatch failed for ${claimId}; claim left pending_dispatch, a subsequent placement start re-dispatches it`,
+          `[placement-starter] initial dispatch failed for ${claimId}; claim left pending or queued-unacked, the sweeper drain completes it`,
           err,
         );
       }

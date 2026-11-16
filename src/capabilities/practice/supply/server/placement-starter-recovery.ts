@@ -1,8 +1,12 @@
 // Recovery sweeper for stranded placement starter claims, run by the standalone
 // placement_starter_recovery cron job (moved off the question_supply_nightly tail in YUK-1664
 // so recovery is driven by due obligations, not the nightly timetable).
+// queued-unacked: drain. The claim's bound delivery identity lacks an engine-acceptance
+// receipt; drainUnackedPlacementClaims — this domain's only sender — delivers it under
+// the same id. This leg owns every queued claim until the receipt lands; the inflight
+// leg below never parks or reaps one.
 // pending_dispatch: re-drive. The claim committed but its separate dispatch never
-// enqueued a quiz_gen job; dispatchPlacementStarterClaimTx re-checks status under FOR UPDATE
+// bound a delivery; dispatchPlacementStarterClaimTx re-checks status under FOR UPDATE
 // and CASes pending to queued, so /placement/start and this sweeper cannot both dispatch.
 // retry_scheduled: reap only, never re-drive. pg-boss retries the same quiz_gen job; a
 // second enqueue would run two paid batches for one claim. If the owning job is confirmed
@@ -37,6 +41,14 @@ import {
   PLACEMENT_STARTER_REQUIRED_COUNT,
   terminalizeLostPlacementDelivery,
 } from './placement-starter-attempts';
+import {
+  type PlacementDispatchBoss,
+  type PlacementDispatchDrainResult,
+  defaultPlacementDispatchBoss,
+  drainUnackedPlacementClaims,
+  placementDispatchReceiptExists,
+  placementHasBoundDelivery,
+} from './placement-starter-dispatch';
 import {
   markPlacementStarterClaimTerminal,
   resolvePlacementStarterGoalAuthority,
@@ -73,6 +85,14 @@ const MIN_CURSOR_ADVANCE_MS = 60_000;
 const DEFAULT_MAX_PER_RUN = 25;
 
 export interface PlacementStarterRecoveryResult {
+  /** Queued claims lacking an acceptance receipt, returned by the drain leg's own scan. */
+  scannedUnacked: number;
+  /** Bound deliveries sent to the engine this pass (first send or re-send after loss). */
+  deliveryDispatched: number;
+  /** Bound deliveries the engine already held; only the receipt was owed. */
+  deliveryAccepted: number;
+  /** Bound deliveries the drain could not resolve; retried next window. */
+  deliveryFailed: number;
   /** Overdue pending_dispatch claims returned by the re-drive leg's own scan (after its cap). */
   scannedPending: number;
   /** Overdue retry_scheduled claims returned by the reap leg's own scan (after its cap). */
@@ -93,6 +113,8 @@ export interface PlacementStarterRecoveryResult {
   retryJobLive: number;
   /** In-flight claims terminalized after both lease/fence and job-liveness authority were gone. */
   inflightReaped: number;
+  /** queued claims whose bound delivery is still owed to the drain leg; never parked or reaped. */
+  inflightDeliveryPending: number;
   /** queued claims still inside the pg-boss queue expiry window. */
   inflightQueuePending: number;
   /** In-flight claims deferred because an attempt still held an unexpired lease. */
@@ -128,12 +150,20 @@ export interface PlacementStarterRecoveryDeps {
   isJobLive?: typeof isPlacementStarterJobLive;
   /** Seam for DB tests: defaults to the module-level dark-ship flag. */
   placementProbeEnabled?: boolean;
+  /** Seam for the delivery drain; defaults to the real engine-backed drain below. */
+  drainDeliveries?: (db: Db) => Promise<PlacementDispatchDrainResult>;
+  /** Engine seam for the default drain; the running worker boss is used when unset. */
+  boss?: PlacementDispatchBoss;
 }
 
 export function emptyPlacementStarterRecoveryResult(
   overrides: Partial<PlacementStarterRecoveryResult> = {},
 ): PlacementStarterRecoveryResult {
   return {
+    scannedUnacked: 0,
+    deliveryDispatched: 0,
+    deliveryAccepted: 0,
+    deliveryFailed: 0,
     scannedPending: 0,
     scannedRetry: 0,
     scannedInflight: 0,
@@ -144,6 +174,7 @@ export function emptyPlacementStarterRecoveryResult(
     retryPending: 0,
     retryJobLive: 0,
     inflightReaped: 0,
+    inflightDeliveryPending: 0,
     inflightQueuePending: 0,
     inflightLeaseActive: 0,
     inflightJobLive: 0,
@@ -383,6 +414,24 @@ export async function sweepStalePlacementStarterClaims(
 
   const zombieCutoff = new Date(now.getTime() - PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS);
 
+  // The delivery drain owns every bound-but-unacked claim and must run BEFORE the
+  // inflight leg: a queued claim parked at the 120-minute queue expiry would hide an
+  // undelivered obligation from this leg's own `next_reconcile_at <= now` window.
+  await runLeg(result, 'dispatch_drain', async () => {
+    const drain =
+      deps.drainDeliveries ??
+      ((database: Db) =>
+        drainUnackedPlacementClaims(database, deps.boss ?? defaultPlacementDispatchBoss(), {
+          now,
+          batchSize: maxPerRun,
+        }));
+    const drained = await drain(db);
+    result.scannedUnacked = drained.scanned;
+    result.deliveryDispatched = drained.dispatched;
+    result.deliveryAccepted = drained.accepted;
+    result.deliveryFailed = drained.failed;
+  });
+
   // Each leg is isolated from its siblings: neither reap class can be held hostage by the paid
   // leg (or by each other), and that has to hold for FAILURE too, not just for budget.
   await runLeg(result, 'retry_scheduled', async () => {
@@ -436,6 +485,24 @@ async function sweepInflightClaim(
   isJobLive: typeof isPlacementStarterJobLive,
   result: PlacementStarterRecoveryResult,
 ): Promise<void> {
+  // A bound delivery without its engine-acceptance receipt belongs to the drain leg:
+  // this path must never park an undelivered obligation at the queue-expiry horizon,
+  // and a reaper must never see a claim whose send has not even been confirmed. The
+  // deferral holds only while the drain can still act — a claim bound before the
+  // delivery contract existed carries no payload to resend, so when its engine row
+  // is also gone it falls through to the ordinary park/probe/reap path below.
+  if (
+    claim.status === 'queued' &&
+    claim.pg_boss_job_id &&
+    !(await placementDispatchReceiptExists(db, claim.pg_boss_job_id)) &&
+    (await placementHasBoundDelivery(db, claim))
+  ) {
+    const revisit = new Date(now.getTime() + MIN_CURSOR_ADVANCE_MS);
+    if (await acquireClaim(db, claim, now, revisit)) result.inflightDeliveryPending += 1;
+    else result.lost += 1;
+    return;
+  }
+
   // queued has no attempt lease in the normal state. Its existing 120-minute pg-boss queue expiry
   // is the earliest point at which recovery may treat a missing/dead job as lost; before then we
   // park exactly on that deadline and do not even probe the external queue.

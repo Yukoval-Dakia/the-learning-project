@@ -146,6 +146,13 @@ export {
   terminalizeLostPlacementDelivery,
   terminalizePlacementUnknownCost,
 } from './server/placement-starter-attempts';
+export {
+  type PlacementDispatchBoss,
+  type PlacementDispatchOutcome,
+  drainPlacementClaimDelivery,
+  drainUnackedPlacementClaims,
+  placementDispatchReceiptExists,
+} from './server/placement-starter-dispatch';
 export { placementStarterIdentity } from './server/placement-starter-identity';
 export { readPlacementStarterOutcomes } from './server/placement-starter-outcome-reader';
 export {
@@ -158,6 +165,11 @@ export {
   materializePlacementStartersForGoal,
   resolvePlacementStarterGoalAuthority,
 } from './server/placement-starter-store';
+export {
+  type PreparerDispatchBoss,
+  type QuestionPreparerDispatchResult,
+  drainQuestionPreparerDispatch,
+} from './server/preparer-dispatch';
 export { isUnanchoredSupplyPaused } from './server/spend-gate';
 export {
   checkSupplyPlanKnowledgeIds,

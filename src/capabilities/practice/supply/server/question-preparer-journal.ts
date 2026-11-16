@@ -14,7 +14,16 @@ import { lockQuestionSubmitRequest } from '@/kernel/locks/question-supply';
 import { readTaskRunPublications } from '@/kernel/records/publication-receipt';
 import { unknownAttemptCostTruth } from '@/server/ai/attempt-cost';
 import { writeAiTaskAttemptFinished } from '@/server/ai/log';
-import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
+import { getStartedBoss } from '@/server/boss/client';
+import {
+  PREPARER_DISPATCH_ACTION,
+  PREPARER_DISPATCH_INTENT_ACTION,
+  type PreparerDispatchBoss,
+  QUESTION_PREPARER_QUEUE,
+  drainQuestionPreparerDispatch,
+  parsePreparerDispatchIntent,
+  writePreparerDispatchIntent,
+} from './preparer-dispatch';
 import {
   type QuestionPreparerData,
   QuestionPreparerJobData,
@@ -194,18 +203,25 @@ export async function preparerCalls(db: Db | Tx, taskRunId: string) {
     .orderBy(tool_call_log.occurred_at);
 }
 
-/** Queue truth proves a segment dead. Unknown requests are settled, never replayed. */
-export async function recoverQuestionPreparer(db: Db, jobId: string, forceDead = false) {
+/** Queue truth proves a segment dead. Unknown requests are settled, never replayed.
+ * The successor's delivery identity is bound inside the finishing transaction and sent
+ * after commit by the shared drain — the only sender for this domain. Returns the
+ * successor's bound delivery id when one was owed. */
+export async function recoverQuestionPreparer(
+  db: Db,
+  jobId: string,
+  forceDead = false,
+): Promise<string | undefined> {
   const [claim] = await db
     .select()
     .from(event)
     .where(eq(event.id, `question_preparer_unstarted_${jobId}`));
-  if (!claim) return;
+  if (!claim) return undefined;
   const data = QuestionPreparerJobData.parse(claim.payload.data);
-  const boss = await getStartedBoss();
-  const job = await boss.getJobById('question_preparer_run', jobId);
-  if (!forceDead && job && ['created', 'retry', 'active'].includes(job.state)) return;
-  await db.transaction(async (tx) => {
+  const boss = (await getStartedBoss()) as PreparerDispatchBoss;
+  const job = await boss.getJobById(QUESTION_PREPARER_QUEUE, jobId);
+  if (!forceDead && job && ['created', 'retry', 'active'].includes(job.state)) return undefined;
+  const successorJobId = await db.transaction(async (tx) => {
     await lockQuestionPreparerSegment(tx, data);
     const history = await preparerHistory(tx, data);
     if (history.some((row) => row.id === `question_preparer_finished_${jobId}`)) return;
@@ -252,19 +268,81 @@ export async function recoverQuestionPreparer(db: Db, jobId: string, forceDead =
         : 'process_interrupted_before_provider',
       true,
     );
-    await boss.send(
-      'question_preparer_run',
-      { ...data, recovery: { prior_job_id: jobId } },
-      {
-        db: fromPgBossDrizzleTx(tx),
-        singletonKey: `question_preparer_recovery:${jobId}`,
-      },
-    );
+    // The successor obligation commits with the prior's finished row; the drain
+    // delivers it under the bound id after this transaction.
+    return writePreparerDispatchIntent(tx, {
+      kind: 'recovery',
+      data: { ...data, recovery: { prior_job_id: jobId } },
+      send: { singleton_key: `question_preparer_recovery:${jobId}` },
+    });
   });
+  if (successorJobId) {
+    await drainQuestionPreparerDispatch(db, boss, { jobId: successorJobId });
+  }
+  return successorJobId;
+}
+
+// A delivery the engine accepted but that died before its first journal row has no
+// unstarted row for the old scan to claim, and its prior's finished row already blocks
+// rescanning. The persisted intent carries the complete input, so the journal claims
+// the segment post-hoc and runs the same recovery as a journaled death. Auto-recovery
+// chains are bounded per demand: a successor that dies pre-journal still ends the line
+// after a few generations instead of spamming forever on a deterministic fault.
+const MAX_PREPARER_RECOVERY_GENERATIONS = 3;
+
+async function recoverUnjournaledPreparerDeliveries(db: Db, boss: PreparerDispatchBoss) {
+  const rows = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, PREPARER_DISPATCH_INTENT_ACTION),
+        sql`EXISTS (SELECT 1 FROM event receipt WHERE receipt.action = ${PREPARER_DISPATCH_ACTION} AND receipt.payload->>'job_id' = ${event.payload}->>'job_id')`,
+        sql`NOT EXISTS (SELECT 1 FROM event journal WHERE journal.id = 'question_preparer_unstarted_' || (${event.payload}->>'job_id'))`,
+      ),
+    )
+    .orderBy(event.created_at, event.id)
+    .limit(50);
+  for (const row of rows) {
+    const intent = parsePreparerDispatchIntent(row.payload);
+    if (!intent) continue;
+    const job = await boss.getJobById(QUESTION_PREPARER_QUEUE, intent.job_id);
+    if (job && ['created', 'retry', 'active'].includes(job.state)) continue;
+    // 'completed' is a true anomaly (the handler always journals first); 'cancelled'
+    // was an operator act — neither is auto-recovered. A missing row, 'failed', or
+    // 'expired' is the same dead-delivery class the claims scan already owns.
+    if (job && (job.state === 'completed' || job.state === 'cancelled')) {
+      console.error(
+        `[question_preparer_journal] accepted delivery ${intent.job_id} is ${job.state} with no journal rows; leaving for the operator`,
+      );
+      continue;
+    }
+    const [{ generations }] = await db
+      .select({ generations: sql<number>`count(*)::int` })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, PREPARER_DISPATCH_INTENT_ACTION),
+          eq(event.subject_id, intent.demand_id),
+          sql`${event.payload}->'data'->'recovery' is not null`,
+        ),
+      );
+    if (generations >= MAX_PREPARER_RECOVERY_GENERATIONS) {
+      console.error(
+        `[question_preparer_journal] delivery ${intent.job_id} for demand ${intent.demand_id} died pre-journal past ${MAX_PREPARER_RECOVERY_GENERATIONS} recovery generations; leaving for the operator`,
+      );
+      continue;
+    }
+    await preparerRecord(db, intent.job_id, intent.data, 'unstarted');
+    await recoverQuestionPreparer(db, intent.job_id);
+  }
 }
 
 export function buildQuestionPreparerRecoveryHandler(db: Db) {
   return async () => {
+    const boss = (await getStartedBoss()) as PreparerDispatchBoss;
+    // Owed deliveries go out first so the dead-segment probes below see fresh engine rows.
+    await drainQuestionPreparerDispatch(db, boss);
     const claims = await db
       .select({ jobId: sql<string>`${event.payload}->>'job_id'` })
       .from(event)
@@ -276,5 +354,6 @@ export function buildQuestionPreparerRecoveryHandler(db: Db) {
         ),
       );
     for (const claim of claims) await recoverQuestionPreparer(db, claim.jobId);
+    await recoverUnjournaledPreparerDeliveries(db, boss);
   };
 }
