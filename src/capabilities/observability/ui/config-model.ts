@@ -210,11 +210,14 @@ const LANE_WORDS: Readonly<Record<string, string>> = {
 export function laneWords(lanes: readonly string[]): string {
   return lanes.map((lane) => LANE_WORDS[lane] ?? lane).join('、');
 }
+export function modelPairLine(provider: string | null, model: string | null): string {
+  return `${provider ?? 'Provider 未知'} / ${model || '模型由任务决定'}`;
+}
 /** One line for what a task really runs on, or why it cannot be told. */
 export function bindingLine(binding: ConfigBinding | null): string {
   if (!binding) return '运行时事实尚未就绪';
   if (binding.error) return binding.error;
-  return `${binding.provider} / ${binding.model}`;
+  return modelPairLine(binding.provider, binding.model);
 }
 export function bindingThinking(binding: ConfigBinding | null): string | null {
   const reasoning = binding?.reasoning;

@@ -8,6 +8,7 @@ export function modelIssue(providers: ConfigProvider[], provider: string, model:
   if (!selected) return '尚未取得 provider 目录';
   const unavailable = providerUnavailable(selected);
   if (unavailable) return unavailable;
+  if (!model) return null;
   const entry = selected.models?.find((m) => m.id === model);
   if (!entry) return '当前模型不在目录中，保留原选择；请明确选择后再保存。';
   return entry.runnable === false ? '目录标记此模型当前不可运行，原配置未更改。' : null;
@@ -70,11 +71,8 @@ export function ModelPicker({
             disabled={!selected || providerUnavailable(selected) !== null}
             onChange={(e) => onChange({ provider, model: e.target.value })}
           >
-            {!entry && (
-              <option value={model}>
-                {model ? `${model} · 目录未列出` : '请选择模型（不会自动选第一项）'}
-              </option>
-            )}
+            <option value="">模型由任务决定（只指定 provider）</option>
+            {model && !entry ? <option value={model}>{model} · 目录未列出</option> : null}
             {models.map((m) => (
               <option key={m.id} value={m.id} disabled={m.runnable === false}>
                 {m.id}

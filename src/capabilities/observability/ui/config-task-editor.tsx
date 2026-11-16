@@ -18,6 +18,7 @@ import {
   initialModelDraft,
   modelChanges,
   modelEditable,
+  modelPairLine,
   resetTaskChanges,
   taskWords,
   thinkingChoiceWord,
@@ -32,7 +33,9 @@ function modelSummary(task: ConfigTask, draft: ModelDraft): string {
   const initial = initialModelDraft(task);
   const parts: string[] = [];
   if (draft.provider !== initial.provider || draft.model !== initial.model) {
-    parts.push(`模型：${initial.provider} / ${initial.model} → ${draft.provider} / ${draft.model}`);
+    parts.push(
+      `模型：${modelPairLine(initial.provider, initial.model)} → ${modelPairLine(draft.provider, draft.model)}`,
+    );
   }
   if (draft.thinking !== initial.thinking) {
     parts.push(
@@ -41,7 +44,9 @@ function modelSummary(task: ConfigTask, draft: ModelDraft): string {
   }
   if (draft.ownModel !== initial.ownModel) {
     parts.push(
-      draft.ownModel ? `不跟全局默认，用 ${draft.provider} / ${draft.model}` : '跟全局默认',
+      draft.ownModel
+        ? `不跟全局默认，用 ${modelPairLine(draft.provider, draft.model)}`
+        : '跟全局默认',
     );
   }
   return parts.join('；');
@@ -114,6 +119,7 @@ export function ConfigTaskEditor({
     ? findModel(providers, global?.provider ?? draft.provider, global?.model ?? draft.model)
     : findModel(providers, draft.provider, draft.model);
   const levels = thinkingLevels(thinkingModel);
+  const unlistedThinking = draft.thinking !== '' && !levels.includes(draft.thinking);
 
   async function commit() {
     if (!confirm || pending) return;
@@ -169,7 +175,7 @@ export function ConfigTaskEditor({
               });
             }}
           />
-          {levels.length > 0 ? (
+          {levels.length > 0 || unlistedThinking ? (
             <label htmlFor={`${id}-thinking`} className="adm-inline-field">
               <span className="adm-field-name">思考强度</span>
               <select
@@ -179,6 +185,11 @@ export function ConfigTaskEditor({
                 onChange={(e) => setDraft({ ...draft, thinking: e.target.value })}
               >
                 <option value="">默认</option>
+                {unlistedThinking && (
+                  <option value={draft.thinking} disabled>
+                    {thinkingWord(draft.thinking)} · 当前值（不在可选档位中）
+                  </option>
+                )}
                 {levels.map((level) => (
                   <option key={level} value={level}>
                     {thinkingChoiceWord(thinkingModel, level)}
@@ -196,7 +207,6 @@ export function ConfigTaskEditor({
                 checked={draft.ownModel}
                 onChange={(e) => {
                   const ownModel = e.target.checked;
-                  // The model that really runs changes, and a level it does not list would be saved unseen.
                   const next = ownModel
                     ? findModel(providers, draft.provider, draft.model)
                     : findModel(
@@ -207,7 +217,10 @@ export function ConfigTaskEditor({
                   setDraft({
                     ...draft,
                     ownModel,
-                    thinking: thinkingLevels(next).includes(draft.thinking) ? draft.thinking : '',
+                    thinking:
+                      next === thinkingModel || thinkingLevels(next).includes(draft.thinking)
+                        ? draft.thinking
+                        : '',
                   });
                 }}
               />
