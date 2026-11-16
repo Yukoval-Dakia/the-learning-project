@@ -1,0 +1,5 @@
+learning_session(ingestion) 7|2026-10-10 04:17:57.482+00
+source_document 7|2026-10-10 04:17:57.482+00
+source_asset 19|2026-10-12 21:09:34.391+00
+pgboss_job_total 53229
+ai_task_runs 787
