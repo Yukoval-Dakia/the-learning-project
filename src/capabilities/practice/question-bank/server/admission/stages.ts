@@ -306,8 +306,11 @@ export function admissionStageRunner(input: {
           )
           .orderBy(desc(sql`(${paid_effect.input_json}->>'attempt')::int`));
         const previous = history[0];
-        // Grants consume this burst's budget even before the successor is claimed.
-        // A spent network window drops to the outage tail; quota never resets it.
+        // Grants consume this chain's budget even before the successor is
+        // claimed: the not_sent ledger counts sends across the whole 24h
+        // window, so a waiting receipt never re-arms the in-run burst — each
+        // wake performs only its single scheduled resend. A spent window
+        // drops to the outage tail; quota never resets it.
         let notSentStartedAt: string | undefined;
         let notSentWaits = 0;
         let notSentOutageWaits = 0;
@@ -326,8 +329,6 @@ export function admissionStageRunner(input: {
             notSentStartedAt ??= saved.not_sent_started_at;
             notSentWaits = saved.not_sent_waits;
             notSentOutageWaits = saved.outage_waits ?? 0;
-            notSentRetries = 0;
-            notSentWaitedMs = 0;
           }
           if (saved.kind === 'waiting' && saved.recovery.reason === 'provider') {
             providerWaits = saved.provider_waits ?? providerWaits;
@@ -639,6 +640,26 @@ export function admissionStageRunner(input: {
                 error.helpProviderFault?.kind === 'parse' ||
                 error.helpProviderFault?.kind === 'bad_gateway');
             if (verdict?.class === 'not_sent' && plan === undefined && !input.interrupted?.()) {
+              // The wait may open only on the evidence its resend re-checks:
+              // a settled attempt carrying the unbilled-rejection receipt. A
+              // not_sent row that cannot prove it billed nothing parks unknown
+              // here — the same gate the provider class applies at write time —
+              // instead of entering a wait that can never resolve.
+              if (
+                providerWaitEvidence?.settled !== true ||
+                providerWaitEvidence.unbilled !== true
+              ) {
+                await input.db.transaction((tx) =>
+                  markPaidEffectUnknown(
+                    tx,
+                    reservation.identity,
+                    input.deliveryId,
+                    'admission_stage_outcome_unknown',
+                    { fence: reservation.fence },
+                  ),
+                );
+                throw error;
+              }
               const now = Date.now();
               const startedAt = notSentStartedAt ?? new Date(now).toISOString();
               const expiresAt = Date.parse(startedAt) + NOT_SENT_WINDOW_MS;
