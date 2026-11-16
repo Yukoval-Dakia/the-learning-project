@@ -43,12 +43,14 @@ async function seedRun(opts: {
   return id;
 }
 
-describe('reconcileStuckAiTaskRuns (YUK-576 §5)', () => {
+describe('reconcileStuckAiTaskRuns (§5)', () => {
   beforeEach(async () => {
     await resetDb();
     seq = 0;
   });
 
+  // @invariant data: a repeated reconcile sweep converges to zero repaired rows
+  // @fails-if a second sweep repairs or mutates rows again
   it('is idempotent: a second sweep converges zero rows', async () => {
     await seedRun({ status: 'running', started_at: STUCK_STARTED_AT });
 

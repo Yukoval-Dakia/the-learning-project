@@ -33,7 +33,9 @@ afterEach(async () => {
   replaceConfigSnapshot(EMPTY_SNAPSHOT);
 });
 
-describe('P1-3 — hydrate single-flight + epoch guard', () => {
+describe('hydrate single-flight + epoch guard', () => {
+  // @invariant concurrency: concurrent hydrates serialize and a stale snapshot cannot overwrite a newer one
+  // @fails-if two hydrates interleave or an older snapshot overwrites newer state
   it('concurrent hydrates serialize; a stale snapshot cannot overwrite a newer one', async () => {
     const db = testDb();
     // seed epoch=1 val=10

@@ -263,7 +263,9 @@ describe('runCopilotRun', () => {
     expect(JSON.stringify(events)).not.toContain('private');
   });
 
-  it('YUK-757 — overlapping deliveries atomically claim one paid execution and the loser never terminalizes the live owner', async () => {
+  // @invariant concurrency: overlapping deliveries atomically claim exactly one paid execution; the loser never terminalizes the live owner
+  // @fails-if both deliveries claim the run, or the losing delivery marks the live owner terminal
+  it('overlapping deliveries atomically claim one paid execution and the loser never terminalizes the live owner', async () => {
     const runId = 'copilot_user_ask_overlapping_execution_claim';
     const sessionId = 'sess_overlapping_execution_claim';
     let releaseAssembly: (() => void) | undefined;

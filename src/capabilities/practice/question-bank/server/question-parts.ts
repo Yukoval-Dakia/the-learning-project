@@ -201,7 +201,7 @@ export async function materializeGeneratedQuestionParts(
       ...structured,
       sub_questions: [sub],
     };
-    // YUK-1011 codex P2 — when the sub's options persist separately as
+    // YUK-1011 — when the sub's options persist separately as
     // choices_md (below), derive the child prompt WITHOUT the inline
     // option list: renderers (PfSolo/PfPaper) paint persisted choices as
     // buttons, so keeping them in prompt_md too would show every choice
@@ -225,7 +225,7 @@ export async function materializeGeneratedQuestionParts(
       // fallback. duplicateKnowledgeIds is the exact set the parent row
       // persists (target KCs first, then model attribution).
       knowledgeIds: duplicateKnowledgeIds,
-      // YUK-1011 codex P1 — an objective sub (options) must persist its
+      // YUK-1011 — an objective sub (options) must persist its
       // option bodies so the row keeps the deterministic 'exact' judge
       // contract (route-resolve: choices_md.length > 0 → 'exact');
       // otherwise PfSolo renders free-text and grading degrades to

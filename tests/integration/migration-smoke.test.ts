@@ -126,7 +126,9 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     await container?.stop();
   });
 
-  it('YUK-609 data migration normalizes only index-matching quiz_gen labels and is idempotent', async () => {
+  // @invariant data: the label-normalization migration rewrites only index-matching quiz_gen labels and leaves every other row untouched
+  // @fails-if the migration matches labels outside the index set or a second run rewrites/errors
+  it('data migration normalizes only index-matching quiz_gen labels and is idempotent', async () => {
     const quizGenId = 'migration:yuk609:quiz-gen';
     const mismatchId = 'migration:yuk609:mismatch';
     const manualId = 'migration:yuk609:manual';
@@ -200,7 +202,9 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     }
   });
 
-  it('U5 (0028) — partial index constrains only live drafts; frozen rows are append-only', async () => {
+  // @invariant data: frozen rows are append-only — the partial index constrains live drafts only
+  // @fails-if the index covers frozen rows or lets a live draft escape the constraint
+  it('partial index constrains only live drafts; frozen rows are append-only (0028)', async () => {
     // One slot (sess1, q1, atomic part_ref=NULL). Two FROZEN rows coexist
     // (append-only history after abandon→reopen→re-submit), then ONE live draft
     // is allowed, but a SECOND live draft on the same slot is rejected.
@@ -223,7 +227,9 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     await db.execute(sql`DELETE FROM answer WHERE session_id = 'sess1'`);
   });
 
-  it('YUK-495 S4 (0051) — mastery_state.theta_hat/theta_precision widened to double precision', async () => {
+  // @invariant data: theta_hat/theta_precision survive the widening migration at double precision
+  // @fails-if a column stays float4 or stored values are rewritten
+  it('mastery_state.theta_hat/theta_precision widened to double precision (0051)', async () => {
     const rows = await db.execute<{ column_name: string; data_type: string }>(sql`
       SELECT column_name, data_type FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'mastery_state'
@@ -243,7 +249,7 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
 // (0070) so it can seed a pre-0071 live hub, then applies the pending migration
 // (0071) and the forward trigger-function fix (0072), then asserts the exact
 // schema/triggers/functions plus the live-hub backfill.
-describe('migration smoke — YUK-384 durable hub sync backfill', () => {
+describe('migration smoke — durable hub sync backfill', () => {
   // Frozen baseline: the last migration on main before 0071. `beforeAll` stops
   // here so the old-schema fixture is seeded before the durable-cursor DDL runs.
   const BASELINE_TAG = '0070_yuk736_snapshot_baseline';
@@ -286,7 +292,9 @@ describe('migration smoke — YUK-384 durable hub sync backfill', () => {
     await container?.stop();
   });
 
-  it('YUK-384 RED 01: installs exact durable hub-sync schema, triggers, indexes, and backfills live hubs', async () => {
+  // @invariant data: the durable hub-sync schema, triggers and indexes are installed exactly and every live hub is backfilled
+  // @fails-if a trigger/index is missing or the backfill skips or duplicates a live hub
+  it('installs exact durable hub-sync schema, triggers, indexes, and backfills live hubs', async () => {
     // Grounding (2026-07-21): `artifact.knowledge_ids` is jsonb (seed `'[]'::jsonb`,
     // never `text[]`), `body_blocks` is the ArtifactBodyBlocksT doc shape, and
     // `intent_source`/`source`/`created_at`/`updated_at` are NOT NULL without
@@ -403,7 +411,7 @@ describe('migration smoke — YUK-384 durable hub sync backfill', () => {
 });
 
 // YUK-751 — prove the locked 0076 upgrade path against an already-populated event log.
-describe('migration smoke — YUK-751 populated event backfill', () => {
+describe('migration smoke — populated event backfill', () => {
   const BASELINE_TAG = '0075_yuk452_placement_starter_integrity';
   let container: StartedPostgreSqlContainer;
   let client: ReturnType<typeof postgres>;
@@ -442,6 +450,8 @@ describe('migration smoke — YUK-751 populated event backfill', () => {
     await container?.stop();
   });
 
+  // @invariant data: the event backfill is deterministic per row and new inserts continue above the previous max
+  // @fails-if backfill output depends on scan order or the sequence is not advanced past the max id
   it('deterministically backfills every event and advances new inserts above the max', async () => {
     const insertEvent = async (id: string, createdAt: string) => {
       await client`insert into event
@@ -479,7 +489,7 @@ describe('migration smoke — YUK-751 populated event backfill', () => {
 // YUK-821 — prove the v3 accept gate does not strand already-pending v1/v2
 // Teaching Briefs during upgrade. The migration must retire only incomplete
 // pending conjectures, preserve complete v3/decided rows, and stay idempotent.
-describe('migration smoke — YUK-821 legacy conjecture retirement', () => {
+describe('migration smoke — legacy conjecture retirement', () => {
   const BASELINE_TAG = '0081_illegal_queen_noir';
   const MIGRATION_TAG = '0082_yuk821_retire_legacy_pending_conjectures';
   let container: StartedPostgreSqlContainer;
@@ -524,6 +534,8 @@ describe('migration smoke — YUK-821 legacy conjecture retirement', () => {
     await container?.stop();
   });
 
+  // @invariant data: retirement touches only incomplete pending rows and never fabricates an owner dismissal
+  // @fails-if complete rows are retracted or a synthetic owner dismissal event is written
   it('retracts only incomplete pending rows without minting an owner dismissal', async () => {
     const v3Change = {
       probe_md: 'primary',
@@ -634,7 +646,7 @@ describe('migration smoke — YUK-821 legacy conjecture retirement', () => {
   });
 });
 
-describe('migration smoke — YUK-821 probe-quality audit binding', () => {
+describe('migration smoke — probe-quality audit binding', () => {
   const BASELINE_TAG = '0082_yuk821_retire_legacy_pending_conjectures';
   const MIGRATION_TAG = '0083_yuk821_bind_probe_quality_audit';
   let container: StartedPostgreSqlContainer;
@@ -660,6 +672,8 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
     await container?.stop();
   });
 
+  // @invariant data: the pre-binding pending set is retired exactly once and a re-run changes nothing
+  // @fails-if pending rows survive or the retirement is not idempotent
   it('retires the complete pre-binding pending set and is idempotent', async () => {
     const seedProposal = async (
       id: string,
@@ -806,7 +820,7 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
   });
 });
 
-describe('migration smoke — YUK-827 response-signature cutover', () => {
+describe('migration smoke — response-signature cutover', () => {
   const BASELINE_TAG = '0083_yuk821_bind_probe_quality_audit';
   const MIGRATION_TAG = '0084_yuk827_response_signature_cutover';
   let container: StartedPostgreSqlContainer;
@@ -832,6 +846,8 @@ describe('migration smoke — YUK-827 response-signature cutover', () => {
     await container?.stop();
   });
 
+  // @invariant data: every pre-cutover pending conjecture is retired and no owner dismissal is minted
+  // @fails-if a pending conjecture survives the cutover or a synthetic dismissal appears
   it('retires all pre-cutover pending conjectures without creating an owner dismissal', async () => {
     const seedProposal = async (
       id: string,
@@ -964,7 +980,7 @@ describe('migration smoke — YUK-827 response-signature cutover', () => {
     expect(ownerDismissals[0]?.count).toBe('0');
   });
 });
-describe('migration smoke — YUK-791 intervention preparation', () => {
+describe('migration smoke — intervention preparation', () => {
   const BASELINE_TAG = '0084_yuk827_response_signature_cutover';
   const MIGRATION_TAG = '0085_yuk791_intervention_preparation';
   let container: StartedPostgreSqlContainer;
@@ -990,6 +1006,8 @@ describe('migration smoke — YUK-791 intervention preparation', () => {
     await container?.stop();
   });
 
+  // @invariant data: the intervention aggregate is versioned and non-canonical terminal shapes are rejected
+  // @fails-if an unversioned or malformed terminal aggregate row is accepted
   it('creates the versioned aggregate and enforces fail-closed terminal shapes', async () => {
     const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
     if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
@@ -1121,7 +1139,7 @@ describe('migration smoke — YUK-791 intervention preparation', () => {
   });
 });
 
-describe('migration smoke — YUK-792 intervention settlement backfill', () => {
+describe('migration smoke — intervention settlement backfill', () => {
   const BASELINE_TAG = '0085_yuk791_intervention_preparation';
   const MIGRATION_TAG = '0086_yuk792_intervention_settlement';
   let container: StartedPostgreSqlContainer;
@@ -1147,6 +1165,8 @@ describe('migration smoke — YUK-792 intervention settlement backfill', () => {
     await container?.stop();
   });
 
+  // @invariant data: eligible delivery clocks rebase to the new schedule while shadow audit clocks stay untouched
+  // @fails-if an audit clock is rebased or an eligible clock is skipped
   it('rebases eligible delivery clocks while preserving shadow audit clocks in UTC', async () => {
     await client`SET TIME ZONE 'Asia/Shanghai'`;
     await client`
@@ -1230,7 +1250,7 @@ describe('migration smoke — YUK-792 intervention settlement backfill', () => {
   });
 });
 
-describe('migration smoke — YUK-841 attempt cost truth', () => {
+describe('migration smoke — attempt cost truth', () => {
   const BASELINE_TAG = '0086_yuk792_intervention_settlement';
   const MIGRATION_TAG = '0087_yuk841_attempt_cost_truth';
   let container: StartedPostgreSqlContainer;
@@ -1256,6 +1276,8 @@ describe('migration smoke — YUK-841 attempt cost truth', () => {
     await container?.stop();
   });
 
+  // @invariant data: existing rows keep legacy cost truth and each attempt owns at most one ledger row
+  // @fails-if old rows are rewritten or a second ledger for one attempt is admitted
   it('keeps old rows legacy and enforces nullable unknown + one ledger per attempt', async () => {
     await client`
       INSERT INTO ai_task_runs (
@@ -1388,7 +1410,7 @@ describe('migration smoke — YUK-841 attempt cost truth', () => {
   });
 });
 
-describe('migration smoke — YUK-851 provider attempt lifecycle', () => {
+describe('migration smoke — provider attempt lifecycle', () => {
   const BASELINE_TAG = '0088_yuk842_provider_session_admission';
   const MIGRATION_TAG = '0089_yuk851_provider_attempt_lifecycle';
   let container: StartedPostgreSqlContainer;
@@ -1419,6 +1441,8 @@ describe('migration smoke — YUK-851 provider attempt lifecycle', () => {
     await container?.stop();
   });
 
+  // @invariant data: the off-mode migration adds its column without altering any pre-existing column signature
+  // @fails-if a pre-0089 column type, nullability or default drifts
   it('leaves every pre-0089 table column signature unchanged', async () => {
     const after = await client`
       SELECT table_name, column_name, ordinal_position, data_type, is_nullable
@@ -1431,7 +1455,7 @@ describe('migration smoke — YUK-851 provider attempt lifecycle', () => {
   });
 });
 
-describe('migration smoke — YUK-844 placement unknown cost', () => {
+describe('migration smoke — placement unknown cost', () => {
   let container: StartedPostgreSqlContainer;
   let client: ReturnType<typeof postgres>;
 
@@ -1512,6 +1536,8 @@ describe('migration smoke — YUK-844 placement unknown cost', () => {
     await container?.stop();
   });
 
+  // @invariant data: numeric history is preserved verbatim and only canonical dispositions are admitted
+  // @fails-if a numeric value is rounded/reformatted or a non-canonical disposition is accepted
   it('preserves numeric history and accepts canonical settlement dispositions', async () => {
     const [claim] = await client<{ known_cost_micro_usd: number | null }[]>`
       SELECT known_cost_micro_usd FROM placement_starter_claim
@@ -1566,7 +1592,7 @@ describe('migration smoke — YUK-844 placement unknown cost', () => {
   });
 });
 
-describe('migration smoke — YUK-855 provider attempt off mode', () => {
+describe('migration smoke — provider attempt off mode', () => {
   const BASELINE_TAG = '0090_yuk844_placement_unknown_cost';
   const MIGRATION_TAG = '0091_yuk855_provider_attempt_off_mode';
   let container: StartedPostgreSqlContainer;
@@ -1601,6 +1627,8 @@ describe('migration smoke — YUK-855 provider attempt off mode', () => {
     await container?.stop();
   });
 
+  // @invariant data: pre-existing admission rows survive and off transitions pass only through acquired and release
+  // @fails-if an existing admission row is mutated or an off transition skips a lifecycle step
   it('preserves existing admission rows and accepts off acquired through release', async () => {
     const existing = await client<
       { attempt_id: string; lease_owner: string | null; mode: string; status: string }[]
@@ -1652,7 +1680,7 @@ describe('migration smoke — YUK-855 provider attempt off mode', () => {
   });
 });
 
-describe('migration smoke — YUK-857 note verification claim', () => {
+describe('migration smoke — note verification claim', () => {
   const BASELINE_TAG = '0092_yuk855_provider_attempt_start_rate_index';
   const MIGRATION_TAG = '0093_yuk857_note_verification_claim';
   let container: StartedPostgreSqlContainer;
@@ -1676,6 +1704,8 @@ describe('migration smoke — YUK-857 note verification claim', () => {
     await container?.stop();
   });
 
+  // @invariant data: a non-null verification task_run_id is unique per claim
+  // @fails-if two rows share the same non-null task_run_id
   it('rejects duplicate non-null verification task run ids', async () => {
     await client`
       INSERT INTO artifact (id,type,title,intent_source,source,generation_status,verification_status,created_at,updated_at)
@@ -1704,9 +1734,9 @@ describe('migration smoke — YUK-857 note verification claim', () => {
   });
 });
 
-describe('migration smoke — YUK-1044 assessment contract truth source', () => {
-  // 0104 建表；0105（复审）FK/trigger/选择位；0106（终验）head 三坐标 FK；
-  // 0107（CI 修复）restore 通道 GUC + 自 FK deferrable。
+describe('migration smoke — assessment contract truth source', () => {
+  // 0104 建表；0105 FK/trigger/选择位；0106 head 三坐标 FK；
+  // 0107 restore 通道 GUC + 自 FK deferrable。
   const FINAL_TAG = '0107_yuk1044_backup_restore_channel';
   let container: StartedPostgreSqlContainer;
   let client: ReturnType<typeof postgres>;
@@ -1730,7 +1760,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     await container?.stop();
   });
 
-  // ---- coherent fixture helpers（P1-2：所有身份坐标必须真实存在且互相一致）----
+  // ---- coherent fixture helpers（所有身份坐标必须真实存在且互相一致）----
 
   async function insertRevision(
     revisionId: string,
@@ -1791,6 +1821,8 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     `;
   }
 
+  // @invariant data: revision identity is (group_id, revision_ordinal) — identical content in different groups gets distinct revisions
+  // @fails-if the key drifts to a global content hash or lets two groups share one revision id
   it('question_revision identity is (group_id, revision_ordinal), never a global content hash key', async () => {
     // 同组同序数 ⇒ 唯一键拒绝（即使内容 digest 不同）。
     await expect(insertRevision('rev_b', 1)).rejects.toMatchObject({
@@ -1805,9 +1837,11 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     });
   });
 
-  // ---- P1-1：不可变事实的 DB 层防线 ----
+  // ---- 不可变事实的 DB 层防线 ----
 
-  it('P1-1: immutable fact tables reject UPDATE and DELETE via triggers', async () => {
+  // @invariant data: immutable fact rows can never be updated or deleted at the DB layer
+  // @fails-if an UPDATE or DELETE on a fact table succeeds
+  it('immutable fact tables reject UPDATE and DELETE via triggers', async () => {
     await expect(client`
       UPDATE question_revision SET integrity_digest = 'digest-rewritten'
       WHERE revision_id = 'rev_a'
@@ -1839,7 +1873,9 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     `).rejects.toMatchObject({ code: 'P0001' });
   });
 
-  it('P1-1: issuance binding fields are frozen; only claim columns may change', async () => {
+  // @invariant data: issuance binding fields are immutable after insert; only claim columns may change
+  // @fails-if a binding column accepts an UPDATE or a claim column is frozen
+  it('issuance binding fields are frozen; only claim columns may change', async () => {
     // claim 生命周期列可变。
     await client`
       UPDATE assessment_issuance SET claim_status = 'claimed', claimed_by_ref = 'session:tutor_1'
@@ -1852,7 +1888,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     await expect(client`
       UPDATE assessment_issuance SET revision_id = 'rev_a' WHERE issuance_id = 'iss_head'
     `).resolves.toBeDefined(); // 同值 UPDATE（IS NOT DISTINCT）不受影响
-    // 终验收紧：claim_policy 是发题契约一部分，同样冻结（0106 替换函数体生效）。
+    // 收紧：claim_policy 是发题契约一部分，同样冻结（0106 替换函数体生效）。
     await expect(client`
       UPDATE assessment_issuance SET claim_policy = 'one_time' WHERE issuance_id = 'iss_head'
     `).rejects.toMatchObject({ code: 'P0001' });
@@ -1863,9 +1899,11 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     });
   });
 
-  // ---- P1-2：FK + 冗余坐标一致性 ----
+  // ---- FK + 冗余坐标一致性 ----
 
-  it('P1-2: submissions require existing issuance/group and a revision that agrees with the issuance', async () => {
+  // @invariant data: a submission always references a live issuance, its group, and a revision consistent with that issuance
+  // @fails-if a submission with a dangling issuance/group or a mismatched revision is inserted
+  it('submissions require existing issuance/group and a revision that agrees with the issuance', async () => {
     await client`
       INSERT INTO evaluation_group (evaluation_group_id, submission_ids, created_at)
       VALUES ('eg_fk', '["sub_fk"]'::jsonb, now())
@@ -1895,7 +1933,9 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     `;
   });
 
-  it('P1-2: evaluations must belong to their submission; heads must point at evaluations of their own group', async () => {
+  // @invariant data: an evaluation always belongs to its submission and a head pointer never crosses group boundaries
+  // @fails-if an evaluation attaches to a foreign submission or a head references another group's evaluation
+  it('evaluations must belong to their submission; heads must point at evaluations of their own group', async () => {
     // 无关组的 evaluation ⇒ 复合 FK 拒绝（submission 属 eg_fk，evaluation 声称 eg_head）。
     await expect(client`
       INSERT INTO evaluation (evaluation_id, evaluation_group_id, submission_id, attempt, status, created_at)
@@ -1913,7 +1953,9 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     `).rejects.toMatchObject({ constraint_name: 'evaluation_effective_head_evaluation_fk' });
   });
 
-  it('P1-2: lifecycle current pointer must reference a revision of the same group', async () => {
+  // @invariant data: a lifecycle current pointer always targets a revision inside its own group
+  // @fails-if a current pointer references a revision from another group
+  it('lifecycle current pointer must reference a revision of the same group', async () => {
     await client`
       INSERT INTO question_group_lifecycle (
         group_id, current_revision_id, availability,
@@ -1936,8 +1978,10 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
 
   // ---- 有效 head：默认值 + CAS 谓词（窄声明） ----
 
+  // @invariant data: a new effective-head row starts empty at generation 0 and a stale CAS write can never clobber a newer head
+  // @fails-if defaults drift or a CAS predicate with an old generation still updates the row
   it('effective head columns default to effective=NULL / generation=0; stale CAS predicate updates 0 rows', async () => {
-    // 窄声明（复审）：本用例只断言 DDL 默认值与一个手写 CAS 谓词的行为；
+    // 窄声明：本用例只断言 DDL 默认值与一个手写 CAS 谓词的行为；
     // group/submission/head 的【同事务原子创建】、generation 单调性与并发
     // activation 串行化由事务性 writer 保证并须在 writer 落地时测试。
     const initial = await client<{ effective_evaluation_id: string | null; generation: number }[]>`
@@ -1969,7 +2013,9 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     expect(stale).toHaveLength(0);
   });
 
-  it('final P1: head submission coordinates are validated in all three reviewer repro shapes; NULL head + CAS stay legal', async () => {
+  // @invariant data: a head submission coordinate is rejected unless it matches the owning submission; a NULL head remains legal
+  // @fails-if a mismatched head coordinate is accepted or a NULL head is rejected
+  it('head submission coordinates are validated in all three repro shapes; NULL head + CAS stay legal', async () => {
     // 独立 fixture：gA/sA、gB/sB、gC/sC1+sC1b（同组两 submission）。
     const mkGroup = async (g: string, s: string) => {
       await client`
@@ -2039,6 +2085,8 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     expect(activated).toHaveLength(1);
   });
 
+  // @invariant data: an evaluation attempt is unique within its submission and idempotency keys never collide across groups
+  // @fails-if a duplicate (submission, attempt) row or a cross-group idempotency collision is admitted
   it('evaluation attempts are unique per (submission, attempt); idempotency key scoped per group', async () => {
     await client`
       INSERT INTO evaluation (evaluation_id, evaluation_group_id, submission_id, attempt, status, created_at)
@@ -2060,7 +2108,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     `).rejects.toMatchObject({ constraint_name: 'assessment_submission_group_idem_uq' });
   });
 
-  // ---- P1-3 / P2-B：身份映射 ----
+  // ---- 身份映射 ----
 
   async function insertMapping(
     mappingId: string,
@@ -2081,8 +2129,10 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     `;
   }
 
-  it('P1-3/P2-B: mapping status is adjudication-only; current selection is is_current; corrections preserve history', async () => {
-    // locator 非空 + 非空白（终验收紧：纯空格同样拒绝，btrim）。
+  // @invariant data: mapping status transitions only through adjudication and corrections append history instead of rewriting it
+  // @fails-if a status flips without adjudication or a correction overwrites the historical row
+  it('mapping status is adjudication-only; current selection is is_current; corrections preserve history', async () => {
+    // locator 非空 + 非空白（纯空格同样拒绝，btrim）。
     await expect(
       insertMapping('map_nolocator', '10', 'pending', { locator: '' }),
     ).rejects.toMatchObject({
@@ -2093,7 +2143,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     ).rejects.toMatchObject({
       constraint_name: 'assessment_identity_mapping_locator_nonempty_ck',
     });
-    // mapped 必须带目标 revision；historical_unresolved 不得带目标（P2-B）。
+    // mapped 必须带目标 revision；historical_unresolved 不得带目标。
     await expect(insertMapping('map_notarget', '11', 'mapped')).rejects.toMatchObject({
       constraint_name: 'assessment_identity_mapping_mapped_target_ck',
     });
@@ -2147,8 +2197,10 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     ).rejects.toMatchObject({ code: '23503' });
   });
 
+  // @invariant data: every admission verification records the exact revision, digest, policy and generation it decided
+  // @fails-if a verification row misses a coordinate or the lifecycle loses a split dimension
   it('admission verification records (revision_id, digest, policy, generation); lifecycle carries the split dimensions', async () => {
-    // 不存在的 revision ⇒ FK 拒绝（P1-2）。
+    // 不存在的 revision ⇒ FK 拒绝。
     await expect(client`
       INSERT INTO question_admission_verification (
         id, revision_id, revision_digest, policy_id, generation, outcome, recorded_at
@@ -2165,7 +2217,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     `;
     expect(rows[0]).toMatchObject({ revision_id: 'rev_a', outcome: 'passed', generation: 1 });
 
-    // P2-C：分支完整性 —— admitted 必须有 decided_at+evidence；withheld 必须有 reason。
+    // 分支完整性 —— admitted 必须有 decided_at+evidence；withheld 必须有 reason。
     await expect(client`
       INSERT INTO question_group_lifecycle (
         group_id, availability, scoring_admission_state, claim_policy, created_at, updated_at
@@ -2216,7 +2268,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
   });
 });
 
-describe('migration smoke — YUK-1097 assessment truth guards', () => {
+describe('migration smoke — assessment truth guards', () => {
   // 0111 在 0105/0107 guard 先例上补三条 P1：
   //  (1) evaluation_group.submission_ids 成为成员关系的 DB 层派生缓存
   //      （submission INSERT trigger 追加 + 组行只许严格追加真实成员 +
@@ -2326,6 +2378,8 @@ describe('migration smoke — YUK-1097 assessment truth guards', () => {
 
   // ── (1) evaluation_group.submission_ids 派生缓存 ──
 
+  // @invariant data: group membership only grows through INSERT-order appends and an UPDATE can never diverge the array
+  // @fails-if an UPDATE reorders/removes members or an append lands out of order
   it('submission INSERT appends to the group array; declare-first is allowed, divergence is impossible on UPDATE', async () => {
     await insertGroup('eg_97a', ['sub_97a']);
     await insertSubmission('sub_97a', 'eg_97a', 'idem-97a');
@@ -2343,6 +2397,8 @@ describe('migration smoke — YUK-1097 assessment truth guards', () => {
     expect(await readGroupIds('eg_97c')).toEqual(['sub_97c1', 'sub_97c2']);
   });
 
+  // @invariant data: a group UPDATE may only append real members — removal, reorder, phantom and duplicate tails are rejected
+  // @fails-if a removal, reorder, phantom or duplicate-tail UPDATE is accepted
   it('group UPDATE is append-only real members: removal, reorder, phantom, dup tail all rejected', async () => {
     await insertGroup('eg_97d', ['sub_97d1', 'sub_97d2']);
     await insertSubmission('sub_97d1', 'eg_97d', 'idem-97d1');
@@ -2413,9 +2469,11 @@ describe('migration smoke — YUK-1097 assessment truth guards', () => {
 
   // ── (2) assessment_identity_mapping 冻结 ──
 
+  // @invariant data: adjudicated mapping fields are frozen; only is_current, supersedes and pending annotations may change
+  // @fails-if a frozen adjudication field accepts an UPDATE
   it('identity mapping: adjudication fields frozen; only is_current/supersedes mutable + pending annotation refresh', async () => {
     await insertMapping('map_97_pending', 'pending');
-    // pending 占位行：evidence/algorithm_version 操作性注释刷新放行（P1-5）。
+    // pending 占位行：evidence/algorithm_version 操作性注释刷新放行。
     await client`
       UPDATE assessment_identity_mapping
       SET evidence = '{"note":"retry"}'::jsonb, algorithm_version = 'yuk1050-apply/r2'
@@ -2476,6 +2534,8 @@ describe('migration smoke — YUK-1097 assessment truth guards', () => {
 
   // ── (3) evaluation 终态冻结 ──
 
+  // @invariant data: an evaluation payload is writable only on the pending to completed transition; terminal rows and deletes are frozen
+  // @fails-if a completed row accepts a payload write or a DELETE succeeds
   it('evaluation: payload writable only via pending→completed; terminal row is frozen; DELETE rejected', async () => {
     await insertGroup('eg_97f', ['sub_97f']);
     await insertSubmission('sub_97f', 'eg_97f', 'idem-97f');
@@ -2548,7 +2608,7 @@ describe('migration smoke — YUK-1097 assessment truth guards', () => {
 });
 
 for (const populated of [false, true])
-  describe(`migration smoke — YUK-1394 ${populated ? 'populated post-1393' : 'empty post-1393'} ledger`, () => {
+  describe(`migration smoke — ${populated ? 'populated post-1393' : 'empty post-1393'} ledger`, () => {
     let container: StartedPostgreSqlContainer;
     let client: ReturnType<typeof postgres>;
     let before: unknown;
@@ -2596,6 +2656,8 @@ for (const populated of [false, true])
       await client?.end();
       await container?.stop();
     });
+    // @invariant data: pre-migration domain and predecessor ledger bytes are preserved verbatim and the seeded legacy owners are independent
+    // @fails-if ledger bytes are rewritten or the two seeded owners share identity
     it('preserves domain and predecessor ledger bytes, seeds exactly two independent legacy owners', async () => {
       expect(await snapshot()).toEqual(before);
       expect(await client`select family,phase from session_orphan_control order by family`).toEqual(
@@ -2605,6 +2667,8 @@ for (const populated of [false, true])
         ],
       );
     });
+    // @invariant data: ledger identity is the exact-family composite and evidence rows are immutable once written
+    // @fails-if a wrong-family row is admitted or an evidence row accepts a mutation
     it('enforces exact-family composite identity, concrete dispositions and immutable evidence', async () => {
       const family = 'prune_orphan_conversation_sessions';
       const tick = 'legacy:00000000-0000-4000-8000-000000000002';

@@ -10,8 +10,8 @@
 //      once the forward edge is committed (no 2-cycle);
 //   2. an accept serializes cleanly behind a holder that owns only the advisory;
 //   3. lock-then-revalidate: a merge that archives an endpoint under the locks makes the accept
-//      reject (codex P2 TOCTOU) — no live edge lands on the archived node;
-//   4. NOWAIT keeps the accept deadlock-free against the three-endpoint merge scenario codex P1
+//      reject (TOCTOU) — no live edge lands on the archived node;
+//   4. NOWAIT keeps the accept deadlock-free against the three-endpoint merge scenario
 //      (round-3) described: merge holds {from,into}, rewrites an edge into->Z and FK-locks the
 //      external endpoint Z that is NOT in the merge's row batch.
 //
@@ -118,7 +118,7 @@ async function waitForBlockedDatabaseSession(): Promise<void> {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
+describe('decideKnowledgeEdgeProposal — lock discipline', () => {
   beforeEach(async () => {
     await resetDb();
     // Run the PRODUCTION path (PROJECTION_IS_WRITER=1): the accept path projects the new edge
@@ -132,6 +132,8 @@ describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
     vi.unstubAllEnvs();
   });
 
+  // @invariant data: once the forward edge commits, the reverse accept is rejected by the topology gate — no 2-cycle
+  // @fails-if the reverse accept commits and creates a 2-cycle
   it('A->B / B->A: the reverse accept is rejected by the topology gate once the forward edge commits (no 2-cycle)', async () => {
     const db = testDb();
     await seedKnowledge(['A', 'B']);
@@ -176,6 +178,8 @@ describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
     expect(rateRows).toHaveLength(0);
   });
 
+  // @invariant concurrency: the accept serializes cleanly behind a holder that owns only the advisory lock — no deadlock
+  // @fails-if the accept deadlocks or skips the advisory ordering
   it('serializes cleanly behind a holder that owns only the advisory; no deadlock', async () => {
     const db = testDb();
     await seedKnowledge(['A', 'B']);
@@ -213,7 +217,9 @@ describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
     expect(live[0].to_knowledge_id).toBe('A');
   });
 
-  it('lock-then-revalidate: a merge that archives an endpoint under the locks makes the accept reject; zero live edge lands (codex P2 TOCTOU)', async () => {
+  // @invariant concurrency: the accept revalidates under the locks — a merge archiving an endpoint makes it reject with zero live edge
+  // @fails-if the accept commits a live edge after the endpoint was archived (TOCTOU)
+  it('lock-then-revalidate: a merge that archives an endpoint under the locks makes the accept reject; zero live edge lands (TOCTOU)', async () => {
     const db = testDb();
     await seedKnowledge(['A', 'B']);
     const proposeAB = await seedProposeEdgeEvent({ from: 'A', to: 'B' });
@@ -252,7 +258,9 @@ describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
     expect(all).toHaveLength(0);
   });
 
-  it('three-endpoint scenario: NOWAIT keeps the accept deadlock-free when a merge rewrites into->Z (codex P1 round-3)', async () => {
+  // @invariant concurrency: NOWAIT locking keeps the three-endpoint accept deadlock-free when a merge rewrites into→Z
+  // @fails-if the accept deadlocks or produces a partial write under the merge
+  it('three-endpoint scenario: NOWAIT keeps the accept deadlock-free when a merge rewrites into->Z', async () => {
     const db = testDb();
     // ids chosen so the accept's remote endpoint (m_0) sorts BEFORE the merge target (m_b): the
     // accept locks m_0 first, then contends on m_b (held by the merge). m_a is the merge's

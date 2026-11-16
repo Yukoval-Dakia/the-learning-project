@@ -332,7 +332,7 @@ async function preflight(db: Db, plan: MigrationApplyPlan): Promise<void> {
   }
 }
 
-// ───────────────────────── 存储行内容对账（P1-3） ─────────────────────────
+// ───────────────────────── 存储行内容对账 ─────────────────────────
 
 type MappingStoredRow = typeof assessment_identity_mapping.$inferSelect;
 
@@ -863,7 +863,7 @@ function headStateAccepted(
   return stored.generation > planned.generation;
 }
 
-// ───────────────────────── reconcile（P1-3：全内容对账） ─────────────────────────
+// ───────────────────────── reconcile（全内容对账） ─────────────────────────
 
 async function reconcile(
   db: Db,

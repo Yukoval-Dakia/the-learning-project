@@ -62,7 +62,7 @@ async function buildZipBytes(): Promise<Uint8Array> {
   return new Uint8Array(ab);
 }
 
-describe('mem0 collection backup/restore round-trip (YUK-355)', () => {
+describe('mem0 collection backup/restore round-trip', () => {
   beforeAll(() => {
     prevCollectionEnv = process.env.MEM0_PGVECTOR_COLLECTION;
     process.env.MEM0_PGVECTOR_COLLECTION = COLLECTION;
@@ -83,6 +83,8 @@ describe('mem0 collection backup/restore round-trip (YUK-355)', () => {
     await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
   });
 
+  // @invariant data: the mem0 collection is dumped into data.json under its resolved table name
+  // @fails-if the collection is dumped under the wrong key or omitted
   it('dumps the mem0 collection into data.json under its resolved table name', async () => {
     const vec = Array.from({ length: DIMS }, (_, i) => (i % 7) * 0.01);
     await seedRow('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vec, {
@@ -112,6 +114,8 @@ describe('mem0 collection backup/restore round-trip (YUK-355)', () => {
     expect(manifest.row_counts[COLLECTION]).toBe(1);
   });
 
+  // @invariant data: mem0 rows wiped between dump and restore are restored — the data-loss hole is closed
+  // @fails-if wiped collection rows are not restored
   it('restores mem0 collection rows wiped between dump and restore (the data-loss hole)', async () => {
     const vec1 = Array.from({ length: DIMS }, (_, i) => Math.sin(i) * 0.001);
     const vec2 = Array.from({ length: DIMS }, (_, i) => Math.cos(i) * 0.002);
@@ -154,6 +158,8 @@ describe('mem0 collection backup/restore round-trip (YUK-355)', () => {
     }
   });
 
+  // @invariant data: a backup taken with the mem0 table absent omits the key and restores cleanly
+  // @fails-if an absent table produces a malformed entry or fails the restore
   it('a backup taken with the mem0 table absent omits the key and restores cleanly', async () => {
     // Fresh DB where mem0 never self-initialised: no collection table at all.
     await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
@@ -170,7 +176,7 @@ describe('mem0 collection backup/restore round-trip (YUK-355)', () => {
     expect(res.status).toBe(200);
   });
 });
-// ─── Cursor Bugbot (PR #491) regression: malformed mem0 entry must FAIL the whole
+// ─── malformed mem0 entry must FAIL the whole
 // restore atomically, BEFORE any wipe — never silently skip the mem0 collection. ──
 //
 // THE BUG: at the top of restoreFromArchive, mem0Rows is computed as
@@ -186,7 +192,7 @@ describe('mem0 collection backup/restore round-trip (YUK-355)', () => {
 // shape validation the FK_ORDER tables get; a PRESENT-but-non-array mem0 key throws
 // a `data_validation_failed` shape error BEFORE any wipe (whole restore aborts
 // atomically). The ABSENT case (key missing) stays a graceful skip.
-describe('mem0 collection malformed-entry preflight (PR #491 Bugbot)', () => {
+describe('mem0 collection malformed-entry preflight', () => {
   let prevCollectionEnv: string | undefined;
 
   beforeAll(() => {
@@ -242,6 +248,8 @@ describe('mem0 collection malformed-entry preflight (PR #491 Bugbot)', () => {
     return zipSync(repacked);
   }
 
+  // @invariant security: a present-but-malformed mem0 entry throws a shape error before any wipe
+  // @fails-if the wipe runs before the mem0 shape check
   it('THROWS a shape error BEFORE wiping when the mem0 key is present-but-not-an-array', async () => {
     await seedRow(
       'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
@@ -272,6 +280,8 @@ describe('mem0 collection malformed-entry preflight (PR #491 Bugbot)', () => {
     expect(await readRows()).toHaveLength(1);
   });
 
+  // @invariant security: string and number mem0 entries are rejected before wiping
+  // @fails-if a non-array mem0 entry reaches the wipe
   it('also rejects a present-but-string and present-but-number mem0 entry before wiping', async () => {
     await seedKnowledgeRow('canary-2');
     const good = await buildZipBytes();
@@ -286,6 +296,8 @@ describe('mem0 collection malformed-entry preflight (PR #491 Bugbot)', () => {
     }
   });
 
+  // @invariant data: an absent mem0 key gracefully skips collection restore on a fresh DB
+  // @fails-if a missing key is treated as an error or creates a phantom table
   it('the ABSENT mem0 case still graceful-skips (no key → fresh DB, restore ok)', async () => {
     await seedKnowledgeRow('canary-3');
     // Drop the table so buildBackupArchive omits the mem0 key entirely (absent case).
@@ -306,7 +318,7 @@ describe('mem0 collection malformed-entry preflight (PR #491 Bugbot)', () => {
   });
 });
 
-// ─── Cursor Bugbot (PR #491) HIGH regression: table-ABSENT restore must RE-CREATE
+// ─── table-ABSENT restore must RE-CREATE
 // the collection and RESTORE the rows — never silently skip backed-up mem0 data. ──
 //
 // THE BUG: the restore mem0 branch was gated
@@ -323,7 +335,7 @@ describe('mem0 collection malformed-entry preflight (PR #491 Bugbot)', () => {
 // <dims> from the element count of the first archived row vector. Then insert. If the
 // dims cannot be determined (malformed vector), FAIL LOUDLY (data_validation) rather
 // than silent-skip or create a wrong-dim table. The empty/absent case stays a no-op.
-describe('mem0 collection table-ABSENT restore re-creates + restores (PR #491 HIGH)', () => {
+describe('mem0 collection table-ABSENT restore re-creates + restores', () => {
   let prevCollectionEnv: string | undefined;
 
   beforeAll(() => {
@@ -371,6 +383,8 @@ describe('mem0 collection table-ABSENT restore re-creates + restores (PR #491 HI
     return zipSync(repacked);
   }
 
+  // @invariant data: restore re-creates an absent mem0 collection with the correct dims and restores its rows
+  // @fails-if the collection is re-created with wrong dims or rows are skipped
   it('RE-CREATES the collection with the correct dims AND restores rows when the target table is absent', async () => {
     const vec1 = Array.from({ length: DIMS }, (_, i) => Math.sin(i) * 0.001);
     const vec2 = Array.from({ length: DIMS }, (_, i) => Math.cos(i) * 0.002);
@@ -427,6 +441,8 @@ describe('mem0 collection table-ABSENT restore re-creates + restores (PR #491 HI
     expect(body.stats[COLLECTION]?.inserted).toBe(2);
   });
 
+  // @invariant data: restore fails loudly when the archived vector dims cannot be determined
+  // @fails-if an undeterminable dim silently creates a wrong-dim table or skips the restore
   it('FAILS LOUDLY when the target table is absent and the archived vector dims are undeterminable', async () => {
     const vec = Array.from({ length: DIMS }, () => 0);
     await seedRow('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vec, { data: 'x', user_id: 'self' });
@@ -449,6 +465,8 @@ describe('mem0 collection table-ABSENT restore re-creates + restores (PR #491 HI
     expect(await tableExists()).toBe(false);
   });
 
+  // @invariant data: a table-absent restore of an empty archived collection is a graceful no-op
+  // @fails-if an empty archive creates a table or errors
   it('table-absent + EMPTY archived collection is a graceful no-op (no table created)', async () => {
     // Build an archive whose mem0 key is present but an EMPTY array, with the table
     // absent on the target. Nothing to restore → graceful skip, no table conjured.
@@ -480,7 +498,7 @@ describe('mem0 collection table-ABSENT restore re-creates + restores (PR #491 HI
 // empty", so a target that HAS rows must be WIPED. The fix separates "should we
 // process this collection at all" (archive HAS the key, even []) from "are there rows
 // to insert" (only non-empty arrays insert / create-if-absent).
-describe('mem0 collection empty-archive wipe (#491 follow-up)', () => {
+describe('mem0 collection empty-archive wipe', () => {
   let prevCollectionEnv: string | undefined;
 
   beforeAll(() => {
@@ -518,6 +536,8 @@ describe('mem0 collection empty-archive wipe (#491 follow-up)', () => {
     return zipSync(repacked);
   }
 
+  // @invariant data: restoring an empty archived collection empties the target collection’s rows
+  // @fails-if target rows survive an empty-archive restore
   it('EMPTIES a target collection that has rows when the archived collection is empty ([])', async () => {
     // Build an archive whose mem0 key is present but EMPTY ([]).
     const vec = Array.from({ length: DIMS }, () => 0);
@@ -558,7 +578,7 @@ describe('mem0 collection empty-archive wipe (#491 follow-up)', () => {
 // in a single drizzle db.transaction(async (tx) => { ... }); any throw rolls the whole
 // thing back (Postgres supports transactional DDL, so create-extension/create-table
 // inside the tx roll back too). Pre-flight validation stays BEFORE the tx.
-describe('mem0/FK restore atomicity — mid-restore failure rolls back (YUK-355)', () => {
+describe('mem0/FK restore atomicity — mid-restore failure rolls back', () => {
   let prevCollectionEnv: string | undefined;
 
   beforeAll(() => {
@@ -622,6 +642,8 @@ describe('mem0/FK restore atomicity — mid-restore failure rolls back (YUK-355)
     return zipSync(repacked);
   }
 
+  // @invariant data: a mid-restore mem0 insert failure rolls back the whole FK_ORDER wipe — the canary survives
+  // @fails-if the wipe commits while the restore fails
   it('rolls back the FK_ORDER wipe when the mem0 insert fails mid-restore (canary survives)', async () => {
     // Pre-existing canary in a real business table — it must survive a failed restore
     // unchanged (DB not left half-wiped). The archive's `knowledge` array does NOT
@@ -648,8 +670,8 @@ describe('mem0/FK restore atomicity — mid-restore failure rolls back (YUK-355)
 
     // The operator-facing MESSAGE must reflect ATOMIC rollback now that the whole
     // restore runs inside a single transaction: on failure the DB is left UNCHANGED.
-    // It must NOT mislead with the stale "half-wiped state" wording (Bugbot MEDIUM,
-    // PR #495), which implies partial/corrupt restore that no longer happens.
+    // It must NOT mislead with the stale "half-wiped state" wording, which
+    // implies partial/corrupt restore that no longer happens.
     expect(failBody.message).not.toMatch(/half-wiped/i);
     expect(failBody.message).toMatch(/rolled back|unchanged|atomic/i);
 

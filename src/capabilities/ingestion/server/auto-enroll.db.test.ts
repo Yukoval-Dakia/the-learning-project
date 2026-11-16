@@ -122,7 +122,7 @@ describe('runAutoEnrollForSession', () => {
   //   a question for an already-enrolled block
   // @fails-if removing the draft re-read or FOR UPDATE claim lets a redelivered batch
   //   enroll the same block twice and creates duplicate questions
-  it('YUK-486 idempotent re-run: a duplicate/retry auto_enroll does not double-enroll', async () => {
+  it('idempotent re-run: a duplicate/retry auto_enroll does not double-enroll', async () => {
     const db = testDb();
     const { sessionId } = await seed(db);
 

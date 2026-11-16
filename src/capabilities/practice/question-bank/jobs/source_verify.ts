@@ -199,7 +199,7 @@ export interface RunSourceVerifyResult {
 // ---------- deterministic checks ----------
 //
 // the two PURE pre-checks of this set (structure_completeness +
-// source_consistency, with the CheckOutcome record) moved to
+// source_consistency, with the CheckOutcome record) live in
 // ./source_verify_prechecks.ts. What remains here is the checks that cannot
 // be pure: dedup queries the pool and solve_check spends the LLM call.
 
@@ -544,7 +544,7 @@ export async function runSourceVerify(
     .limit(1);
   if (existingVerify.length > 0) return { status: 'skipped:already_verified' };
 
-  // recheck paid-attempt claim (P1-A): a DURABLE claim scoped to
+  // recheck paid-attempt claim: a DURABLE claim scoped to
   // the command event, taken BEFORE the paid verifier calls. The terminal-event
   // guard alone could not catch a crash between the paid call and the event
   // commit — the claim can: 'sending'/'unknown' is never re-paid, the job ends

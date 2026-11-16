@@ -265,7 +265,7 @@ async function cursorLockIsFree(artifactId: string): Promise<boolean> {
   }
 }
 
-describe('YUK-384 durable hub-sync topology triggers', () => {
+describe('durable hub-sync topology triggers', () => {
   beforeEach(async () => {
     await resetDb();
     // Seed KG entities BEFORE any hub so their INSERT fan-outs touch zero hubs;
@@ -277,7 +277,9 @@ describe('YUK-384 durable hub-sync topology triggers', () => {
     await seedHub('hub-a', ['k1']);
   });
 
-  it('YUK-384 RED 02: dirty generation follows outer commit, rollback, and savepoint rollback', async () => {
+  // @invariant data: dirty generation follows the outer commit, rollback, and savepoint rollback
+  // @fails-if dirty state survives a rolled-back outer transaction
+  it('dirty generation follows outer commit, rollback, and savepoint rollback', async () => {
     const db = testDb();
 
     await db.transaction(async (tx) => {
@@ -320,7 +322,9 @@ describe('YUK-384 durable hub-sync topology triggers', () => {
   // cursors held, a trigger that locked the transitioned hub first would leave
   // hub-a's transition holding hub-a and wanting hub-b while hub-b's transition
   // holds hub-b and wants hub-a.
-  it('YUK-746/YUK-782: concurrent hub-to-atomic transitions share one global cursor lock order', async () => {
+  // @invariant concurrency: concurrent hub-to-atomic transitions share one global cursor lock order
+  // @fails-if two transitions take cursors in different orders and deadlock
+  it('concurrent hub-to-atomic transitions share one global cursor lock order', async () => {
     await seedHub('hub-b', ['k2']);
     const before = await generations(['hub-a', 'hub-b']);
     const blocker = await holdCursorLocks(['hub-a', 'hub-b']);
@@ -367,7 +371,9 @@ describe('YUK-384 durable hub-sync topology triggers', () => {
   // Two mirrored halves pin sorted-by-artifact-id acquisition from both sides:
   // locking the transitioned hub first fails the first half, and locking the
   // fan-out set first fails the second.
-  it('YUK-782: a hub-to-atomic transition takes cursors in sorted artifact-id order, transitioned hub included', async () => {
+  // @invariant concurrency: a hub-to-atomic transition takes cursors in sorted artifact-id order including the transitioned hub
+  // @fails-if the transitioned hub’s cursor is skipped or taken out of order
+  it('a hub-to-atomic transition takes cursors in sorted artifact-id order, transitioned hub included', async () => {
     await seedHub('hub-b', ['k2']);
 
     // Half 1 — hostage is the FIRST id (hub-a); transition the LAST (hub-b).
@@ -408,7 +414,9 @@ describe('YUK-384 durable hub-sync topology triggers', () => {
     expect(earlierCursorAlreadyTaken).toBe(true);
   });
 
-  it('YUK-384 RED 06: concurrent global fan-out locks hubs in artifact-id order', async () => {
+  // @invariant concurrency: concurrent global fan-out locks hubs in artifact-id order
+  // @fails-if fan-out locks hubs in a different order than a concurrent writer
+  it('concurrent global fan-out locks hubs in artifact-id order', async () => {
     await seedHub('hub-z', ['k2']);
 
     // knowledge.name (topology) and knowledge_edge.archived_at (topology per the
@@ -463,7 +471,7 @@ class FinalizeBarrier {
   }
 }
 
-describe('YUK-384 hub-sync fenced apply', () => {
+describe('hub-sync fenced apply', () => {
   let prepared: { claim: HubSyncClaim; desired: HubDesiredState };
   let snapshotBefore: Record<string, unknown>;
 
@@ -557,7 +565,9 @@ describe('YUK-384 hub-sync fenced apply', () => {
     );
   }
 
-  it('YUK-384 RED 11: N+1 waiting behind final cursor lock leaves newer pending state', async () => {
+  // @invariant concurrency: a waiter behind the final cursor lock leaves the newer pending state intact
+  // @fails-if the waiting apply overwrites or loses the newer pending state
+  it('N+1 waiting behind final cursor lock leaves newer pending state', async () => {
     const p = await preparedClaim();
     const barrier = new FinalizeBarrier('after-reconciliation-lock');
     const applyN = finalizeHubSync(
@@ -576,14 +586,18 @@ describe('YUK-384 hub-sync fenced apply', () => {
     });
   });
 
-  it('YUK-384 RED 12: artifact CAS conflict returns pending without failure', async () => {
+  // @invariant concurrency: an artifact CAS conflict returns pending without failing
+  // @fails-if a CAS conflict marks the artifact failed instead of pending
+  it('artifact CAS conflict returns pending without failure', async () => {
     const p = await preparedClaim();
     await ownerSaveHub('hub-a');
     expect(await finalizePrepared(p)).toBe('superseded');
     expect(await state('hub-a')).toMatchObject({ status: 'pending', consecutive_failure_count: 0 });
   });
 
-  it('YUK-384 RED 13: rollback at each apply stage leaves no partial effects', async () => {
+  // @invariant data: rollback at any apply stage leaves no partial effects
+  // @fails-if a mid-apply rollback leaves partial writes committed
+  it('rollback at each apply stage leaves no partial effects', async () => {
     for (const stage of ['artifact', 'block_refs', 'event', 'ack'] as const) {
       await resetPreparedHub();
       await expect(finalizeWithInjectedFailure(stage)).rejects.toThrow(`inject:${stage}`);
@@ -591,7 +605,9 @@ describe('YUK-384 hub-sync fenced apply', () => {
     }
   });
 
-  it('YUK-384 (P2-a): a lease that expires mid-apply while holding the cursor lock still commits — no poison rollback', async () => {
+  // @invariant concurrency: a lease expiring mid-apply while the cursor lock is held still commits — no poison rollback
+  // @fails-if lease expiry rolls back the apply or leaves it half-applied
+  it('a lease that expires mid-apply while holding the cursor lock still commits — no poison rollback', async () => {
     const prepared = await preparedClaim();
     // Shrink the lease so it expires DURING the artificially-delayed apply. finalize holds
     // the cursor row lock (exclusive — a concurrent reclaim would need the lock and would
@@ -624,7 +640,7 @@ describe('YUK-384 hub-sync fenced apply', () => {
 
 // ── Task 7 (RED Tests 19–21): race closure across hub lifecycle ───────────────
 
-describe('YUK-384 hub-sync lifecycle race closure', () => {
+describe('hub-sync lifecycle race closure', () => {
   beforeEach(async () => {
     await resetDb();
     await seedKnowledge('kc');
@@ -654,7 +670,9 @@ describe('YUK-384 hub-sync lifecycle race closure', () => {
     await testDb().execute(sql`update artifact set archived_at = null where id = ${id}`);
   }
 
-  it('YUK-384 RED 20: nightly repair rechecks archive and restore under artifact lock', async () => {
+  // @invariant concurrency: nightly repair rechecks archive and restore under the artifact lock
+  // @fails-if repair checks state outside the artifact lock and races a concurrent mutation
+  it('nightly repair rechecks archive and restore under artifact lock', async () => {
     const repair = repairWithBarrier('nightly:2026-07-21', 'before-artifact-lock');
     await repair.barrier.waitUntilReached();
     await archiveThenRestoreHub('hub-a');
@@ -663,7 +681,9 @@ describe('YUK-384 hub-sync lifecycle race closure', () => {
     expect(await state('hub-a')).toMatchObject({ status: 'pending' });
   });
 
-  it('YUK-384 RED 21: duplicate nightly repair key increments each hub at most once', async () => {
+  // @invariant data: a duplicate nightly repair key increments each hub at most once
+  // @fails-if a duplicate repair key double-increments a hub
+  it('duplicate nightly repair key increments each hub at most once', async () => {
     const key = 'nightly:2026-07-21';
     await repairHubSyncCoverage(testDb(), { repairKey: key, pageSize: 100 });
     const once = await generation('hub-a');
@@ -674,7 +694,7 @@ describe('YUK-384 hub-sync lifecycle race closure', () => {
 
 // ── Task 8 (RED Tests 22–24): unified wake / recovery / continuation / retry ──
 
-describe('YUK-384 unified hub-sync cycle', () => {
+describe('unified hub-sync cycle', () => {
   beforeEach(async () => {
     await resetDb();
     process.env.HUB_SYNC_MODE = 'apply';
@@ -697,6 +717,8 @@ describe('YUK-384 unified hub-sync cycle', () => {
     await seedArtifact({ id, type: 'note_hub', knowledgeIds: ['kc'] });
   }
 
+  // @invariant data: a reconciler apply replays the complete artifact including its exact update time
+  // @fails-if the replay drops fields or rewrites the update time
   it('a reconciler apply replays the complete artifact, including its exact update time', async () => {
     await seedAppliableHub('hub-a');
     // Genesis BASE (v0, seed body) so the fold has a base, like the real event-sourced stream.
@@ -718,7 +740,9 @@ describe('YUK-384 unified hub-sync cycle', () => {
     expect(folded).toEqual(live);
   });
 
-  it('YUK-384 (X1): the container-heal apply is also fold-replayable (full snapshot, no op-replay throw)', async () => {
+  // @invariant data: the container-heal apply is fold-replayable from a full snapshot without an op-replay throw
+  // @fails-if the heal apply requires op-replay or fails on the full snapshot
+  it('the container-heal apply is also fold-replayable (full snapshot, no op-replay throw)', async () => {
     await seedAppliableHub('hub-a');
     // A malformed auto-links container (no attrs.id) → the reconciler heals it during apply.
     const malformed = {

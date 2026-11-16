@@ -69,12 +69,14 @@ function importRequest(body: Uint8Array): Request {
   });
 }
 
-describe('restore column allowlist (YUK-136) — wipe is gated on schema validation', () => {
+describe('restore column allowlist — wipe is gated on schema validation', () => {
   beforeEach(async () => {
     r2._store.clear();
     await resetDb();
   });
 
+  // @invariant security: an unknown restore column is rejected with invalid_column before any wipe
+  // @fails-if the wipe runs before column validation or an unknown column passes
   it('rejects an unknown column with 400 invalid_column AND does NOT wipe the DB', async () => {
     const db = testDb();
     const now = new Date('2024-01-01T00:00:00Z');
@@ -119,6 +121,8 @@ describe('restore column allowlist (YUK-136) — wipe is gated on schema validat
     expect(rows[0].id).toBe('sentinel');
   });
 
+  // @invariant security: an unknown top-level table key is rejected with invalid_table before any wipe
+  // @fails-if the wipe runs before table-key validation or an unknown table passes
   it('rejects an unknown top-level table key with 400 invalid_table AND does NOT wipe the DB', async () => {
     const db = testDb();
     const now = new Date('2024-01-01T00:00:00Z');
@@ -151,6 +155,8 @@ describe('restore column allowlist (YUK-136) — wipe is gated on schema validat
     expect(rows[0].id).toBe('sentinel2');
   });
 
+  // @invariant security: a non-object row is rejected with invalid_row before any wipe
+  // @fails-if a malformed row reaches the wipe or is silently skipped
   it('rejects every non-object row with 400 invalid_row AND does NOT wipe the DB', async () => {
     const db = testDb();
     const now = new Date('2024-01-01T00:00:00Z');
@@ -191,6 +197,8 @@ describe('restore column allowlist (YUK-136) — wipe is gated on schema validat
     ]);
   });
 
+  // @invariant data: a fully valid payload still round-trips through the gated restore
+  // @fails-if the allowlist rejects a valid restore or the round-trip loses rows
   it('still performs a valid round-trip restore (allowlist does not break the happy path)', async () => {
     const db = testDb();
     const now = new Date('2024-01-01T00:00:00Z');

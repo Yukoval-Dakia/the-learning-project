@@ -85,7 +85,7 @@ export const question_revision = pgTable(
   (t) => [
     uniqueIndex('question_revision_group_ordinal_uq').on(t.group_id, t.revision_ordinal),
     index('question_revision_integrity_digest_idx').on(t.integrity_digest),
-    // 复合 FK 目标：lifecycle current pointer 必须 (group, revision) 同组一致（P1-2）。
+    // 复合 FK 目标：lifecycle current pointer 必须 (group, revision) 同组一致。
     uniqueIndex('question_revision_group_id_uq').on(t.group_id, t.revision_id),
     check(
       'question_revision_availability_ck',
@@ -114,11 +114,11 @@ export const question_group_lifecycle = pgTable(
     }).notNull(),
     scoring_admission_evidence: jsonb('scoring_admission_evidence').$type<AdmissionEvidenceT>(),
     scoring_admission_generation: integer('scoring_admission_generation').notNull().default(0),
-    // P2-C：withheld 分支的显式原因（admitted 分支为 NULL，CHECK 强制分支完整性）。
+    // withheld 分支的显式原因（admitted 分支为 NULL，CHECK 强制分支完整性）。
     scoring_admission_withheld_reason: text('scoring_admission_withheld_reason', {
       enum: ['unverified_rules', 'verification_failed', 'no_admitted_executor', 'owner_hold'],
     }),
-    // P2-C：admission 决定时间戳（admitted 分支必填；evidence 列同支必填）。
+    // admission 决定时间戳（admitted 分支必填；evidence 列同支必填）。
     scoring_admission_decided_at: timestamp('scoring_admission_decided_at', {
       withTimezone: true,
     }),
@@ -136,7 +136,7 @@ export const question_group_lifecycle = pgTable(
   },
   (t) => [
     index('question_group_lifecycle_current_revision_idx').on(t.current_revision_id),
-    // P1-2：current pointer 必须 (group, revision) 同组一致 —— 复合 FK 拒绝指向他组 revision。
+    // current pointer 必须 (group, revision) 同组一致 —— 复合 FK 拒绝指向他组 revision。
     foreignKey({
       columns: [t.group_id, t.current_revision_id],
       foreignColumns: [question_revision.group_id, question_revision.revision_id],
@@ -166,7 +166,7 @@ export const question_group_lifecycle = pgTable(
       'question_group_lifecycle_admission_generation_ck',
       sql`${t.scoring_admission_generation} >= 0`,
     ),
-    // P2-C：分支完整性 —— admitted 必须有决定时间与证据；withheld 必须有原因。
+    // 分支完整性 —— admitted 必须有决定时间与证据；withheld 必须有原因。
     check(
       'question_group_lifecycle_admission_branch_ck',
       sql`(${t.scoring_admission_state} = 'withheld' OR (${t.scoring_admission_decided_at} IS NOT NULL AND ${t.scoring_admission_evidence} IS NOT NULL)) AND (${t.scoring_admission_state} = 'admitted' OR ${t.scoring_admission_withheld_reason} IS NOT NULL)`,
@@ -344,7 +344,7 @@ export const model_admission_slice = pgTable(
  * 发题（serve-time binding，§3.1）：发题时冻结 revision、目标 part、实际
  * 材料 digest 与选项呈现映射 —— 提交时不得再取 latest。claim 状态在此行
  * （one_time 用于诊断/probe/教学一次性占用；§3.3）。
- * P1-1：绑定列（revision/parts/materials/order/container_ref/issued_at +
+ * 绑定列（revision/parts/materials/order/container_ref/issued_at +
  * claim_policy —— policy 是发题时选定的 serve 契约一部分，事后改会变更
  * claim 语义，同样冻结）由 BEFORE UPDATE trigger 冻结 —— 只有 claim 生命周期
  * 列（claim_status/claimed_by_ref）可变；DELETE 一律拒绝（发题事实是
@@ -379,7 +379,7 @@ export const assessment_issuance = pgTable(
       foreignColumns: [question_revision.revision_id],
       name: 'assessment_issuance_revision_fk',
     }),
-    // P1-2：作为 submission 复合 FK 目标 —— (issuance, revision) 冗余坐标必须一致。
+    // 作为 submission 复合 FK 目标 —— (issuance, revision) 冗余坐标必须一致。
     uniqueIndex('assessment_issuance_id_revision_uq').on(t.issuance_id, t.revision_id),
     check(
       'assessment_issuance_claim_policy_ck',
@@ -395,7 +395,7 @@ export const assessment_issuance = pgTable(
 /**
  * 联合判分组：一次 settle 的单位（solo 单题 = 单 submission 组）。
  *
- * P1（YUK-1097）：submission_ids 是成员关系的 DB 层派生缓存 ——
+ * YUK-1097：submission_ids 是成员关系的 DB 层派生缓存 ——
  * submission INSERT trigger 追加成员；组行 UPDATE 只允许严格前缀追加
  * 真实成员（移除/重排/幻影/尾重复拒绝），DELETE 一律拒绝（0111
  * trigger）。INSERT 侧 declare-first：可声明尚不存在的成员（计划模式），
@@ -421,7 +421,7 @@ export const evaluation_group = pgTable(
  * 已接收作答（D5 守恒/零丢失）：ResponseSet + group 证据原样冻结；
  * rejudge/appeal 只重解读原证据（D8），不改写本行。幂等键按 occurrence
  * （evaluation_group）作用域唯一：同 key 不同载荷 ⇒ 冲突而非覆盖。
- * P1-1：整行不可变 —— BEFORE UPDATE/DELETE trigger 拒绝改写/删除（0105）。
+ * 整行不可变 —— BEFORE UPDATE/DELETE trigger 拒绝改写/删除（0105）。
  */
 export const assessment_submission = pgTable(
   'assessment_submission',
@@ -444,13 +444,13 @@ export const assessment_submission = pgTable(
       foreignColumns: [evaluation_group.evaluation_group_id],
       name: 'assessment_submission_group_fk',
     }),
-    // P1-2：(issuance, revision) 冗余坐标必须与 issuance 一致 —— 复合 FK。
+    // (issuance, revision) 冗余坐标必须与 issuance 一致 —— 复合 FK。
     foreignKey({
       columns: [t.issuance_id, t.revision_id],
       foreignColumns: [assessment_issuance.issuance_id, assessment_issuance.revision_id],
       name: 'assessment_submission_issuance_revision_fk',
     }),
-    // P1-2：作为 evaluation 复合 FK 目标 —— (submission, group) 必须一致。
+    // 作为 evaluation 复合 FK 目标 —— (submission, group) 必须一致。
     uniqueIndex('assessment_submission_id_group_uq').on(t.submission_id, t.evaluation_group_id),
   ],
 );
@@ -498,7 +498,7 @@ export const assessment_response_draft = pgTable(
  * 否只由 evaluation_effective_head 表达。provenance 承载 D9/D15/D16 来源
  * （automatic/manual/self_report + assisted）。
  *
- * P1（YUK-1097）：终态冻结 —— 身份坐标全列冻结；status='completed' 后
+ * YUK-1097：终态冻结 —— 身份坐标全列冻结；status='completed' 后
  * 整行冻结（unit_results/aggregate/plan_digest/provenance/run_refs）；
  * pending 行的载荷只随 pending→completed 迁移写一次。DELETE 一律拒绝
  * （0111 trigger）。
@@ -523,7 +523,7 @@ export const evaluation = pgTable(
   (t) => [
     uniqueIndex('evaluation_submission_attempt_uq').on(t.submission_id, t.attempt),
     index('evaluation_group_idx').on(t.evaluation_group_id),
-    // P1-2：evaluation 的 (submission, group) 必须与 submission 一致。
+    // evaluation 的 (submission, group) 必须与 submission 一致。
     foreignKey({
       columns: [t.submission_id, t.evaluation_group_id],
       foreignColumns: [
@@ -532,7 +532,7 @@ export const evaluation = pgTable(
       ],
       name: 'evaluation_submission_group_fk',
     }),
-    // P1（终验）：head 复合 FK 目标 —— (evaluation, submission, group) 三坐标
+    // head 复合 FK 目标 —— (evaluation, submission, group) 三坐标
     // 全一致；取代旧 (evaluation, group) 两坐标版（唯一能力等价，不叠加冗余约束）。
     uniqueIndex('evaluation_id_submission_group_uq').on(
       t.evaluation_id,
@@ -551,7 +551,7 @@ export const evaluation = pgTable(
  * （请求契约见 core/schema/assessment/ids.ts —— REQUIRED，禁止省略当无条件
  * 覆盖，防 ABA）。
  *
- * CAS 注（复审）：schema 只承载 head 状态列（effective id + generation）与
+ * CAS 注：schema 只承载 head 状态列（effective id + generation）与
  * 本表 FK 约束；【group/submission/head 同事务原子创建】、【generation 单调】
  * 与并发 activation 串行化属事务性 writer（§11 锁序），不在 DDL 层保证 ——
  * writer 落地时必须补同事务原子创建与并发竞争测试（本表注释为契约备忘）。
@@ -567,7 +567,7 @@ export const evaluation_effective_head = pgTable(
   },
   (t) => [
     index('evaluation_effective_head_submission_idx').on(t.submission_id),
-    // P1（终验）：head 的 (submission, group) 必须是真实同组 submission ——
+    // head 的 (submission, group) 必须是真实同组 submission ——
     // submission_id NOT NULL ⇒ 此 FK 恒生效，NULL-effective 初始 head 也无法
     // 携带孤儿身份坐标。
     foreignKey({
@@ -578,7 +578,7 @@ export const evaluation_effective_head = pgTable(
       ],
       name: 'evaluation_effective_head_submission_fk',
     }),
-    // P1（终验）：effective 非 NULL 时三坐标 (evaluation, submission, group)
+    // effective 非 NULL 时三坐标 (evaluation, submission, group)
     // 必须与 evaluation 行全一致 —— head 不得指向他组/他 submission 的 evaluation，
     // 也不得把 effective 挂到同组另一 submission 上。effective 为 NULL 时
     // MATCH SIMPLE 跳过（初始态合法）。
@@ -601,17 +601,17 @@ export const evaluation_effective_head = pgTable(
  * （部分唯一索引 WHERE is_current）；不用 (question_id, nullable part_ref)
  * 当 PK（PK 不能含 NULL，且无法区分同题不同历史版本）。
  *
- * P1-3：status 只承载【裁决结果】（pending/mapped/conflicted/
+ * status 只承载【裁决结果】（pending/mapped/conflicted/
  * historical_unresolved），永不改写；当前选择由可变 is_current 表达 ——
  * 修正 = 旧行 is_current=false（status 与证据原样保留）+ 新行 is_current=true
  * 并链 supersedes_mapping_id（自 FK 保证链目标存在）。不得用覆盖 status 的
  * 方式丢失历史裁决。未能恢复的旧记录进入原生 historical_unresolved 状态，
  * 仍可查看原始证据，不得拿当前题面补造当时所见。
  *
- * P1（YUK-1097）：DB 层冻结（0111 trigger）—— 身份坐标/裁决字段/
+ * YUK-1097：DB 层冻结（0111 trigger）—— 身份坐标/裁决字段/
  * created_at 一旦写入即冻结；可变列只有 is_current / supersedes_mapping_id
- * （修正链）与 pending 占位行的 evidence/algorithm_version 操作性注释刷新
- * （P1-5 契约）。DELETE 一律拒绝 —— 历史裁决不可抹除。
+ * （修正链）与 pending 占位行的 evidence/algorithm_version 操作性注释刷新。
+ * DELETE 一律拒绝 —— 历史裁决不可抹除。
  */
 export const assessment_identity_mapping = pgTable(
   'assessment_identity_mapping',
@@ -619,7 +619,7 @@ export const assessment_identity_mapping = pgTable(
     mapping_id: text('mapping_id').primaryKey(),
     source_kind: text('source_kind').notNull(),
     source_id: text('source_id').notNull(),
-    // locator 非空且非空白（P2-B：空串不算定位）。
+    // locator 非空且非空白（空串不算定位）。
     source_locator: text('source_locator').notNull(),
     original_question_id: text('original_question_id').notNull(),
     legacy_part_ref: text('legacy_part_ref'),
@@ -659,8 +659,8 @@ export const assessment_identity_mapping = pgTable(
       'assessment_identity_mapping_status_ck',
       sql`${t.status} IN ('pending','mapped','conflicted','historical_unresolved')`,
     ),
-    // P2-B：locator 非空白；status 依赖的目标坐标约束。
-    // P2（终验）：非空白判定收紧到 btrim —— 纯空格 locator 同样拒绝。
+    // locator 非空白；status 依赖的目标坐标约束。
+    // 非空白判定收紧到 btrim —— 纯空格 locator 同样拒绝。
     check('assessment_identity_mapping_locator_nonempty_ck', sql`btrim(${t.source_locator}) <> ''`),
     check(
       'assessment_identity_mapping_mapped_target_ck',

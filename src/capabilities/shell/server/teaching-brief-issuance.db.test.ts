@@ -149,7 +149,7 @@ async function editCompletedProbe(probeId: string) {
   ).toMatchObject({ status: 'updated', version: row.version + 2 });
 }
 
-describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
+describe('TeachingBrief frozen issuance eligibility', () => {
   beforeAll(installPracticeHost);
   beforeEach(async () => {
     vi.restoreAllMocks();
@@ -160,6 +160,8 @@ describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
     vi.useRealTimers();
   });
 
+  // @invariant data: a frozen brief answer stays deliverable and acknowledged after normal KC/draft edits and counts in the report
+  // @fails-if KC/draft edits invalidate the frozen answer or the report omits the acknowledged delivery
   it.each(['correct', 'incorrect'] as const)(
     'delivers and acknowledges the %s frozen answer after normal KC/draft edits, and counts it in the report',
     async (answerResult) => {

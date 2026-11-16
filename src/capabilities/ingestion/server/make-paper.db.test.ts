@@ -136,11 +136,13 @@ async function seedImportedSession(opts: {
   return { docId };
 }
 
-describe('createIngestionPaper (YUK-214)', () => {
+describe('createIngestionPaper', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant data: createIngestionPaper is idempotent on sessionId — a second call returns the same paper
+  // @fails-if a repeated call creates a second paper or throws
   it('is idempotent on sessionId — a second call returns the same paper', async () => {
     const db = testDb();
     await seedImportedSession({

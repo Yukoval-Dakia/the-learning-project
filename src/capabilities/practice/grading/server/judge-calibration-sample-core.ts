@@ -41,14 +41,11 @@ export const JUDGE_CALIBRATION_ACTOR = 'judge_calibration';
 
 // The LLM-backed judge routes worth double-judging (MF4① whitelist). Consumes
 // the canonical `MODEL_BACKED_JUDGE_ROUTES` predicate (@/capabilities/practice/grading/server/judge,
-// route-resolve.ts) instead of a locally-owned duplicate —
-// fixed a drift where this module's own copy omitted `unit_dimension` (its
-// LLM fallback route), silently excluding it from calibration sampling.
+// route-resolve.ts) — a locally-owned copy drifts; e.g. missing `unit_dimension`
+// (its LLM fallback route) would silently exclude it from calibration sampling.
 // The routes whose invoker dispatch threads student_image_refs (photo answers).
-// OCR minor (PR #1056): this used to be a locally-owned Set duplicating the
-// canonical `IMAGE_CONSUMING_JUDGE_ROUTES` (@/capabilities/practice/grading/server/judge,
-// route-resolve.ts) — same double-write drift risk as the MODEL_BACKED_ROUTES
-// fix above. Consume the shared predicate instead of a local copy.
+// Consumes the canonical `IMAGE_CONSUMING_JUDGE_ROUTES` (same module) — a local
+// copy carries the same double-write drift risk as the route whitelist above.
 const VISION_ROUTES: Set<string> = IMAGE_CONSUMING_JUDGE_ROUTES;
 const SAMPLED_OUTCOMES = ['correct', 'partial', 'incorrect'] as const;
 export type SampledOutcome = (typeof SAMPLED_OUTCOMES)[number];
@@ -579,7 +576,7 @@ export async function applyJudgeCalibrationRejudgeSample(
 
 /** Freeze the selected candidates into staged-workset items by capturing the
  * FULL prepared input face (question row, subject profile, answer face) at
- * freeze time — R1 P1b: the freeze digest binds the exact runner
+ * freeze time — the freeze digest binds the exact runner
  * inputs, and execution never re-reads the (mutable) business rows.
  * Un-preparable candidates are reported, never silently dropped. */
 export async function freezeCalibrationWorkSetFromCandidates(

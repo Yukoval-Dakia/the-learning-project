@@ -2,7 +2,7 @@
 // 被测不变量：同事务原子发布（revision + lifecycle + event + identity diff）、
 // 双 CAS（revision + admission generation）、digest 幂等、supersedes 链、
 // admission 分支与 evidence 形状、archive/restore 的 claim 语义、mid-step 故障
-// 全量回滚（trigger 注入）、并发兄弟编辑的组根锁序（复审 P1/P2 全覆盖）。
+// 全量回滚（trigger 注入）、并发兄弟编辑的组根锁序。
 
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -33,11 +33,13 @@ async function seedQuestion(id: string, overrides: Partial<typeof question.$infe
 
 // 直接构造 publisher 输入（契约由 normalizer 产出，测试里组装）。
 
-describe('publishQuestionGroupFromRow — 锁序/组语义/未决转换（复审 P1）', () => {
+describe('publishQuestionGroupFromRow — 锁序/组语义/未决转换', () => {
   beforeEach(resetDb);
   afterEach(resetDb);
 
-  it('P1-1: sibling edit under the group-root lock is never lost — barrier handshake, no sleeps (old read-before-lock impl fails this)', async () => {
+  // @invariant concurrency: a sibling edit under the group-root lock is never lost
+  // @fails-if the publish path reads the group before taking the root lock and loses a concurrent sibling edit
+  it('sibling edit under the group-root lock is never lost — barrier handshake, no sleeps (old read-before-lock impl fails this)', async () => {
     const db = testDb();
     const parentId = 'pf_race_root';
     const now = new Date();

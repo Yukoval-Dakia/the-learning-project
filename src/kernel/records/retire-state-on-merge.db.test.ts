@@ -46,11 +46,13 @@ async function insertTyped(subjectId: string, confusedWith?: string) {
   });
 }
 
-describe('retireMasteryStateOnMerge (YUK-543)', () => {
+describe('retireMasteryStateOnMerge', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant data: with only a from row, retireMasteryStateOnMerge re-keys it to into and the from row is gone
+  // @fails-if the from row survives or the into row is not created
   it('only from → renamed (row re-keyed to into, from gone)', async () => {
     await insertMastery('k_from');
     const out = await db.transaction((tx) => retireMasteryStateOnMerge(tx, 'k_from', 'k_into'));
@@ -67,6 +69,8 @@ describe('retireMasteryStateOnMerge (YUK-543)', () => {
     expect(into).toHaveLength(1);
   });
 
+  // @invariant data: with both rows present, retireMasteryStateOnMerge retains both frozen — no combine
+  // @fails-if the two rows are combined or one is deleted
   it('both rows → frozen (both retained, no combine)', async () => {
     await insertMastery('k_from');
     await insertMastery('k_into');
@@ -76,6 +80,8 @@ describe('retireMasteryStateOnMerge (YUK-543)', () => {
     expect(rows.map((r) => r.subject_id).sort()).toEqual(['k_from', 'k_into']);
   });
 
+  // @invariant concurrency: the retire holds the shared fsrs:knowledge advisory lock for the whole merge transaction
+  // @fails-if the merge runs without the advisory lock and overlaps grading writes
   it('holds the SHARED fsrs:knowledge advisory lock during the merge tx (mutual exclusion w/ grading)', async () => {
     await insertMastery('k_from');
     let heldByRetire = false;
@@ -93,7 +99,7 @@ describe('retireMasteryStateOnMerge (YUK-543)', () => {
   });
 });
 
-describe('retireFsrsStateOnMerge (YUK-543)', () => {
+describe('retireFsrsStateOnMerge', () => {
   beforeEach(async () => {
     await resetDb();
   });
@@ -168,6 +174,8 @@ describe('retireFsrsStateOnMerge (YUK-543)', () => {
       ).toHaveLength(0);
     }
   });
+  // @invariant data: with both fsrs rows present, retireFsrsStateOnMerge retains both frozen — no combine
+  // @fails-if the fsrs rows are combined or one is deleted
   it('both → frozen', async () => {
     await insertFsrs('k_from');
     await insertFsrs('k_into');
@@ -178,11 +186,13 @@ describe('retireFsrsStateOnMerge (YUK-543)', () => {
   });
 });
 
-describe('retireLearnerAxisStateOnMerge (YUK-543)', () => {
+describe('retireLearnerAxisStateOnMerge', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant data: with only a from row, retireLearnerAxisStateOnMerge re-keys it to into and the from row is gone
+  // @fails-if the from row survives or the into row is not created
   it('only from → renamed', async () => {
     await insertAxis('k_from');
     expect(
@@ -194,6 +204,8 @@ describe('retireLearnerAxisStateOnMerge (YUK-543)', () => {
       .where(eq(learner_axis_state.subject_id, 'k_into'));
     expect(rows).toHaveLength(1);
   });
+  // @invariant data: with both rows present, retireLearnerAxisStateOnMerge retains both frozen — no combine
+  // @fails-if the rows are combined or one is deleted
   it('both → frozen', async () => {
     await insertAxis('k_from');
     await insertAxis('k_into');
@@ -204,11 +216,13 @@ describe('retireLearnerAxisStateOnMerge (YUK-543)', () => {
   });
 });
 
-describe('retireKcTypedStateOnMerge (YUK-543)', () => {
+describe('retireKcTypedStateOnMerge', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant data: with only a from row, retireKcTypedStateOnMerge re-keys it to into and the from row is gone
+  // @fails-if the from row survives or the into row is not created
   it('only from → renamed', async () => {
     await insertTyped('k_from');
     expect(await db.transaction((tx) => retireKcTypedStateOnMerge(tx, 'k_from', 'k_into'))).toBe(
@@ -220,6 +234,8 @@ describe('retireKcTypedStateOnMerge (YUK-543)', () => {
       .where(eq(kc_typed_state.subject_id, 'k_into'));
     expect(rows).toHaveLength(1);
   });
+  // @invariant data: with both rows present, retireKcTypedStateOnMerge retains both frozen — no combine
+  // @fails-if the rows are combined or one is deleted
   it('both → frozen', async () => {
     await insertTyped('k_from');
     await insertTyped('k_into');
@@ -228,6 +244,8 @@ describe('retireKcTypedStateOnMerge (YUK-543)', () => {
     );
     expect(await db.select().from(kc_typed_state)).toHaveLength(2);
   });
+  // @invariant data: merge rewrites the confused_with_kc_id pointer on other rows from → into
+  // @fails-if a sibling row keeps pointing at the retired node
   it('rewrites the confused_with_kc_id pointer on OTHER rows (from → into)', async () => {
     // A row keyed by k_other says "confused with k_from"; after the merge it must say k_into.
     await insertTyped('k_other', 'k_from');
@@ -239,6 +257,8 @@ describe('retireKcTypedStateOnMerge (YUK-543)', () => {
       .where(eq(kc_typed_state.subject_id, 'k_other'));
     expect(other[0]?.confused).toBe('k_into');
   });
+  // @invariant data: rename and pointer rewrite compose — the from-keyed row is renamed and the sibling pointer repaired
+  // @fails-if the rename lands but the sibling pointer keeps the retired id, or vice versa
   it('rename AND pointer rewrite compose (from keyed row renamed, sibling pointer repaired)', async () => {
     await insertTyped('k_from');
     await insertTyped('k_other', 'k_from');

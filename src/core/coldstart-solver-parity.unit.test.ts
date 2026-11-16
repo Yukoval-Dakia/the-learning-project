@@ -75,7 +75,9 @@ d('coldstart-solver ↔ Rust bit-parity (YUK-495 #125 rider)', () => {
     }
   });
 
-  it('rejects non-binary answers (matches forward_auc label guard — review fix)', () => {
+  // @invariant grading: non-binary answers are rejected exactly like the forward_auc label guard
+  // @fails-if a non-binary answer is scored instead of rejected
+  it('rejects non-binary answers (matches forward_auc label guard)', () => {
     // The TS oracle is type-guarded by ReadonlyArray<0|1>; the public napi fn guards at
     // runtime so a stray 0.5/2.0/-1 from untyped JS throws loudly, not silent θ̂ corruption.
     for (const bad of [0.5, 2, -1, Number.NaN]) {

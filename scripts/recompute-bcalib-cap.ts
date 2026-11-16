@@ -19,7 +19,7 @@
 //
 // SCOPE. 仅 `item_calibration WHERE track='hard' AND b_calib IS NOT NULL`——只重算**已 firm-up**
 // 的存量；未 firm-up（b_calib NULL）的题由夜跑 job 按常规窗/stale 准入处理（不在本脚本 scope）。
-// 若存量 `b_calib IS NOT NULL` 行为零 ⇒ considered=0 ⇒ 天然 no-op（spec §5 PR-1 可选步骤终止条件）。
+// 若存量 `b_calib IS NOT NULL` 行为零 ⇒ considered=0 ⇒ 天然 no-op（spec §5 可选步骤终止条件）。
 //
 // BEHAVIOR-PRESERVING: 一次性 maintenance 脚本，**不**接入任何 live 请求路径；不新增写面
 // （只调既有 recalibrateQuestion，它写 b_calib/calibration_n/calibration_weight/last_calibrated_at，

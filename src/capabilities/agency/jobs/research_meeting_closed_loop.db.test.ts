@@ -305,7 +305,7 @@ async function taskKindCounts(): Promise<Record<string, number>> {
   return counts;
 }
 
-describe('closed loop: nightly → proposal → accept → probe → real judge → reconcile (YUK-789)', () => {
+describe('closed loop: nightly → proposal → accept → probe → real judge → reconcile', () => {
   beforeEach(async () => {
     await resetDb();
     await seedKnowledge();
@@ -328,6 +328,8 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     vi.unstubAllEnvs();
   });
 
+  // @invariant concurrency: concurrent deliveries of one run serialize before the completion guard so model work executes once
+  // @fails-if two deliveries both pass the completion guard and run model work twice
   it('serializes concurrent deliveries before the completion guard and model work', async () => {
     const db = testDb();
     await seedRecurringFailures(3);

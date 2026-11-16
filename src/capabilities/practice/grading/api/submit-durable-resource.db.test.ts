@@ -80,7 +80,7 @@ async function seedQuestion(id: string) {
     });
 }
 
-describe('createAttemptResource — durable divert 202 pass-through (W2)', () => {
+describe('createAttemptResource — durable divert 202 pass-through', () => {
   beforeEach(async () => {
     await resetDb();
     __resetRateLimitForTests();

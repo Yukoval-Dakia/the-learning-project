@@ -9,7 +9,7 @@ type EventRow = typeof event.$inferSelect;
 
 export const PROPOSAL_DISMISS_COOLDOWN_DAYS = 7;
 
-// YUK-76 codex P1 — serialize concurrent writers on `(kind, cooldown_key)`.
+// YUK-76 — serialize concurrent writers on `(kind, cooldown_key)`.
 //
 // `pg_advisory_xact_lock` releases at txn commit. When the caller passes a
 // plain `Db` handle, each `db.execute(...)` runs in its own autocommit txn,
@@ -59,11 +59,10 @@ export interface ProposalSignalSource {
   kind: string;
   payload: {
     cooldown_key?: string;
-    // P5.6 / YUK-178 (call-site 5) — carry the corrective discriminator off the
-    // proposal payload so the KPI gate can read it. The narrowed pick used to be
-    // just { cooldown_key? } and would drop this field; absence === 'proactive'
-    // (ND-SK-1). Corrective decisions are excluded from accept_count/dismiss_count
-    // (SK-2 / §5.1).
+    // Carry the corrective discriminator off the proposal payload so the KPI
+    // gate can read it — the narrowed pick must include this field; absence
+    // means 'proactive'. Corrective decisions are excluded from
+    // accept_count/dismiss_count.
     suggestion_kind?: SuggestionKindT;
   };
 }
@@ -270,7 +269,7 @@ export async function recordProposalDecisionSignal(
     return;
   }
 
-  // YUK-76 codex P1 — serialize with `ensureProposalDecisionSignal` rebuilds
+  // YUK-76 — serialize with `ensureProposalDecisionSignal` rebuilds
   // on the same `(kind, cooldown_key)` so rebuild snapshots can't clobber a
   // freshly-recorded increment.
   await withProposalSignalLock(db, proposal.kind, cooldownKey, async (tx) => {
@@ -478,7 +477,7 @@ async function rebuildProposalDecisionSignal(
     }
   }
 
-  // YUK-76 codex round-3 P1-B + P1-C — `cooldown_until` must reflect the
+  // YUK-76 — `cooldown_until` must reflect the
   // **key-wide latest** decision, not just the existence of any prior dismiss.
   // Same `(kind, cooldown_key)` can carry a history like dismiss→accept (user
   // changed their mind / accepted a different proposal on the same key). The
@@ -585,7 +584,7 @@ export async function ensureProposalDecisionSignal(
 ): Promise<void> {
   const cooldownKey = proposal.payload.cooldown_key;
   if (!cooldownKey) return;
-  // YUK-76 codex P1 — `pg_advisory_xact_lock` releases at txn boundary. If
+  // YUK-76 — `pg_advisory_xact_lock` releases at txn boundary. If
   // we let the previous implementation run on a plain `Db` handle, the lock
   // and the rebuild upsert lived in two separate autocommit txns, so the
   // lock did not actually protect the rebuild. `withProposalSignalLock`

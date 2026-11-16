@@ -423,12 +423,14 @@ async function seedTerminalCopilotTurn(): Promise<string> {
   return checkpointId;
 }
 
-describe('YUK-497 — global learning-state write lock (two-connection regressions)', () => {
+describe('global learning-state write lock (two-connection regressions)', () => {
   beforeEach(async () => {
     await resetDb();
     __resetRateLimitForTests();
   });
 
+  // @invariant concurrency: the live submit route blocks behind the global learning-state lock and then lands its FSRS/θ̂ writes
+  // @fails-if the route bypasses the global lock or loses its writes
   it('the LIVE /api/review/submit route blocks behind the global lock, then lands its FSRS/θ̂ writes', async () => {
     const kc = newId();
     await seedKnowledge(kc);
@@ -456,6 +458,8 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
     expect(thetaRows).toHaveLength(1);
   });
 
+  // @invariant concurrency: the absent-row upsertFsrsState path blocks behind the global lock
+  // @fails-if the insert path takes the row lock before the global lock and deadlocks or races
   it('upsertFsrsState (absent-row insert path) blocks behind the global lock', async () => {
     const kc = newId();
     await seedKnowledge(kc);
@@ -483,6 +487,8 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
     expect(rows).toHaveLength(1);
   });
 
+  // @invariant concurrency: the absent-row upsertMasteryState path blocks behind the global lock
+  // @fails-if the insert path skips the global lock
   it('upsertMasteryState (absent-row insert path) blocks behind the global lock', async () => {
     const kc = newId();
     await seedKnowledge(kc);
@@ -505,6 +511,8 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
     expect(rows).toHaveLength(1);
   });
 
+  // @invariant concurrency: the updateThetaForAttempt tx shape blocks behind the global lock
+  // @fails-if the theta update takes row locks before the global lock
   it('updateThetaForAttempt (auto-enroll/submit tx shape) blocks behind the global lock', async () => {
     const kcA = newId();
     const kcB = newId();
@@ -559,6 +567,8 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
     expect(retired.version).toBe(1);
   });
 
+  // @invariant concurrency: the merge retire pair blocks behind the global lock
+  // @fails-if the retire writes take row locks before the global lock and deadlock or race grading
   it('merge retire pair (retireMasteryStateOnMerge + retireFsrsStateOnMerge) blocks behind the global lock', async () => {
     const from = newId();
     const into = newId();
@@ -590,6 +600,8 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
     expect(outcome).toEqual({ mastery: 'renamed', fsrs: 'renamed' });
   });
 
+  // @invariant concurrency: overlapping writers with different KC sets serialize in sorted order and never deadlock
+  // @fails-if the writers take locks in different orders and deadlock
   it('submit subset {b}→superset {a,b} vs merge sorted {a,b}: overlapping writers never deadlock', async () => {
     const kcA = newId();
     const kcB = newId();
@@ -635,7 +647,9 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
     }
   });
 
-  it('merge-repair path (sweep/backfill tx shape) takes the global lock FIRST (review F1)', async () => {
+  // @invariant concurrency: the merge-repair tx shape takes the global lock first
+  // @fails-if the repair takes a row or entity lock before the global lock
+  it('merge-repair path (sweep/backfill tx shape) takes the global lock FIRST', async () => {
     const from = newId();
     const into = newId();
     await seedKnowledge(from);
@@ -653,7 +667,9 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
     expect(repair.from_id).toBe(from);
   });
 
-  it('exact-duplicate dedup producer takes the global lock BEFORE the question row lock (review F2)', async () => {
+  // @invariant concurrency: the dedup producer takes the global lock before the question row lock
+  // @fails-if the producer locks the question row first and inverts the order
+  it('exact-duplicate dedup producer takes the global lock BEFORE the question row lock', async () => {
     const kcA = newId();
     const kcB = newId();
     const qId = newId();
@@ -682,7 +698,9 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
     expect(merged).not.toBeNull();
   });
 
-  it('copilot checkpoint revert endpoint takes the global lock BEFORE any state-row lock (review F1)', async () => {
+  // @invariant concurrency: the checkpoint-revert endpoint takes the global lock before any state-row lock
+  // @fails-if the endpoint locks a state row before the global lock
+  it('copilot checkpoint revert endpoint takes the global lock BEFORE any state-row lock', async () => {
     const checkpointId = await seedTerminalCopilotTurn();
 
     // The revert endpoint tx holds only its per-checkpoint + session-selection ADVISORY locks

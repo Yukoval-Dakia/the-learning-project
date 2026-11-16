@@ -136,7 +136,9 @@ describe('reconcileConjecturePredictions (DB)', () => {
     expect(scores).toHaveLength(1); // still exactly one — no duplicate score
   });
 
-  it('is retry-safe on partial failure: anchor-last → no lost ledger, no duplicate score (review fix)', async () => {
+  // @invariant data: retrying a partially-failed reconcile loses no ledger entry and writes no duplicate score
+  // @fails-if the retry double-writes a score event or drops the ledger anchor
+  it('is retry-safe on partial failure: anchor-last → no lost ledger, no duplicate score', async () => {
     const seed = await seedAnsweredProbe();
 
     // Simulate a crash AFTER the upsert but BEFORE the score anchor: inject a writeEventFn
@@ -166,7 +168,9 @@ describe('reconcileConjecturePredictions (DB)', () => {
     ); // evidence NOT duplicated by the retried upsert
   });
 
-  it('deterministic anchor id → concurrent reconcile runs write exactly one score event (review fix)', async () => {
+  // @invariant concurrency: concurrent reconcile runs converge on exactly one score event via the deterministic anchor id
+  // @fails-if two reconcile runs insert two score events for the same prediction
+  it('deterministic anchor id → concurrent reconcile runs write exactly one score event', async () => {
     const seed = await seedAnsweredProbe();
 
     // Two overlapping runs both pass the list-stage NOT EXISTS (neither has written the

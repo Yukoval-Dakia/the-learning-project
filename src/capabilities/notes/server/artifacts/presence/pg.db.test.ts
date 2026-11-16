@@ -83,7 +83,9 @@ describe('PgPresenceStore — session presence (artifact_edit_session)', () => {
     store = new PgPresenceStore(testDb());
   });
 
-  it('YUK-384 RED 15: blur deletes only its session and cannot clear a newer session', async () => {
+  // @invariant concurrency: blur deletes only its own session and cannot clear a newer session
+  // @fails-if blur clears a session created after its own
+  it('blur deletes only its session and cannot clear a newer session', async () => {
     await seedArtifact('hub-a');
     await store.recordEditingHeartbeat({ artifactId: 'hub-a', sessionId: 'A' });
     await store.recordEditingHeartbeat({ artifactId: 'hub-a', sessionId: 'B' });
@@ -125,7 +127,9 @@ describe('PgPresenceStore — note-refine defer queue (editing_presence.pending)
     expect((await store.getEditingSessionSnapshot('art_1'))?.pending_patches).toBe(1);
   });
 
-  it('YUK-384: a blur that lands between the idle-decision and the enqueue cannot orphan the patch', async () => {
+  // @invariant concurrency: a blur landing between the idle-decision and the enqueue cannot orphan the deferred patch
+  // @fails-if the patch is left pending with no owner to drain it
+  it('a blur that lands between the idle-decision and the enqueue cannot orphan the patch', async () => {
     // The decision (isArtifactIdle) and the enqueue must be serialized under the SAME
     // shared advisory lock markArtifactIdleAndFlush takes; otherwise a concurrent blur
     // can drain+idle the artifact after the "not idle" read but before the append,
@@ -167,7 +171,9 @@ describe('PgPresenceStore — note-refine defer queue (editing_presence.pending)
     expect((await store.getEditingSessionSnapshot('art_race'))?.pending_patches ?? 0).toBe(0);
   });
 
-  it('YUK-384: a heartbeat that lands between the blur decision and the drain cannot flush over an active editor', async () => {
+  // @invariant concurrency: a heartbeat landing between the blur decision and the drain cannot flush over an active editor
+  // @fails-if the drain clears pending state while the editor is still active
+  it('a heartbeat that lands between the blur decision and the drain cannot flush over an active editor', async () => {
     await seedArtifact('art_flush');
     await store.recordEditingHeartbeat({ artifactId: 'art_flush', sessionId: 'A', now: T0 });
     // Queue a patch while A is active → deferred into the pending bag.
@@ -247,7 +253,7 @@ describe('PgPresenceStore — 跨进程语义 (两实例共享同一 PG)', () =>
   });
 });
 
-describe('PgPresenceStore — 陈旧 pending 丢弃 (裁决 i)', () => {
+describe('PgPresenceStore — 陈旧 pending 丢弃', () => {
   let store: PgPresenceStore;
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
@@ -260,7 +266,9 @@ describe('PgPresenceStore — 陈旧 pending 丢弃 (裁决 i)', () => {
     vi.restoreAllMocks();
   });
 
-  it('YUK-768: keeps a stale hub_auto_sync deferred patch during flush while dropping a same-aged non-hub one', async () => {
+  // @invariant data: flush drops a stale non-hub deferred patch while keeping a same-aged hub_auto_sync one
+  // @fails-if the hub_auto_sync patch is dropped with the non-hub one, or the stale non-hub patch survives
+  it('keeps a stale hub_auto_sync deferred patch during flush while dropping a same-aged non-hub one', async () => {
     await seedArtifact('art_hub');
     const flushAt = at(11 * 60_000); // T0 + 11min — both entries below are >10min old
     // Two same-aged (queuedAtMs = T0) stale entries: the mutation-triggered hub

@@ -203,7 +203,9 @@ afterAll(async () => {
     );
 });
 
-describe('YUK-1355 prune full cutover/drain/rollback with real worker processes', () => {
+describe('prune full cutover/drain/rollback with real worker processes', () => {
+  // @invariant data: cutover keeps old retry ownership, blocks failed/unknown obligations, and switches cron exactly once
+  // @fails-if retry ownership is lost, a failed/unknown obligation runs, or cron switches twice
   it('keeps old retry ownership, blocks failed/unknown obligations, and switches cron once', async () => {
     const worker = startWorker();
     await worker.wait('ready');
@@ -290,6 +292,8 @@ describe('YUK-1355 prune full cutover/drain/rollback with real worker processes'
       cronTickExecutionObserved: false,
     });
   });
+  // @invariant data: a SIGKILL mid-cutover recovers exactly once and early rollback stays blocked
+  // @fails-if recovery runs twice or an early rollback lands
   it.each(['business-committed', 'checkpoint-saved'])(
     'SIGKILL at %s recovers once and blocks early rollback',
     async (pauseAt) => {

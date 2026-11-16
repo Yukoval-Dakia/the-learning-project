@@ -252,7 +252,7 @@ async function seedProgress() {
   return { registry, leases, handler, notes };
 }
 
-describe('YUK-766 subscription progress backup', () => {
+describe('subscription progress backup', () => {
   beforeEach(resetDb);
   afterEach(async () => {
     vi.unstubAllEnvs();
@@ -442,6 +442,8 @@ describe('YUK-766 subscription progress backup', () => {
     }
   });
 
+  // @invariant data: restore keeps a paused subscription checkpoint paused with an unchanged declaration hash
+  // @fails-if restore resumes the checkpoint or rewrites its declaration
   it('keeps a paused checkpoint paused and its declaration hash unchanged', async () => {
     const db = testDb();
     const { registry } = await seedProgress();
@@ -462,6 +464,8 @@ describe('YUK-766 subscription progress backup', () => {
     await expect(claimSubscriptionLease(db, registry, sub, 'new-owner')).rejects.toThrow('paused');
   });
 
+  // @invariant security: restore rejects a missing required member before wiping the database
+  // @fails-if the wipe proceeds before the required members are validated
   it.each(TABLES)('rejects a missing %s before wiping the database', async (table) => {
     const bytes = rewrite(await archive(), (data) => {
       delete data[table];

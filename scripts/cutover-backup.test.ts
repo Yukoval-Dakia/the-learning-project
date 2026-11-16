@@ -70,7 +70,7 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(TMP, { recursive: true, force: true }));
 
-describe('P1-1 restore evidence 绑定当前 dump', () => {
+describe('restore evidence 绑定当前 dump', () => {
   const CAP = join(TMP, 'p1cap');
   const DUMP = join(TMP, 'p1.dump');
   const DLQ = join(TMP, 'p1-dlq.json');
@@ -98,6 +98,8 @@ describe('P1-1 restore evidence 绑定当前 dump', () => {
       ]),
     );
 
+  // @invariant security: restore accepts the evidence only when its nested dump.sha256 equals the selected dump
+  // @fails-if restore reads nested toc_entries from an evidence file whose dump.sha256 differs
   it('matched: nested dump.sha256 等于所选 dump ⇒ 接受并读 nested toc_entries', () => {
     const evi = writeEvidence('evi-match.json', {
       verified: true,
@@ -116,6 +118,8 @@ describe('P1-1 restore evidence 绑定当前 dump', () => {
     expect(warnings.some((w) => w.startsWith('restore_evidence_unverified'))).toBe(true);
   });
 
+  // @invariant security: a sha256 mismatch between evidence and selected dump is a hard error naming both hashes
+  // @fails-if the mismatch is silently accepted or the error omits the two hashes
   it('mismatched: nested dump.sha256 ≠ 所选 dump ⇒ 硬错误并点名两个 hash', () => {
     const other = 'a'.repeat(64);
     const evi = writeEvidence('evi-mismatch.json', {
@@ -135,6 +139,8 @@ describe('P1-1 restore evidence 绑定当前 dump', () => {
     expect(err?.message).toContain(dumpSha);
   });
 
+  // @invariant security: a missing nested dump.sha256 is a hard error — top-level verified cannot stand in
+  // @fails-if restore trusts the top-level verified flag when the nested sha is absent
   it('missing nested dump.sha256 ⇒ 硬错误（无法绑定，不得凭顶层 verified 冒充）', () => {
     const evi = writeEvidence('evi-nosha.json', {
       verified: true,

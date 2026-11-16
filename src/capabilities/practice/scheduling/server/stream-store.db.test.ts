@@ -254,11 +254,13 @@ async function rowsForDate(date: string) {
     .orderBy(asc(practice_stream_item.position));
 }
 
-describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
+describe('夜间预产 composeNightly', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant data: composeNightly is idempotent — a second run is a no-op with added=0 and unchanged rows
+  // @fails-if a second run double-composes rows
   it('幂等：composeNightly 跑两次不 double-compose（第二次 no-op，added=0、行数不变）', async () => {
     await seedDueQuestion();
 
@@ -279,6 +281,8 @@ describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
     expect(rowsAfterSecond.length).toBe(rowsAfterFirst.length);
   });
 
+  // @invariant concurrency: lazy-compose after nightly pre-compose hits the double-check and no-ops — no double-compose
+  // @fails-if the lazy path recomposes what nightly already composed
   it('幂等：夜间预产后用户首读 lazy-compose 命中双重检查 no-op（不 double-compose）', async () => {
     const dueId = await seedDueQuestion();
 
@@ -305,11 +309,13 @@ describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
   });
 });
 
-describe('Task 9 作答后有界增量重排 reRankAfterAnswer（YUK-361 Phase 4）', () => {
+describe('作答后有界增量重排 reRankAfterAnswer', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant data: the observation count equals truly inserted rows — conflict-dropped rows are not phantom π_i
+  // @fails-if deduped rows are counted as observations and inflate π_i
   it('EDGE 3：observation 数 == 真插入行数（onConflictDoNothing 吞掉的不记幻影 π_i）', async () => {
     const sharedKc = createId();
     await seedDueQuestion();

@@ -90,7 +90,7 @@ function mappedBoss(
   };
 }
 
-describe('copilot_run_reconcile (YUK-596)', () => {
+describe('copilot_run_reconcile', () => {
   beforeEach(async () => {
     await resetDb();
     // job_events is intentionally outside resetDb's domain-table whitelist.
@@ -104,6 +104,8 @@ describe('copilot_run_reconcile (YUK-596)', () => {
     await testDb().delete(job_events);
   });
 
+  // @invariant data: reconcile repairs dead native children of a terminal parent without replaying the model or mutating a live sibling
+  // @fails-if the repair replays model work or mutates a live sibling
   it.each(['done', 'cancelled', 'marker'] as const)(
     'repairs native children after parent %s without replaying the model or touching a live sibling',
     async (terminalKind) => {

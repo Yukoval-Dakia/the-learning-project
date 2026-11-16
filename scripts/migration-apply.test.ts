@@ -10,9 +10,8 @@ import type { MigrationCapture, MigrationManifest } from '@/core/migration/types
 
 import { loadMigrationArtifacts } from './migration-apply';
 
-// YUK-1050（review 修订版）— CLI 单元测试（无 DB）：参数面、--target 校验
-//（P1-8：空/残缺 URL 拒绝）、工件身份复算（P1-2：capture↔manifest 拼装/篡改/
-// 脱敏/悬空引用全拒）。
+// YUK-1050 — CLI 单元测试（无 DB）：参数面、--target 校验
+//（空/残缺 URL 拒绝）、工件身份复算（capture↔manifest 拼装/篡改/脱敏/悬空引用全拒）。
 
 const TMP_ROOT = mkdtempSync(join(tmpdir(), 'yuk1050-cli-'));
 const dirs: string[] = [];
@@ -90,7 +89,9 @@ function artifactDir(
   return dir;
 }
 
-describe('loadMigrationArtifacts（P1-2 身份复算）', () => {
+describe('loadMigrationArtifacts（身份复算）', () => {
+  // @invariant data: checkpoint identity is recomputed from the capture, so a swapped capture/manifest pair is rejected
+  // @fails-if identity is trusted from the manifest alone without recomputing it from the capture
   it('capture 与 manifest 拼装（换 capture）→ checkpoint 身份复算即拒', () => {
     // manifest 来自 2 事件观测，capture 被替换成【另一次】观测（空 capture）。
     const dir = artifactDir('swapped-capture', true, (_manifest, capture) => {

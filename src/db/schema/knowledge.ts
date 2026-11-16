@@ -385,7 +385,7 @@ export const subject_trait_journal = pgTable(
   {
     trait_id: text('trait_id').notNull(),
     revision: integer('revision').notNull(),
-    // v3.1（owner P1-3）：每行 = 该 revision 的完整状态快照——payload + schema
+    // v3.1：每行 = 该 revision 的完整状态快照——payload + schema
     // 代际 + 时点 seed_version + 血统指针，缺任一都无法从 journal 重建历史状态
     // （journal 兼任冷启动降级链的快照仓，v3 §2.2）。
     payload: jsonb('payload').notNull(),

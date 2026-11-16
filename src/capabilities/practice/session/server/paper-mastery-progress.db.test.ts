@@ -90,11 +90,13 @@ async function seedPaper(id: string, questionIds: string[], focusKid: string): P
     });
 }
 
-describe('YUK-459 — paper submit fires mastery-change signals on success', () => {
+describe('paper submit fires mastery-change signals on success', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant grading: a late result is scored at its original learning position and replayed neighbors emit no signal
+  // @fails-if the late result is scored at the current position or neighbors re-emit mastery signals
   it('observes a late result at its original learning position and does not emit for replayed neighbors', async () => {
     const db = testDb();
     await seedKnowledge('k_ordered', 'yuwen');

@@ -57,7 +57,7 @@ async function seedKnowledge(ids: string[]): Promise<void> {
 // reversal) and knowledge_node (soft-delete the created node + keep fold==row).
 // =============================================================================
 
-describe('retractAiProposal — completion / relearn row reversal (YUK-471)', () => {
+describe('retractAiProposal — completion / relearn row reversal', () => {
   afterEach(async () => {
     for (const item of await testDb().select().from(learning_item)) {
       if (await hasLearningItemGenesisAnchor(testDb(), item.id)) {
@@ -71,6 +71,8 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
     await resetDb();
   });
 
+  // @invariant data: retracting an accepted completion re-opens the item and deletes the ai_propose evidence
+  // @fails-if the item stays completed or the evidence survives the retract
   it('retracting an ACCEPTED completion re-opens the item + deletes the ai_propose evidence', async () => {
     const db = testDb();
     const now = new Date();
@@ -148,11 +150,13 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
   });
 });
 
-describe('retractAiProposal — knowledge_node soft-delete + fold==row (YUK-471)', () => {
+describe('retractAiProposal — knowledge_node soft-delete + fold==row', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant data: a reversal failure rolls back the whole retract — no orphan correct event survives
+  // @fails-if the retract commits partially and leaves an orphan correct event
   it('ATOMICITY: a reversal throw rolls back the WHOLE retract (no orphan correct event)', async () => {
     const db = testDb();
     await seedKnowledge(['parent_atomic']);

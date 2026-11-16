@@ -154,7 +154,7 @@ async function freezeOne() {
   return { item, candidate };
 }
 
-describe('prepared staged core integration', () => {
+describe('staged core integration', () => {
   // @invariant data: failed apply recovers from its saved receipt on a later tick without a second provider request
   // @fails-if use the new tick config/clock or plan the entity again after recovery; stored provenance or call count changes
   it('rolls back the domain write and recovers the original receipt on a later model/tick without resend', async () => {

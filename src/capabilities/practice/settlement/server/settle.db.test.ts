@@ -298,9 +298,11 @@ async function settlementEvents(groupId?: string) {
     : rows;
 }
 
-describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
+describe('learningSettlement（D13–D16 + replay）', () => {
   beforeEach(resetDb);
 
+  // @invariant grading: first-activation all-correct on one KC lands exactly one FSRS good card plus one θ̂ success with snapshot brackets
+  // @fails-if the bounded adapter fires twice, θ̂ is skipped, or the snapshot brackets are missing
   it('首次激活全对单 KC：FSRS good 卡 + θ̂ success 一次（bounded adapter 恰一次）+ snapshot brackets', async () => {
     const db = testDb();
     await seedKnowledge('kc_a', { domain: 'dom_x' });
@@ -346,6 +348,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(bracketEvents).toHaveLength(2);
   });
 
+  // @invariant grading: a partial verdict lands the FSRS hard rating while θ̂ abstains per-KC
+  // @fails-if partial writes θ̂ or the FSRS rating is skipped
   it('partial verdict：FSRS hard 评级落位，per-KC partial ⇒ θ̂ abstain（partial→1 已 REJECTED）', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s2', { kcs: ['kc_a'] });
@@ -372,6 +376,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(theta?.abstainReason).toBe('no_kc_evidence');
   });
 
+  // @invariant grading: a blank_marked_zero answer scores zero while casting no mastery vote on any KC
+  // @fails-if the blank counts as a per-KC mastery failure or scores nonzero
   it('blank_marked_zero：分数计零（incorrect→again 卡），但 KC 无 mastery 票（空白≠全 KC failure）', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s3', { kcs: ['kc_a'] });
@@ -393,6 +399,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(obs?.bit).toBe('abstain');
   });
 
+  // @invariant grading: assisted keeps the explicit user rating while θ̂, family, and calibration writes are fully excluded
+  // @fails-if assisted writes θ̂ or drops the user rating
   it('D16 assisted：显式用户评级保留（FSRS 落位），θ̂/family/calibration 全排除', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s4', { kcs: ['kc_a'] });
@@ -423,6 +431,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     });
   });
 
+  // @invariant grading: a user hard rating stays independent of correct auto evidence — replay does not duplicate, a changed rating conflicts, regrade keeps user scheduling
+  // @fails-if auto evidence overrides the user rating, replay duplicates, or regrade loses the user schedule
   it('D14 用户 hard 与正确自动证据独立；重放不重复，改评级冲突，regrade 保留用户排程', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('user_override', { kcs: ['kc_a'] });
@@ -463,6 +473,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     });
   });
 
+  // @invariant grading: an assisted auto-result without an explicit user choice writes neither FSRS nor theta
+  // @fails-if an implicit assisted result writes FSRS or theta
   it('D16 assisted 自动结果无显式用户选择时不写 FSRS，也不写 theta', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('assisted_no_rating', { kcs: ['kc_a'] });
@@ -483,6 +495,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     });
   });
 
+  // @invariant grading: an unresolved self-report writes FSRS only from the explicit rating and never fabricates correctness
+  // @fails-if correctness is fabricated or FSRS is skipped
   it('D9/D15 unresolved 自评只按显式评级写 FSRS，不伪造正确性', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('self_unresolved', { kcs: ['kc_a'] });
@@ -506,6 +520,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     });
   });
 
+  // @invariant concurrency: concurrent first-activation user ratings settle once — the other conflicts explicitly
+  // @fails-if both ratings settle or the loser silently wins
   it('并发首次激活的不同用户评级只结算一次，另一个明确冲突', async () => {
     await seedKnowledge('kc_a');
     const seed = await seedChain('rating_race', { kcs: ['kc_a'] });
@@ -528,6 +544,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     });
   });
 
+  // @invariant data: reactivating a historical candidate preserves the first rating and adds no duplicate review
+  // @fails-if reactivation rewrites the first rating or appends a review
   it.each(['again', 'hard', undefined] as const)(
     '历史候选重激活保留首次评级，重复不新增复习：%s',
     async (rating) => {
@@ -572,6 +590,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     },
   );
 
+  // @invariant grading: an independent new exercise accrues FSRS and theta unaffected by the prior user-rating guard
+  // @fails-if the guard suppresses or duplicates writes for the new exercise
   it('独立新练习不受上次用户评级守卫影响，FSRS 与 theta 均累计', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const first = await seedChain('first_rating', { kcs: ['kc_a'] });
@@ -593,6 +613,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     });
   });
 
+  // @invariant grading: re-rating an old user rating after later independent practice replays the schedule at the original rating
+  // @fails-if the re-rate uses the current schedule or duplicates it
   it('后续独立练习之后再重评旧用户评级，按原评级重放后续排程', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const first = await seedChain('past_rating', { kcs: ['kc_a'] });
@@ -617,6 +639,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       .toMatchObject({ evidence_count: 2, success_count: 1, fail_count: 1 });
   });
 
+  // @invariant grading: manual/self_report writes FSRS only — no self-report θ̂
+  // @fails-if a manual or self-report verdict writes θ̂
   it('D15 manual/self_report：只写 FSRS，θ̂ 不写（无 self-report θ̂）', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s5', { kcs: ['kc_a'] });
@@ -635,6 +659,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(payload.rating_source).toBe('user');
   });
 
+  // @invariant data: an unsupported verdict is ineligible — no learning state is written and the receipt records honestly
+  // @fails-if learning state is written or the receipt misreports the verdict
   it('unsupported verdict ⇒ ineligible：不写任何学习态，receipt 如实记', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s6', { kcs: ['kc_a'] });
@@ -648,6 +674,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(await masteryRow('kc_a')).toBeUndefined();
   });
 
+  // @invariant grading: regrade reverts the original settlement and lands the new verdict — the θ̂ bit flips and the count stays
+  // @fails-if regrade double-counts practice or leaves the original settlement applied
   it('regrade 不算额外练习：revert 原结算 + 新 verdict 落位；θ̂ 位翻转、计数不加', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s7', { kcs: ['kc_a'] });
@@ -700,6 +728,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(newPayload.reverted_settlement_event_ids).toContain(oldEv?.id);
   });
 
+  // @invariant data: late-arriving early evidence preserves the sealed scope and the original occurrence
+  // @fails-if late evidence mutates the sealed scope or the occurrence
   it.each([1, 2])(
     '有序 replay：早期证据晚到，保留封存 scope v%i 和原 occurrence',
     async (scopeVersion) => {
@@ -800,6 +830,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(rows[0] && (rows[0].payload as { effect?: string }).effect).toBe('replay_required');
   });
 
+  // @invariant grading: a manual rating is not overwritten by a judge correction at this layer — FSRS keeps the user rating
+  // @fails-if the judge correction overwrites the manual rating
   it('用户评级守卫：manual 评级不被 judge 纠正在本层覆盖（FSRS 保持用户评级）', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s9', { kcs: ['kc_a'] });
@@ -835,6 +867,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(m?.evidence_count).toBe(1);
   });
 
+  // @invariant concurrency: the per-KC fsrs:knowledge lock and the ability_global domain lock are observable within one settlement transaction
+  // @fails-if settlement takes the locks in separate transactions or skips one
   it('advisory lock：per-KC fsrs:knowledge 锁与 ability_global 域锁在同事务内可观测', async () => {
     const db = testDb();
     await seedKnowledge('kc_a', { domain: 'dom_x' });
@@ -1155,6 +1189,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
   //   2) 结算事件 ingest_at 预填（writer 传入 activatedAt）⇒ memory outbox 的
   //      `ingest_at IS NULL` 拾取口天然跳过它；
   //   3) actor_kind='system' ⇒ shouldExtractToMemory 的 user 门也过不了。
+  // @invariant data: replay settlement writes only the settlement event — no judge/attempt refire — and prefilled ingest_at skips the memory outbox
+  // @fails-if replay refires judge or attempt work or emits a memory outbox write
   it('replay 结算只写 settlement 事件（无 judge/attempt refire）+ ingest_at 预填跳过 memory outbox', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const t1 = new Date('2026-09-20T00:00:00Z');
@@ -1193,7 +1229,9 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     }
   });
 
-  it('YUK-1093 P1-1：θ̂ bracket 含 ability_global 行 —— regrade 后 domain 证据/θ̂ 不双计', async () => {
+  // @invariant grading: the θ̂ bracket includes the ability_global row so regrade does not double-count domain evidence or θ̂
+  // @fails-if the bracket drops the ability_global row and regrade double-counts
+  it('θ̂ bracket 含 ability_global 行 —— regrade 后 domain 证据/θ̂ 不双计', async () => {
     const db = testDb();
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('y1093', { kcs: ['kc_a'] });
@@ -1256,7 +1294,9 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(g?.theta_hat).toBeCloseTo(gOracle?.theta_hat ?? Number.NaN, 12);
   });
 
-  it('YUK-1093 P1-2：manual→auto→auto —— 第二次 judge 纠正仍保持用户评级（沿链回溯 provenance）', async () => {
+  // @invariant grading: after a manual rating followed by autos, a second judge correction still preserves the user rating via provenance backtracking
+  // @fails-if the second auto correction overwrites the user rating
+  it('manual→auto→auto —— 第二次 judge 纠正仍保持用户评级（沿链回溯 provenance）', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('y1093c', { kcs: ['kc_a'] });
     const unitId = `${seed.qid}::u`;
@@ -1318,7 +1358,9 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(fsrs4?.last_review_event_id).toBe(s4?.id);
   });
 
-  it('YUK-1093 P1-3：全量 regrade（→unsupported）以被替换主体播种闭包 —— 不误报 failed_pending', async () => {
+  // @invariant data: a full regrade to unsupported seeds the closure with the replaced subject and does not misreport failed_pending
+  // @fails-if the closure seeds the wrong subject or reports failed_pending
+  it('全量 regrade（→unsupported）以被替换主体播种闭包 —— 不误报 failed_pending', async () => {
     const t1 = new Date('2026-09-20T00:00:00Z');
     const t2 = new Date('2026-09-21T00:00:00Z');
     await seedKnowledge('kc_a', { domain: 'dom_x' });

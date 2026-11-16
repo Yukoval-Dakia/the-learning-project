@@ -87,7 +87,7 @@ export type ArchiveRegionMapResult =
   | { status: 'invalid_map'; issues: RegionMapIssue[] };
 
 /** 区域图存档冲突（write-once 被打破/并发异图）：抛出 ⇒ 事务回滚 —— 绝不
- * 从事务内 return（return 会提交已插入的孤儿页行，R1 P1-1）。路由映 409。 */
+ * 从事务内 return（return 会提交已插入的孤儿页行）。路由映 409。 */
 export class RegionMapArchiveConflictError extends Error {
   constructor(detail: string) {
     super(detail);
@@ -140,7 +140,7 @@ function randomShortCode(): string {
 
 async function mintShortCode(tx: Tx): Promise<string> {
   // 32^4 ≈ 1e6 空间：查后插预检缩小窗口；真正的并发碰撞由外层
-  // isMintedIdentityUniqueViolation 有界重试兜住（R1 P2-4），不再变成 500。
+  // isMintedIdentityUniqueViolation 有界重试兜住，不再变成 500。
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = randomShortCode();
     const [hit] = await tx
@@ -225,7 +225,7 @@ async function loadFrozenScopes(
   const scopes: FrozenIssuanceScope[] = [];
   for (const issuanceId of ids) {
     const issuance = issuanceRows.find((row) => row.issuance_id === issuanceId);
-    // R1 P2-7：请求的 issuance 行/pinned revision 缺失 = 跨库破坏 —— fail-loud
+    // 请求的 issuance 行/pinned revision 缺失 = 跨库破坏 —— fail-loud
     // （同 buildIssuedItem），绝不静默跳过让区域图校验对着不完整冻结集裁决。
     if (issuance == null) {
       throw new Error(
@@ -360,7 +360,7 @@ async function buildExportState(
 
 // ---------- 1) 创建导出（= 逐题发放） ----------
 
-/** R1 P2-4：mint 出的 token/短码撞唯一索引（23505，查后插窗口内的并发碰撞）⇒
+/** mint 出的 token/短码撞唯一索引（23505，查后插窗口内的并发碰撞）⇒
  * 整事务重试新身件（有界 3 次）；其他错误原样上抛。idempotency_key 冲突走
  * onConflictDoNothing，不会出现在这里。 */
 function isMintedIdentityUniqueViolation(error: unknown): boolean {
@@ -544,7 +544,7 @@ export async function archiveWorksheetRegionMap(
   const now = new Date();
 
   return db.transaction(async (tx) => {
-    // R1 P1-1：导出行 FOR UPDATE 串行化同导出的并发存档 —— 后到者在锁上等待，
+    // 导出行 FOR UPDATE 串行化同导出的并发存档 —— 后到者在锁上等待，
     // 醒来后看到 archived_at 已置位，走整份幂等比对（existing）或冲突（回滚），
     // 不可能各自插入页行留下孤儿。
     const [row] = await tx
@@ -556,7 +556,7 @@ export async function archiveWorksheetRegionMap(
     if (row == null) return { status: 'not_found' } as const;
 
     const of = body.pages[0]?.of ?? 0;
-    // R1 P2-2：比对与页序无关 —— 两侧都按 page 排序后再比。
+    // 比对与页序无关 —— 两侧都按 page 排序后再比。
     const pageDigests = [...body.pages]
       .sort((a, b) => a.page - b.page)
       .map((page) => ({

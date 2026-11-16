@@ -90,9 +90,11 @@ async function publish(
   return result;
 }
 
-describe('YUK-1047 frozen public material recovery', () => {
+describe('frozen public material recovery', () => {
   beforeEach(resetDb);
 
+  // @invariant data: frozen public material bytes restore exactly after republish, including legacy unmarked rows
+  // @fails-if republished bytes differ from the frozen bytes or legacy unmarked rows are skipped
   it.each([false, true])(
     'restores exact material bytes after republish; legacy unmarked=%s',
     async (legacy) => {

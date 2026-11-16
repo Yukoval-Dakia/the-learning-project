@@ -200,7 +200,7 @@ const QuizGenRubric = Rubric.extend({
 
 // Producer 数学定界契约的 schema 侧接线。覆盖面只限「显示字段」：prompt_md /
 // choices_md 与 structured 各节点 prompt_text / options[].text。刻意不查答案值
-// 承载字段（R1 P1）：reference_md 与小题 answers / analysis 会经
+// 承载字段：reference_md 与小题 answers / analysis 会经
 // extractAnswerHead / structuredToReferenceMarkdown 进入 exact text_key
 // （assessment-normalization → definition-from-contract blank_key → grade），
 // 该链不去数学定界；在这里强制包装/拒收会把显示定界带进评分键，造成

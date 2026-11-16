@@ -1,4 +1,4 @@
-// YUK-548 (independent review K11) — the shared `--kind=<X>` CLI arg parser for the golden scripts
+// YUK-548 — the shared `--kind=<X>` CLI arg parser for the golden scripts
 // (capture-golden.ts / golden-reaudit.ts). Lives scripts-side (NOT next to entity-registry): argv
 // parsing + process.exit are CLI concerns, not server-library surface.
 

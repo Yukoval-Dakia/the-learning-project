@@ -111,7 +111,7 @@ async function liveBlockRow(id: string) {
   )[0];
 }
 
-// YUK-471 W3-D flip hardening — ON-path CONCURRENCY invariants (owner pre-flip insurance, P4-class).
+// YUK-471 flip hardening — ON-path CONCURRENCY invariants (owner pre-flip insurance).
 // The runbook (2026-06-27-yuk471-w3d-flip-runbook.md §1 P4) classifies the ON-path lost-update window as
 // NOT a flip blocker because the wired edit writers now take `SELECT … FOR UPDATE` (C3 fix). These tests
 // pin that guarantee end-to-end with the per-entity flag ON, so a future refactor that drops the row lock
@@ -132,11 +132,13 @@ async function liveBlockRow(id: string) {
 // case yields TWO winners (both read v0, both pass the CAS → fulfilled count 2 ≠ 1); the question_block case
 // has both writers return version 1 (both read v0 → {1,1} ≠ {1,2}). Those are the assertions that bite.
 
-describe('W3-D — ON-path concurrency: artifact (FOR UPDATE + optimistic CAS)', () => {
+describe('ON-path concurrency: artifact (FOR UPDATE + optimistic CAS)', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant concurrency: two same-base concurrent edits resolve to exactly one winner — the loser 409s, version stays 1, and fold equals row
+  // @fails-if both edits commit, the winner persists a different body, or fold diverges
   it('ON: two same-base concurrent edits → exactly one wins (loser 409s), version==1, winner body persisted, fold==row', async () => {
     const db = testDb();
     await insertNoteArtifact('art_cc', 'Original Title');
@@ -188,11 +190,13 @@ describe('W3-D — ON-path concurrency: artifact (FOR UPDATE + optimistic CAS)',
   });
 });
 
-describe('W3-D — ON-path concurrency: question_block (FOR UPDATE serialize, no CAS)', () => {
+describe('ON-path concurrency: question_block (FOR UPDATE serialize, no CAS)', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant concurrency: two concurrent structured edits serialize on the row lock — both commit with distinct versions and fold equals row
+  // @fails-if one edit is lost, versions collide, or fold diverges
   it('ON: two concurrent structured edits serialize on the row lock → both commit with distinct versions {1,2}, fold==row', async () => {
     const db = testDb();
     await insertDraftBlock('qb_cc');

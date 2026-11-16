@@ -220,7 +220,7 @@ export function computeCalibrationWorkSetId(desc: CalibrationWorkSetDescriptor):
 }
 
 /** One frozen workset member: the FULL prepared input face captured at freeze
- * time (R1 P1b) — the exact runner inputs (question row, subject profile,
+ * time — the exact runner inputs (question row, subject profile,
  * answer text/images), produced by the core freeze seam
  * (`freezeCalibrationWorkSetFromCandidates`). Execution consumes ONLY this
  * face and never re-reads the mutable business rows. */
@@ -242,7 +242,7 @@ export interface CalibrationWorkSetItem {
   readonly judgeCreatedAt: string;
 }
 
-/** Digest over the FULL frozen re-judge input face (R1 P1b): question
+/** Digest over the FULL frozen re-judge input face: question
  * content, subject profile, answer face, route and prior outcome. Key-order
  * insensitive (canonical serialization); any edit to the question/profile or
  * any face-field change is a different input, hence a different effect. */

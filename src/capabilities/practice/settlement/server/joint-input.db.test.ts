@@ -173,9 +173,11 @@ async function noLearning() {
 const scored = (): Promise<ModelUnitOutcomeT> =>
   Promise.resolve({ kind: 'scored', points_awarded: 1, evidence_citations: [], run_refs: [] });
 
-describe('YUK-1091 frozen joint input', () => {
+describe('frozen joint input', () => {
   beforeEach(resetDb);
 
+  // @invariant grading: both joint members score through the fixed anchor — once per KC over the full denominator
+  // @fails-if a member skips the anchor, a KC settles twice, or the denominator is truncated
   it('scores both members through the fixed anchor, settles once per KC and reads the full denominator', async () => {
     const s = await seed();
     const before = await testDb().select().from(assessment_submission);
@@ -254,6 +256,8 @@ describe('YUK-1091 frozen joint input', () => {
     expect(await testDb().select().from(assessment_submission)).toEqual(before);
   });
 
+  // @invariant concurrency: freeze seals even a pending candidate — new answers reject and the original replay stays idempotent
+  // @fails-if a pending candidate escapes the seal or replay re-settles
   it('seals even a pending candidate, rejects new answers, and preserves the original idempotent replay', async () => {
     const s = await seed({ model: true, saveCount: 1 });
     const candidate = await evaluate(s);
@@ -270,6 +274,8 @@ describe('YUK-1091 frozen joint input', () => {
     await noLearning();
   });
 
+  // @invariant concurrency: an append queued while the model is scoring serializes and is rejected after input freeze
+  // @fails-if the queued append lands after the input is frozen
   it('serializes an append queued while the model is scoring and rejects it after input freeze', async () => {
     const s = await seed({ model: true, saveCount: 1 });
     let entered!: () => void;
@@ -300,6 +306,8 @@ describe('YUK-1091 frozen joint input', () => {
     expect(await testDb().select().from(assessment_submission)).toHaveLength(1);
   });
 
+  // @invariant concurrency: concurrent member evaluations allocate canonical attempts without collision
+  // @fails-if two members get the same attempt or one loses its allocation
   it('allocates canonical attempts when different members are evaluated concurrently', async () => {
     const s = await seed();
     const results = await Promise.all(
@@ -312,6 +320,8 @@ describe('YUK-1091 frozen joint input', () => {
     for (const result of results) expect(result.record.unit_results).toHaveLength(2);
   });
 
+  // @invariant data: a stored joint candidate holds its input proof unchanged
+  // @fails-if the stored proof mutates or is dropped
   it.each(['missing', 'wrong_digest', 'partial_scope'])(
     'holds a stored joint candidate with %s input proof and leaves it unchanged',
     async (scenario) => {
@@ -348,6 +358,8 @@ describe('YUK-1091 frozen joint input', () => {
     },
   );
 
+  // @invariant grading: explicit joint assertions are preserved while withheld — no theta is written
+  // @fails-if a withheld assertion produces a theta write or is dropped
   it.each(['manual', 'self_report'] as const)(
     'preserves explicit %s joint assertions while withheld, without theta',
     async (source) => {

@@ -28,12 +28,16 @@ function ulpDistance(a: number, b: number): number {
   return Number(d < 0n ? -d : d);
 }
 
-describe('poly-exp — shared fixed-polynomial exp/σ (YUK-495 Phase 0)', () => {
+describe('poly-exp — shared fixed-polynomial exp/σ', () => {
+  // @invariant grading: the polynomial anchors are exact — polyExp(0)=1 and polySigmoid(0)=0.5
+  // @fails-if either anchor deviates from its exact value
   it('exact anchors: polyExp(0)=1, polySigmoid(0)=0.5', () => {
     expect(Object.is(polyExp(0), 1)).toBe(true);
     expect(Object.is(polySigmoid(0), 0.5)).toBe(true);
   });
 
+  // @invariant grading: polyExp tracks Math.exp within tolerance over the σ operating range
+  // @fails-if polyExp diverges beyond tolerance inside |x| ≤ 40
   it('polyExp accuracy vs Math.exp over the σ operating range (|x| ≤ 40)', () => {
     let maxUlp = 0;
     let maxRel = 0;
@@ -58,6 +62,8 @@ describe('poly-exp — shared fixed-polynomial exp/σ (YUK-495 Phase 0)', () => 
     expect(maxRel).toBeLessThan(1e-14);
   });
 
+  // @invariant grading: polySigmoid tracks the live sigmoid within tolerance
+  // @fails-if polySigmoid diverges beyond tolerance
   it('polySigmoid accuracy vs Math 1/(1+exp(-x)) — the live sigmoid swap cost', () => {
     let maxAbs = 0;
     let maxUlp = 0;
@@ -80,6 +86,8 @@ describe('poly-exp — shared fixed-polynomial exp/σ (YUK-495 Phase 0)', () => 
     expect(maxAbs).toBeLessThan(1e-12);
   });
 
+  // @invariant grading: polySigmoid stays strictly in (0,1), monotone increasing, and symmetric σ(-x)=1−σ(x)
+  // @fails-if the curve leaves (0,1), turns non-monotone, or breaks symmetry
   it('shape: strictly in (0,1), monotone increasing, symmetric σ(-x)=1-σ(x) to tolerance', () => {
     let prev = -1;
     for (let x = -30; x <= 30; x += 0.25) {
@@ -93,6 +101,8 @@ describe('poly-exp — shared fixed-polynomial exp/σ (YUK-495 Phase 0)', () => 
     }
   });
 
+  // @invariant grading: the tails saturate cleanly at the range guards
+  // @fails-if the tails overshoot or produce garbage beyond the guards
   it('tails saturate cleanly (range guards)', () => {
     expect(polySigmoid(1000)).toBe(1); // 1/(1+0)
     expect(polySigmoid(-1000)).toBe(0); // 1/(1+inf)
@@ -101,6 +111,8 @@ describe('poly-exp — shared fixed-polynomial exp/σ (YUK-495 Phase 0)', () => 
     expect(Number.isNaN(polyExp(Number.NaN))).toBe(true);
   });
 
+  // @invariant grading: polyExp stays ≥ 0 and never produces NaN or −Inf for real x
+  // @fails-if any input yields a negative, NaN, or infinite value
   it('no sign-flip garbage anywhere: polyExp ≥ 0 and never NaN/−Inf for real x', () => {
     // Regression for the −745 guard bug (review finding): pow2i can only build NORMAL
     // exponents, so an over-loose lower guard let x ≈ −709 produce sign-flipped garbage.

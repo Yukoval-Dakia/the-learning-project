@@ -34,11 +34,13 @@ const baseInput = {
   planProvenance: { kind: 'ai_planned' as const, task_run_id: 'plan_run' },
 };
 
-describe('question generation grounding persistence (YUK-350)', () => {
-  // Finding 3 — the transition race. A concurrent failure marker must never
+describe('question generation grounding persistence', () => {
+  // The transition race. A concurrent failure marker must never
   // leave a failed plan with a committed binding, and it must never be able to
   // flip a plan the binding transaction already claimed.
-  describe('plan transition race (Finding 3)', () => {
+  describe('plan transition race', () => {
+    // @invariant concurrency: a plan that fails first never ends up with a committed binding
+    // @fails-if the binding transaction commits after the plan was already marked failed
     it('a failure marker that wins first forces the binding transaction to roll back entirely', async () => {
       await resetDb();
       const prepared = await prepareQuestionGeneration(db, {
@@ -66,6 +68,8 @@ describe('question generation grounding persistence (YUK-350)', () => {
       expect(await db.select().from(question_generation_binding)).toEqual([]);
     });
 
+    // @invariant concurrency: a plan claimed by the binding transaction cannot be flipped to failed
+    // @fails-if the failure marker overwrites a plan the binding transaction already locked
     it('a binding transaction that locks first wins; the concurrent failure marker no-ops', async () => {
       await resetDb();
       const prepared = await prepareQuestionGeneration(db, {

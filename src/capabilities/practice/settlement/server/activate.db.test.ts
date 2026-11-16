@@ -201,9 +201,11 @@ async function receiptEvents(db: Db, groupId: string) {
   return db.select().from(event).where(eq(event.subject_id, groupId));
 }
 
-describe('activateEvaluation（YUK-1045 §11 activation 编排骨架）', () => {
+describe('activateEvaluation（§11 activation 编排骨架）', () => {
   beforeEach(resetDb);
 
+  // @invariant concurrency: supersede succeeds only with the correct expected head+generation; a stale expectation returns stale_head
+  // @fails-if a stale-head supersede commits or a correct expectation is refused
   it('racing supersede：期望已前移的 head ⇒ stale_head；正确 expected（旧 id + 现 gen）⇒ 有意义替换成功', async () => {
     const db = testDb();
     const seed = await seedChain('act3');
@@ -251,6 +253,8 @@ describe('activateEvaluation（YUK-1045 §11 activation 编排骨架）', () => 
     expect(settle.mock.calls[1]?.[0].evaluation.evaluation_id).toBe('act3_ev2');
   });
 
+  // @invariant grading: an ineligible/failed_pending settlement still advances head while the receipt honestly records the disposition
+  // @fails-if the receipt fabricates a successful settlement or head fails to advance
   it('结算端口返回 ineligible / failed_pending：head 前移但 receipt 如实记处置（不吞）', async () => {
     const db = testDb();
     const seed = await seedChain('act9');

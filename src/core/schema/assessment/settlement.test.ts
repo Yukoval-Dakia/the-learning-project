@@ -397,7 +397,7 @@ describe('localizeKcObservations（D13 per-KC 局部证据）', () => {
 
   // @invariant grading: 只有证据槽的单元只记该槽所属 part 的知识点，组内其他知识点没有票
   // @fails-if 空 slot_refs 把证据槽单元摊到组级全部知识点上
-  it('YUK-1093 P1-4：evidence_slot_refs-only 单元按证据槽所属 part 的 KC 计，不落组级', () => {
+  it('evidence_slot_refs-only 单元按证据槽所属 part 的 KC 计，不落组级', () => {
     // 单元无 slot_refs（判据不直对作答槽），只有 evidence_slot_refs → part p1
     // （kc_a）。buggy：slot_refs 空 ⇒ 组级 ⇒ 票打到 kc_b 上。
     const unit: ScoringUnitT = {
@@ -434,7 +434,7 @@ describe('localizeKcObservations（D13 per-KC 局部证据）', () => {
 
   // @invariant grading: 双空引用的单元仍归组级，组根全权重，其余依赖低权重且不确定
   // @fails-if 组级单元被当成 part 局部，或组根被降成依赖权重
-  it('YUK-1093 P1-4 对偶：slot_refs + evidence_slot_refs 双空仍归组级', () => {
+  it('对偶：slot_refs + evidence_slot_refs 双空仍归组级', () => {
     const unit: ScoringUnitT = {
       ...additiveUnit('u_grp', 4),
       slot_refs: [],

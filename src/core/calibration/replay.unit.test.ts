@@ -126,7 +126,9 @@ describe('replayTheta — A4 grid track (gridEnabled)', () => {
 // it into the scored pool. These pin the flag-off byte-identical anchor, the conjunctive
 // value + sorted combo key, the single-KC no-double-scoring rule, and no-leakage.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('replayTheta — YUK-463 multi-KC forward scoring (multiKcScoring)', () => {
+describe('replayTheta — multi-KC forward scoring (multiKcScoring)', () => {
+  // @invariant grading: multi-KC forward scoring uses the pre-attempt θ per item — no look-ahead — while later steps reflect accumulated θ_KC
+  // @fails-if scoring reads post-attempt θ or the later step ignores accumulated θ_KC
   it('flag ON → itemPredictedP uses the PRE-attempt θ (no-leakage): later multi-KC step reflects accumulated θ_KC', () => {
     const b = 0;
     const r = replayTheta(

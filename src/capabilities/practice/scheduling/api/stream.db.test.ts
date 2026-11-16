@@ -146,7 +146,9 @@ describe('practice stream API', () => {
 
   afterEach(() => vi.unstubAllEnvs());
 
-  it('YUK-535: concurrent scoped opens share one session and concurrent last answers close it once', async () => {
+  // @invariant concurrency: concurrent scoped opens share one session and concurrent last answers close it exactly once
+  // @fails-if two opens create two sessions or two last answers double-close / emit twice
+  it('concurrent scoped opens share one session and concurrent last answers close it once', async () => {
     const kc = createId();
     await seedScopedQuestion({ knowledgeId: kc, knowledgeName: '并发专项' });
     await seedScopedQuestion({ knowledgeId: kc, knowledgeName: '并发专项' });

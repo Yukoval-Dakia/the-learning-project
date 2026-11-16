@@ -128,7 +128,7 @@ function main(): void {
     );
     process.exit(2);
   }
-  // Friendly failure (review O6): a corrupt/unreadable golden should print a clear pointer for this
+  // Friendly failure: a corrupt/unreadable golden should print a clear pointer for this
   // pre-PR checklist CLI, not a raw stack trace.
   let golden: GoldenSnapshot;
   try {
@@ -161,7 +161,7 @@ function main(): void {
 }
 
 // CLI-gate: only run as the CLI entry point so the DB test can import reauditGolden. Path-resolved
-// form (review O5 — matches ops-projection.ts): robust to a transpiled .js filename too.
+// form (matches ops-projection.ts): robust to a transpiled .js filename too.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }

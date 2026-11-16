@@ -31,11 +31,13 @@ async function seedIntent(questionId: string, verifier: 'quiz_verify' | 'source_
   await writeVerifyDispatchIntent(db, { questionId, verifier });
 }
 
-describe('verify dispatch outbox (YUK-700)', () => {
+describe('verify dispatch outbox', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant concurrency: concurrent recovery emits exactly one verifier job per question and kind
+  // @fails-if two recoveries enqueue duplicate verifier jobs for the same question and kind
   it('locks intents so concurrent recovery emits one verifier job per question + kind', async () => {
     await Promise.all([seedQuestion('q-c1', 'quiz_gen'), seedQuestion('q-c2', 'quiz_gen')]);
     await Promise.all([seedIntent('q-c1', 'quiz_verify'), seedIntent('q-c2', 'quiz_verify')]);

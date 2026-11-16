@@ -170,7 +170,7 @@ async function expectNoActivation() {
   expect(await testDb().select().from(mastery_state)).toEqual([]);
 }
 
-describe('YUK-1045 authoritative candidate admission snapshot', () => {
+describe('authoritative candidate admission snapshot', () => {
   beforeEach(resetDb);
 
   // @invariant grading: neither auto, manual, nor replay issuance can serve a withdrawn-admission group, and every rejected attempt leaves historical rows, events, and accepted work byte-identical
@@ -210,6 +210,8 @@ describe('YUK-1045 authoritative candidate admission snapshot', () => {
     expect(await getIssuanceState(testDb(), s.issued.issuance.issuance_id)).toEqual(acceptedBefore);
   });
 
+  // @invariant concurrency: an already-effective replay stays idempotent after admission withdrawal
+  // @fails-if withdrawing admission makes a replayed delivery re-execute or fail
   it('keeps already-effective replay idempotent after admission is withdrawn', async () => {
     const s = await seed();
     const candidate = await evaluate(s);
@@ -223,6 +225,8 @@ describe('YUK-1045 authoritative candidate admission snapshot', () => {
     expect(await testDb().select().from(material_fsrs_state)).toEqual(before);
   });
 
+  // @invariant concurrency: admission is captured before the executor runs — a concurrent verification cannot refresh it
+  // @fails-if a verification racing the executor refreshes the admission snapshot
   it('captures admission before the executor runs, so a concurrent verification cannot refresh it', async () => {
     const s = await seed({ model: true });
     const entered = Promise.withResolvers<void>();

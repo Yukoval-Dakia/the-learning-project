@@ -835,7 +835,7 @@ describe('applyMerge', () => {
 });
 
 // YUK-543 — merge attribution repair across the 9 surfaces.
-describe('applyMerge — YUK-543 attribution repair', () => {
+describe('applyMerge — attribution repair', () => {
   beforeEach(async () => {
     await resetDb();
   });
@@ -923,6 +923,8 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     });
   }
 
+  // @invariant data: merge rewrites question.knowledge_ids onto the surviving node with replace plus dedupe
+  // @fails-if the rewrite loses knowledge ids or leaves duplicates
   it('rewrites question.knowledge_ids (replace + dedupe)', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
@@ -936,6 +938,8 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(q2[0].knowledge_ids).toEqual(['k_into']);
   });
 
+  // @invariant data: merge rewrites learning_item.knowledge_ids and goal.scope_knowledge_ids onto the surviving node
+  // @fails-if either owner column keeps a stale from-id
   it('rewrites learning_item.knowledge_ids and goal.scope_knowledge_ids', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
@@ -953,6 +957,8 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(g[0].version).toBe(1);
   });
 
+  // @invariant data: a knowledge_edge endpoint is rewired by archiving the old edge, creating the rewritten one, and folding events
+  // @fails-if the old edge stays live or the folded projection diverges from the rewritten row
   it('rewires a knowledge_edge endpoint (archive old + create rewritten + fold events)', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
@@ -984,6 +990,8 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(genEvents.length).toBeGreaterThanOrEqual(2); // one archive + one create
   });
 
+  // @invariant data: a rewritten edge colliding with a live duplicate is archived-as-duplicate with new_edge_id null
+  // @fails-if two live duplicate edges remain or the outcome claims a new edge
   it('edge collision with a LIVE duplicate → archive-as-duplicate (new_edge_id null)', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
@@ -1006,7 +1014,9 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(eInto[0].archived_at).toBeNull(); // the surviving edge is untouched
   });
 
-  it('edge collision with an ARCHIVED tombstone → REACTIVATE it (review R2; no evaporated relationship)', async () => {
+  // @invariant data: a rewritten edge colliding with an archived tombstone reactivates it — the relationship does not evaporate
+  // @fails-if the tombstone stays archived and the relationship is lost
+  it('edge collision with an ARCHIVED tombstone → REACTIVATE it (no evaporated relationship)', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
     await insertKnowledge({ id: 'k_x', version: 0 });
@@ -1053,6 +1063,8 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(eFrom[0].archived_at).not.toBeNull();
   });
 
+  // @invariant data: a dangling non-into endpoint is archive-only with outcome archived_dangling
+  // @fails-if a dangling endpoint is rewired to a dead node or left live
   it('dangling non-into endpoint (archived KC) → archive-only (outcome archived_dangling)', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
@@ -1069,6 +1081,8 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(eDangle[0].archived_at).not.toBeNull();
   });
 
+  // @invariant data: an edge between the two merge endpoints collapses with outcome collapsed_self_loop
+  // @fails-if a self-loop edge survives the merge
   it('edge between the two merge endpoints collapses (outcome collapsed_self_loop)', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
@@ -1084,7 +1098,9 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(eSelf[0].archived_at).not.toBeNull();
   });
 
-  it('topology mesh is UNBOUNDED (review R1): a backbone edge beyond LIST_LIMIT=500 still triggers reject', async () => {
+  // @invariant data: topology validation scans the mesh unboundedly — a backbone edge beyond LIST_LIMIT still rejects
+  // @fails-if topology checking truncates at LIST_LIMIT and misses a violating edge
+  it('topology mesh is UNBOUNDED: a backbone edge beyond LIST_LIMIT=500 still triggers reject', async () => {
     const db = testDb();
     const old = new Date('2020-01-01T00:00:00.000Z');
     const now = new Date();
@@ -1130,6 +1146,8 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(eBad[0].archived_at).toBeNull();
   });
 
+  // @invariant data: a prerequisite-topology reject on a rewritten edge aborts the whole merge transaction
+  // @fails-if the merge commits partial owner writes after the reject
   it('prerequisite topology reject on the rewritten edge ABORTS the whole merge tx', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
@@ -1146,6 +1164,8 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(eBad[0].archived_at).toBeNull();
   });
 
+  // @invariant data: misconception_edge targets rewrite via the throat — old archived, rewritten created
+  // @fails-if the old edge stays live or the rewrite bypasses the throat
   it('rewrites misconception_edge targets via the throat (archive old + create rewritten)', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
@@ -1174,7 +1194,9 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(live[0].relation_type).toBe('confusable_with');
   });
 
-  it('misconception collision with an ARCHIVED tombstone → throat upsert REVIVES it (review R3)', async () => {
+  // @invariant data: a misconception collision with an archived tombstone revives it via throat upsert
+  // @fails-if the tombstone stays archived and the relationship is lost
+  it('misconception collision with an ARCHIVED tombstone → throat upsert REVIVES it', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
     await insertMisc('mc_live', 'k_from');
@@ -1204,6 +1226,8 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(mcLive[0].archived_at).not.toBeNull(); // the source edge is archived
   });
 
+  // @invariant data: earlier owner writes roll back when a later misconception owner rejects corrupted provenance
+  // @fails-if partial owner writes commit after the reject
   it('rolls back earlier owner writes when a later misconception owner rejects corrupted provenance', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'k_from', version: 0 });
@@ -1246,6 +1270,8 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(await db.select().from(event).where(eq(event.subject_id, 'rollback-goal'))).toEqual([]);
   });
 
+  // @invariant data: multi-from merges order deterministically — the first from renames mastery, the second freezes
+  // @fails-if merge order is nondeterministic or the second from overwrites the rename
   it('multi-from_id ordering: first from renames mastery, second freezes (deterministic)', async () => {
     await insertKnowledge({ id: 'k_from1', version: 0 });
     await insertKnowledge({ id: 'k_from2', version: 0 });
@@ -1268,6 +1294,8 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(rows.map((r) => r.subject_id).sort()).toEqual(['k_from2', 'k_into']);
   });
 
+  // @invariant data: applyMerge rewrites kc_typed_state confused_with pointers from the retired node to the surviving one
+  // @fails-if a pointer keeps the retired from-id
   it('kc_typed_state pointer rewrite via applyMerge', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
@@ -1282,6 +1310,8 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(kt[0].confused_with_kc_id).toBe('k_into');
   });
 
+  // @invariant data: the event-sourced learning_item fold equals the merge-rewritten row after accept — parity holds
+  // @fails-if the folded projection diverges from the stored row
   it('accept path: event-sourced learning_item folds == the merge-rewritten row (parity holds)', async () => {
     const now0 = new Date('2026-07-02T00:00:00.000Z');
     await insertKnowledge({ id: 'k_from', version: 0 });
@@ -1347,7 +1377,7 @@ describe('acceptProposal — high-tier mutations', () => {
     await resetDb();
   });
 
-  // Codex P1-F — concurrent double-accept must not produce duplicate
+  // Concurrent double-accept must not produce duplicate
   // knowledge nodes / duplicate rate=accept events. The shared decision lock
   // serializes both accepts; the second one replays the recorded rate.
   // @invariant concurrency: a double-accept applies exactly once — one node, one accept rate

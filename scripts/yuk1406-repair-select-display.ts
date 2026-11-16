@@ -436,7 +436,7 @@ async function assertOutdirWritable(outDir: string): Promise<void> {
 // THIS window's settlement already failed — the next apply must stop (old
 // unknown rows elsewhere are untouched history and never block).
 //
-// Two correctness properties (PR1832 R1):
+// Two correctness properties:
 //  - All business probes run as ONE statement, hence one snapshot: a delivery
 //    settling to 'succeeded' while its handler commits a job cannot slip
 //    between sequential reads. The to_regclass probe is schema existence only

@@ -86,9 +86,11 @@ async function readLifecycle(groupId: string) {
   return row ?? null;
 }
 
-describe('restoreQuestion（YUK-1045 archive 对偶）', () => {
+describe('restoreQuestion（archive 对偶）', () => {
   beforeEach(resetDb);
 
+  // @invariant data: archive releases the claim and withdraws; restore reacquires atomically
+  // @fails-if restore reacquires non-atomically or leaves the claim withdrawn
   it('flat question: archive releases claim + withdraws; restore reacquires atomically', async () => {
     const db = testDb();
     const qid = 'rst_q1';
@@ -137,6 +139,8 @@ describe('restoreQuestion（YUK-1045 archive 对偶）', () => {
     expect((events[0].payload as Record<string, unknown>).reclaimed_claim).toBe(true);
   });
 
+  // @invariant data: cascade-archived parts restore with the parent while an independently-archived part stays tombstoned
+  // @fails-if the independently-archived part is resurrected or a cascade-archived part is left behind
   it('composite group: cascade-archived parts restore with the parent; independently-archived part stays tombstoned', async () => {
     const db = testDb();
     const rootId = 'rst_root';

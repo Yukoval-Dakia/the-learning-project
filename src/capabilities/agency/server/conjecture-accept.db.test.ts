@@ -200,7 +200,9 @@ describe('acceptConjectureProposal lifecycle', () => {
   });
 
   // YUK-531 PR-3 — the dark, flag-gated misconception promotion hop.
-  describe('misconception promotion (YUK-531 PR-3)', () => {
+  describe('misconception promotion', () => {
+    // @invariant data: re-accepting a promoted misconception is idempotent — one misconception, one edge, one rate
+    // @fails-if a second accept creates a duplicate misconception or edge, or bumps the rate again
     it('flag ON — re-accept is idempotent: one misconception, one edge, one rate', async () => {
       process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
       const db = testDb();
@@ -225,7 +227,9 @@ describe('acceptConjectureProposal lifecycle', () => {
   // no probe (the accepted-without-probe dangling chain the idempotency guard then
   // permanently blocks). Instead it throws a typed `probe_slots_full` ApiError inside
   // the accept tx so everything rolls back and the proposal stays pending for retry.
-  describe('probe slot cap rollback (YUK-711)', () => {
+  describe('probe slot cap rollback', () => {
+    // @invariant concurrency: concurrent accepts are bounded by the advisory lock — exactly MAX succeed and the rest roll back cleanly
+    // @fails-if more than MAX accepts commit, or a rolled-back accept leaves an orphan rate anchor
     it('(4) concurrent accepts are bounded by the advisory lock — exactly MAX succeed, the rest roll back with no orphan rate anchor', async () => {
       const db = testDb();
       // Start from an empty slate and fire MAX+2 accepts of distinct fresh conjectures

@@ -159,7 +159,9 @@ async function seedContractChain(spec: SeedSpec): Promise<void> {
     });
 }
 
-describe('YUK-1047 formal entry candidate reuse', () => {
+describe('formal entry candidate reuse', () => {
+  // @invariant concurrency: preview and commit reuse the same frozen candidate; a changed execution intent conflicts
+  // @fails-if commit binds a different candidate or accepts a mutated execution intent
   it('reuses the same frozen candidate for preview and commit; changed execution intent conflicts', async () => {
     await seedContractChain({
       groupId: 'reuse_g',

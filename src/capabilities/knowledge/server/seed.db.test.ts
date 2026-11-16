@@ -11,11 +11,13 @@ import { seedKnowledge } from './seed';
 
 const SUBJECT_COUNT = KNOWN_SUBJECT_IDS.length;
 
-describe('seedKnowledge (薄 seed — 仅科目 domain-root 节点, YUK-477)', () => {
+describe('seedKnowledge (薄 seed — 仅科目 domain-root 节点)', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant concurrency: concurrent bootstrap and subject-root creation share one birth row and never overwrite
+  // @fails-if two births are created or a later writer overwrites the first
   it('concurrent bootstrap and subject-root creation share one birth and never overwrite', async () => {
     const db = testDb();
     const subjectId = KNOWN_SUBJECT_IDS[0];
@@ -32,6 +34,8 @@ describe('seedKnowledge (薄 seed — 仅科目 domain-root 节点, YUK-477)', (
     }
   });
 
+  // @invariant data: re-running seedKnowledge inserts zero rows and skips everything
+  // @fails-if a second run duplicates subject root nodes
   it('is idempotent — second run inserts 0, skips all', async () => {
     const db = testDb();
     await seedKnowledge(db);

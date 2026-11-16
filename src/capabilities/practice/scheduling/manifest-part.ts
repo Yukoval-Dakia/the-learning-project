@@ -103,8 +103,8 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
       // YUK-361 Phase 4 (Task 9) — hybrid 运行时夜间预产 job。每夜（用户晨起前）为「今天」
       // 预产练习流，省去首读 lazy compose 的 LLM 网络往返。排在数据预产链之后跑，让选题
       // 信号（θ̂ / b 锚）已新鲜——YUK-758 起该次序由下面的 dependsOn 硬边保证，不再靠 cron
-      // 错峰。（旧注「mastery 夜链」已删——该 job 从不存在，mastery_state 在线写入；YUK-377
-      // 复审 §6.4。）queue=llm：softmax_mfi 默认路径会调 SelectionOrchestratorTask（LLM
+      // 错峰。（不存在「mastery 夜链」job —— mastery_state 在线写入；YUK-377
+      // §6.4。）queue=llm：softmax_mfi 默认路径会调 SelectionOrchestratorTask（LLM
       // 编排），与 item_prior 同档。
       // 幂等由 composeNightly 的单飞锁 + 双重检查保证（夜产后用户首读 lazy 命中 no-op）。
       {

@@ -728,7 +728,7 @@ async function prepareAdmittedDiagnosticFixture(label: string) {
   return { db, opened, active, questionId, now, staleAt };
 }
 
-describe('YUK-791 intervention preparation closed loop', () => {
+describe('intervention preparation closed loop', () => {
   beforeEach(async () => {
     await installInterventionDiagnosticLeaves();
     await resetDb();
@@ -1552,6 +1552,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
     });
   });
 
+  // @invariant data: a replayed delivery re-enqueues recovery without creating a second aggregate
+  // @fails-if the replay creates a duplicate intervention aggregate
   it('replayed delivery re-enqueues recovery but never creates a second aggregate', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('a');
@@ -1579,6 +1581,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(sendCount).toBe(2);
   });
 
+  // @invariant concurrency: activation serializes with a concurrent source correction and fails closed
+  // @fails-if activation proceeds against a corrected source or fails open
   it('serializes activation with a concurrent source correction and fails closed', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('r');
@@ -1725,6 +1729,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(dueBody.rows).toHaveLength(0);
   });
 
+  // @invariant concurrency: liveness is rechecked under the shared source lock before recovery is enqueued
+  // @fails-if recovery is enqueued on a stale liveness read taken outside the source lock
   it('rechecks liveness under the shared source lock before enqueueing recovery', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('l');

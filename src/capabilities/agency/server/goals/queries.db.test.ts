@@ -16,7 +16,9 @@ const db = testDb();
 
 beforeEach(() => resetDb());
 
-describe('goal mutation command concurrency (YUK-952)', () => {
+describe('goal mutation command concurrency', () => {
+  // @invariant concurrency: goal mutations serialize in ownership order even when a later owner sends an older request timestamp
+  // @fails-if the older-timestamped request overtakes the earlier owner’s mutation
   it('orders mutations by ownership even when the later owner receives an older request timestamp', async () => {
     const start = new Date('2026-09-01T00:00:00Z');
     const goalId = await createManualGoal(db, {

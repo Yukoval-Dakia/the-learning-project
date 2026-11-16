@@ -115,7 +115,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
       'hub-mesh 笔记自动同步按 prerequisite 边（incoming）组装「这是 X 的前置」复习上下文（RELATION_PRIORITY）。',
   },
   {
-    // YUK-455 grounding — learnable_frontier (B3, PR #635) 的 prerequisite specialized 消费在
+    // YUK-455 grounding — learnable_frontier (B3) 的 prerequisite specialized 消费在
     // 原 PR 遗漏登记；inc-E 顺手补上（否则该 type-specific 消费路径不在反查覆盖内）。
     relation: 'prerequisite',
     tier: 'specialized',

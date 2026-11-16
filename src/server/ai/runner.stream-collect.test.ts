@@ -257,7 +257,7 @@ const resultMsg = {
   usage: { input_tokens: 5, output_tokens: 7, cache_read_input_tokens: 2 },
 };
 
-describe('streamTaskCollecting — YUK-266 collecting stream', () => {
+describe('streamTaskCollecting — collecting stream', () => {
   beforeEach(() => {
     mockPi.capturedArgs = undefined;
     __setPiAdapterForTests(fakePiAdapter());
@@ -277,6 +277,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     vi.unstubAllEnvs();
   });
 
+  // @invariant security: the collecting stream captures per-run sanitized business text and ends after middleware without treating provider execution as business success
+  // @fails-if unsanitized text is captured or provider execution alone counts as business success
   it('captures per-run sanitized business text and ends after middleware, without accepting provider execution as business success', async () => {
     const { records, exporter } = memoryTraceExporter();
     __setTraceExporterForTests(exporter);
@@ -311,6 +313,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(JSON.stringify(records)).not.toContain('SECRET_INPUT');
   });
 
+  // @invariant security: thinking-block metadata is carried without streaming or logging raw reasoning
+  // @fails-if raw reasoning text is streamed or logged
   it('carries thinking-block metadata without streaming or logging raw reasoning', async () => {
     mockPi.messages = [assistantThinking('hidden reasoning'), assistant('answer'), resultMsg];
     const deltas: string[] = [];

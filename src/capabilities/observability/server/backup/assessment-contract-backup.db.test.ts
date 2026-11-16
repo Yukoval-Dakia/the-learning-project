@@ -94,10 +94,12 @@ async function seedContractRows(): Promise<void> {
   `);
 }
 
-describe('assessment contract truth-source backup round-trip (YUK-1044)', () => {
+describe('assessment contract truth-source backup round-trip', () => {
   beforeEach(resetDb);
   afterAll(resetDb);
 
+  // @invariant data: all nine assessment-contract tables round-trip through backup and restore without hitting P0001
+  // @fails-if a table’s rows are lost or the wipe order violates the FK constraints
   it('seeds → backup → restore: all 9 tables survive and the wipe phase does not hit P0001', async () => {
     const db = testDb();
     await seedContractRows();

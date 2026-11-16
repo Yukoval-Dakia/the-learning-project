@@ -1,5 +1,5 @@
 /**
- * YUK-1007 review P1-6 — restore leaves stale runtime.
+ * YUK-1007 — restore leaves stale runtime.
  *
  * Bug class: restoreFromArchive re-inserted the archived `system_config_epoch`
  * verbatim. If that epoch value coincides with the restoring process's already
@@ -70,7 +70,7 @@ function publishDivergedSnapshot(epoch: number, value: number): void {
   });
 }
 
-describe('restoreFromArchive — config epoch (P1-6)', () => {
+describe('restoreFromArchive — config epoch', () => {
   beforeEach(async () => {
     installConfigWritePorts(configWritePorts());
     await resetDb();
@@ -82,6 +82,8 @@ describe('restoreFromArchive — config epoch (P1-6)', () => {
     await resetDb();
   });
 
+  // @invariant data: restore publishes a strictly-new epoch and the process re-hydrates to the archived rows
+  // @fails-if the post-restore epoch is not strictly newer or live config keeps pre-restore rows
   it('restore publishes a strictly-new epoch and the process re-hydrates to archived rows', async () => {
     const db = testDb();
 

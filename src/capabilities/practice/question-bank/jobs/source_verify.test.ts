@@ -203,7 +203,9 @@ describe('runSourceVerify', () => {
     await resetDb();
   });
 
-  it('YUK-1045 P1 repro: a stale transient run cannot suspend a group a concurrent verify already ADMITTED', async () => {
+  // @invariant concurrency: a stale transient run cannot suspend a group a concurrent verify already admitted
+  // @fails-if the stale run’s suspend lands after the admission commits
+  it('a stale transient run cannot suspend a group a concurrent verify already ADMITTED', async () => {
     const db = testDb();
     await seedKnowledge('k1');
     const qid = await seedQuestion({

@@ -20,7 +20,7 @@ import {
 // YUK-1050 — 历史迁移 apply 执行器的运行账本（grounding §15：分阶段离线可续跑
 // + locks/WAL/duration 观测）。运维工具表，非判分/作答真相：允许 UPDATE（阶段
 // 状态迁移）；真相源表自身的不可变性由 0105/0106/0107 trigger 保证，与本表无关。
-// 备份语义（review P1-1）：运维态不进备份（BACKUP_EXCLUDED_TABLES）且 restore 时
+// 备份语义：运维态不进备份（BACKUP_EXCLUDED_TABLES）且 restore 时
 // 先擦除（RESTORE_WIPE_ONLY_TABLES，子 phase 先于父 run）—— 残留旧 apply 进度
 // 坐在恢复后的旧真相数据旁是错误的（会假装迁移已完成/未完成）。
 export const migration_apply_run = pgTable(

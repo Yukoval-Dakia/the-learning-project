@@ -56,11 +56,13 @@ async function repairEvents() {
   return db.select().from(event).where(eq(event.action, 'experimental:merge_attribution_repaired'));
 }
 
-describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () => {
+describe('merge_attribution_sweep (census + bounded auto-repair)', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant data: the sweep auto-repairs attribution drift with a forensic event and converges to zero — a rerun is a no-op
+  // @fails-if repair misses drift, omits the forensic event, or a second run mutates rows again
   it('auto-repairs drift, writes the forensic event, re-census is zero, second run is a no-op', async () => {
     await insertK('k_into', { mergedFrom: ['k_from'] });
     await insertK('k_from', { archived: true });
@@ -157,6 +159,8 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
     expect(await repairEvents()).toHaveLength(1);
   });
 
+  // @invariant data: a multi-hop attribution chain resolves end-to-end with the full hop sequence stamped on the event
+  // @fails-if the chain resolves partially or the event loses hop order
   it('resolves a multi-hop chain and stamps the FULL hop sequence on the event', async () => {
     await insertK('k_c', { mergedFrom: ['k_b'] }); // live terminal winner
     await insertK('k_b', { archived: true, mergedFrom: ['k_a'] });
@@ -175,6 +179,8 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
     expect(payload.terminal_winner_id).toBe('k_c');
   });
 
+  // @invariant data: an unresolvable attribution chain is reported and never repaired by guessing
+  // @fails-if the sweep fabricates a repair for an archived-not-merged terminal
   it('skips an unresolvable chain (archived-not-merged terminal) — reports, never guesses a repair', async () => {
     await insertK('k_x', { archived: true, mergedFrom: ['k_from'] }); // terminal archived, NOT merged
     await insertK('k_from', { archived: true });
@@ -189,6 +195,8 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
     expect(q1[0].knowledge_ids).toEqual(['k_from']); // untouched
   });
 
+  // @invariant concurrency: a throwing winner rolls back alone while other winners still repair and emit events
+  // @fails-if one winner’s failure aborts or skips the other winners’ repairs
   it('A1 winner isolation: a throwing winner rolls back alone — other winners repair + emit events', async () => {
     // Winner A — repairs cleanly.
     await insertK('k_into_a', { mergedFrom: ['k_a'] });
@@ -255,6 +263,8 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
     }
   });
 
+  // @invariant concurrency: a winner archived between census and repair is deferred with zero writes toward it
+  // @fails-if the repair writes toward a winner that was archived after the census
   it('C1 TOCTOU: winner archived between census and repair → deferred, zero writes toward the archived winner', async () => {
     await insertK('k_into', { mergedFrom: ['k_from'] });
     await insertK('k_from', { archived: true });

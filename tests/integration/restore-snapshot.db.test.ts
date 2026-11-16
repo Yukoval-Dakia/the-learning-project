@@ -74,7 +74,7 @@ function richTheta(over: Partial<ThetaRowSnapshotT> = {}): ThetaRowSnapshotT {
   };
 }
 
-describe('restoreStateSnapshot (YUK-471 Wave 0 restore primitive)', () => {
+describe('restoreStateSnapshot (restore primitive)', () => {
   beforeAll(async () => {
     // ensure db module loaded
     void rootDb;
@@ -86,6 +86,8 @@ describe('restoreStateSnapshot (YUK-471 Wave 0 restore primitive)', () => {
     await resetDb();
   });
 
+  // @invariant data: restore upserts the whole theta row back to its snapshot value verbatim
+  // @fails-if restore merges fields or leaves any column at its post-snapshot value
   it('test 14: restore theta before!=null upserts the WHOLE row back to `before` (verbatim)', async () => {
     const kcId = 'kc_restore_14';
     // Seed a mastery_state row at the pre-attempt state (θ̂=X + full counts/precision).

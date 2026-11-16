@@ -106,7 +106,7 @@ const DEFAULT_EPOCH_GATE: EpochGate = async () => {
   }
 };
 
-// Fail-closed token 比较（M5 全分支 review H1）：INTERNAL_TOKEN 未设 ⇒ 拒绝一切
+// Fail-closed token 比较：INTERNAL_TOKEN 未设 ⇒ 拒绝一切
 // /api/* 请求（直接 `!==` 比较在「未设 + 缺 header」时 undefined !== undefined
 // 为 false 会放行）。SHA-256 摘要定长后 timingSafeEqual——常时比较且不泄露长度，
 // 语义对齐被 M5 拆除的 middleware.ts。
@@ -232,7 +232,7 @@ export function buildHonoApp(
     }
   }
 
-  // 未命中的 /api/* 统一 404 JSON（M5 全分支 review M1）：注册在 manifest 路由
+  // 未命中的 /api/* 统一 404 JSON：注册在 manifest 路由
   // 之后只兜未匹配项——否则 prod 下穿透到 serveStatic catch-all 回 index.html 200，
   // 与 dev（Vite proxy → 404）行为分叉，掩盖打错的端点。
   app.all('/api/*', (c) => c.json({ error: 'not_found' }, 404));

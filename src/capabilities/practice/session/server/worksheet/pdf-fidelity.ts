@@ -20,7 +20,7 @@ import {
 // 唯一公开面（调用方无需深入 pdf-structure / pdf-content）。
 export { WorksheetRenderPermanentError } from './pdf-structure';
 
-// ---------- 对象级 PDF canonicalize（R1 P1-3） ----------
+// ---------- 对象级 PDF canonicalize ----------
 // Chromium（Skia/PDF）每次渲染都嵌入墙钟 CreationDate/ModDate（Info 对象），
 // 部分版本还在 trailer 放随机 /ID —— 同一份 DOM 出两份不同字节，write-once
 // 存档会把重跑误判成冲突。
@@ -98,7 +98,7 @@ export function canonicalizeWorksheetPdf(pdf: Buffer): Buffer {
   return Buffer.from(out, 'latin1');
 }
 
-// ---------- 渲染产物强制校验（Grok QA P1-1：write-once 存档，错了就是永久脏数据） ----------
+// ---------- 渲染产物强制校验（write-once 存档，错了就是永久脏数据） ----------
 // 起因：page.pdf 时隐藏测量区 .ws-stage-host 还在 DOM —— 里面的 297mm 横向
 // 样张把 ≥3 页的卷面整体 shrink-to-fit 到 ~0.73，四角定位点全偏，但区域图
 // 仍按 1:1 mm 存档（write-once 无法补救）。job 侧修复：先取区域图 → 移除

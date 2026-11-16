@@ -207,7 +207,7 @@ async function resolveScopeKnowledgeIds(
  * knowledge tree positively carries that domain (a live custom subject). A
  * real unknown — e.g. 「物理」 when the registry only knows `physics` — produces
  * the typed issue so the model corrects it instead of writing a silently
- * no-op exclusion (P1-3). No hard-coded alias table; Chinese names resolve
+ * no-op exclusion. No hard-coded alias table; Chinese names resolve
  * only if the tree itself was built with them as domains. */
 async function resolveSubjectIds(
   ctx: ToolContext,

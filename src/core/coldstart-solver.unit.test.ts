@@ -22,7 +22,9 @@ function liveSolve(bPrime: number, answers: ReadonlyArray<0 | 1>) {
   return { thetaHat: posteriorMean(post), se: posteriorSe(post) };
 }
 
-describe('coldstart-solver — one-KC grid θ̂ on shared poly σ (YUK-495 #125 rider)', () => {
+describe('coldstart-solver — one-KC grid θ̂ on shared poly σ', () => {
+  // @invariant grading: with no answers the grid θ̂ is 0 under a symmetric uniform prior with positive SE
+  // @fails-if the prior skews θ̂ or SE collapses to zero
   it('cold start (no answers) → θ̂ = 0 (symmetric uniform prior), SE > 0', () => {
     const s = solveThetaOneKc(0, []);
     expect(Math.abs(s.thetaHat)).toBeLessThan(1e-12); // grid is symmetric about 0
@@ -30,6 +32,8 @@ describe('coldstart-solver — one-KC grid θ̂ on shared poly σ (YUK-495 #125 
     expect(s.evidence).toBe(0);
   });
 
+  // @invariant grading: θ̂ is monotone in correctness — more correct raises it, more wrong lowers it
+  // @fails-if the ordering inverts or flattens
   it('monotone: more correct ⇒ higher θ̂; more wrong ⇒ lower', () => {
     const allRight = solveThetaOneKc(0, [1, 1, 1, 1, 1, 1]);
     const mixed = solveThetaOneKc(0, [1, 0, 1, 0]);
@@ -40,12 +44,16 @@ describe('coldstart-solver — one-KC grid θ̂ on shared poly σ (YUK-495 #125 
     expect(allWrong.thetaHat).toBeLessThan(0);
   });
 
+  // @invariant grading: SE narrows as evidence accrues
+  // @fails-if SE widens or stays flat with more evidence
   it('SE narrows as evidence accrues', () => {
     const few = solveThetaOneKc(0, [1, 0]);
     const many = solveThetaOneKc(0, [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]);
     expect(many.se).toBeLessThan(few.se);
   });
 
+  // @invariant grading: answering harder items correctly yields higher inferred θ̂ (IRT inversion)
+  // @fails-if difficulty is ignored so easy and hard correctness score identically
   it('difficulty anchor: getting HARDER items right ⇒ HIGHER inferred θ̂ (IRT inversion)', () => {
     // p(correct) = σ(offset − b'); to explain the same all-correct answers, a higher b'
     // forces the posterior offset higher. (This is the inverse of "harder ⇒ lower p(L)
@@ -55,6 +63,8 @@ describe('coldstart-solver — one-KC grid θ̂ on shared poly σ (YUK-495 #125 
     expect(hard.thetaHat).toBeGreaterThan(easy.thetaHat);
   });
 
+  // @invariant grading: the poly-σ grid stays negligibly close to the live Math.exp fold
+  // @fails-if poly-σ drifts θ̂ beyond tolerance from the live fold
   it('close to the LIVE Math.exp grid fold (poly σ moves θ̂ negligibly)', () => {
     for (const bPrime of [-2, -0.5, 0, 0.7, 2]) {
       for (const answers of [
@@ -70,6 +80,8 @@ describe('coldstart-solver — one-KC grid θ̂ on shared poly σ (YUK-495 #125 
     }
   });
 
+  // @invariant grading: the solver grid support matches the theta-grid.ts construction
+  // @fails-if the grid diverges from the shared construction
   it('grid support sanity (matches theta-grid.ts construction)', () => {
     // guards the -4 + i·step rebuild against the imported GRID_THETA.
     expect(GRID_POINTS).toBe(41);

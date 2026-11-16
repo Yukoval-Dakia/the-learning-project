@@ -136,7 +136,9 @@ afterEach(async () => {
   await Promise.allSettled(opened.splice(0).map((handle) => handle.close()));
 });
 
-describe('YUK-842 cross-process provider SDK-session admission', () => {
+describe('cross-process provider SDK-session admission', () => {
+  // @invariant concurrency: provider SDK-session admission shares one concurrency cap across independent DB clients
+  // @fails-if two clients admit more than the cap because each tracks its own count
   it('shares one concurrency cap across two independent DB clients', async () => {
     const a = openIndependentDb();
     const b = openIndependentDb();

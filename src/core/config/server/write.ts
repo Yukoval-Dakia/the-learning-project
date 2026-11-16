@@ -10,7 +10,7 @@
 //                                            一次 epoch bump）——task.<kind> 组写
 //                                            provider+model 需要它。
 //
-// 校验分两段（review P1-5）：
+// 校验分两段：
 //   - tx 外（读空气即可判）：未登记 key → 400；pinned（compose 强制）→ 409；zod
 //     schema 拒绝 → 422 + issues；provider 存在性/implemented/judge-fallback 特例。
 //   - tx 内（必须在写后快照上判）：provider/model 组合终态校验——set、batch set、
@@ -19,8 +19,8 @@
 //     留下 openai×mimo-id 这类不可跑组合。
 //
 // 并发（§6.3）：行级 upsert + journal + epoch 同 tx；两进程同 key 写 = 最后一次
-// 赢，journal 双方都在。revision 轴取 journal max(revision)+1（review P1-2——
-// journal 是 append-only 的真持久轴；取 system_config 行 revision 会在
+// 赢，journal 双方都在。revision 轴取 journal max(revision)+1（journal 是
+// append-only 的真持久轴；取 system_config 行 revision 会在
 // clear 删行后倒回 1，撞上 journal 的 (key,revision) PK）。
 
 import { eq, inArray, sql } from 'drizzle-orm';
@@ -309,7 +309,7 @@ function validateStaticSemantics(key: string, value: ConfigValue): void {
   }
 }
 
-// ── provider/model 对的终态校验（P1-5）──────────────────────────────────────
+// ── provider/model 对的终态校验 ───────────────────────────────────────
 
 interface PairScope {
   /** provider 键。 */
@@ -949,7 +949,7 @@ async function bumpEpoch(tx: Tx): Promise<number> {
   // INSERT … ON CONFLICT 幂等首行；每次写 nextval(config_change_seq)——与
   // journal.change_seq 同序列（§1.2「config_change_seq 同序列」）。
   //
-  // 第二轮 review P1（两轴去重）自愈：序列位可能落后于 epoch 行（restore 把
+  // 两轴去重自愈：序列位可能落后于 epoch 行（restore 把
   // epoch 抬到恢复前高水位之上、但序列停在归档位；或任何手工/历史漂移）。
   // 裸 nextval 会让 epoch 倒退——hydrate 的 stale 守卫随后拒绝发布，writer
   // 却返回成功 → DB 新值 / runtime 旧值永久分叉。conflict 分支取
@@ -974,7 +974,7 @@ async function bumpEpoch(tx: Tx): Promise<number> {
 
 /**
  * 单 key 写。commit 后即时 hydrate（写进程 0 延迟生效，§6.2 self-read）。
- * revision 轴 = journal max(revision)+1（P1-2：journal 是 append-only 持久轴；
+ * revision 轴 = journal max(revision)+1（journal 是 append-only 持久轴；
  * 被 clear 删掉行的 value-row revision 倒回会撞 (key,revision) PK）。
  */
 export async function setConfig(

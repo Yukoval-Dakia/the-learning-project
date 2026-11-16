@@ -33,7 +33,7 @@ import { rowToFoldEvent } from '@/kernel/records/projection-events';
 import { PROJECTION_ENTITIES, type ProjectionKind } from '@/server/projections/entity-registry';
 // PURE re-fold + diff (no side effects; golden-reaudit's CLI is import-gated so importing it here
 // never runs it, and its import of THIS module is type-only — no runtime cycle). Used by main() for
-// the birth self-verification (review K4).
+// the birth self-verification.
 import { reauditGolden } from './golden-reaudit';
 import { parseKindArg } from './projection-kind-arg';
 
@@ -88,7 +88,7 @@ async function captureRowSnapshots(
  * gather-input event superset. READ-ONLY. Pure data (the CLI writes it to disk; the test drives it
  * against the testcontainer without a file).
  *
- * Both reads run inside ONE REPEATABLE READ tx (review K4 — birth-snapshot consistency): a concurrent
+ * Both reads run inside ONE REPEATABLE READ tx (birth-snapshot consistency): a concurrent
  * write landing between the row read and the event read would otherwise freeze a golden whose rows
  * and events disagree (a dirty baseline that false-DRIFTs forever). Takes a `Db` (not Tx) because it
  * OWNS the snapshot transaction.
@@ -130,7 +130,7 @@ async function main(): Promise<void> {
   await hydrateSubjectRegistryFromDb(db);
   const golden = await captureGolden(db, kind);
 
-  // Birth self-verification (review K4): a golden is only a valid baseline if the CURRENT fold
+  // Birth self-verification: a golden is only a valid baseline if the CURRENT fold
   // reproduces every imperative row (the fold==imperative certification this capture rides on).
   // Re-fold the in-memory golden BEFORE writing (reauditGolden is pure — no DB, no side effects);
   // a drifted capture is REFUSED — never commit a golden that fails its own reaudit at birth.
@@ -159,7 +159,7 @@ async function main(): Promise<void> {
 }
 
 // CLI-gate: only run as the CLI entry point so the DB test can import captureGolden. Path-resolved
-// form (review O5 — matches ops-projection.ts): robust to a transpiled .js filename too.
+// form (matches ops-projection.ts): robust to a transpiled .js filename too.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main()
     .then(() => process.exit(0))

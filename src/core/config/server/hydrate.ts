@@ -9,7 +9,7 @@
 //     不拖垮整轮（§6.5）。
 //   - startConfigRefresh：app + worker 都挂 15s 周期，unref 不阻退出。
 //
-// review P1-3（stale hydrate overwrite）：
+// stale hydrate overwrite 防线：
 //   - 单飞串行：hydrateConfigFromDb 全部走一条 promise 链——refresh 周期、写后
 //     即时 hydrate、restore 后 hydrate 不复叠跑；后一个调用等前一个落定后再
 //     重新读（读到的总是当时最新快照，无 ABA）。
@@ -39,7 +39,7 @@ export interface ConfigHydrationReport {
   /** true = epoch 探测同号，跳过了全量 SELECT。 */
   epochUnchanged: boolean;
   epoch: number;
-  /** true = 一致读到的 epoch 早于已发布 epoch，按守卫拒绝发布（P1-3）。 */
+  /** true = 一致读到的 epoch 早于已发布 epoch，按守卫拒绝发布。 */
   staleSkipped?: boolean;
 }
 
@@ -88,7 +88,7 @@ let hydrateChain: Promise<ConfigHydrationReport> = Promise.resolve({
 });
 
 /**
- * 测试 seam（第二轮 review P2）：epoch 守卫通过后、replaceConfigSnapshot 发布前
+ * 测试 seam：epoch 守卫通过后、replaceConfigSnapshot 发布前
  * 的确定性 barrier。生产恒为 undefined（零开销）；测试用它精确复现「旧 hydrate
  * 在守卫检查后被挂起、新写 + 写后 hydrate 先行发布、旧 hydrate 恢复后发布旧值」
  * 的 check-then-act 竞态——串行链是该窗口的唯一闭合手段（守卫检查与发布不是
@@ -168,7 +168,7 @@ async function doHydrate(db: Db): Promise<ConfigHydrationReport> {
       report.hydrated.push(row.key);
     }
 
-    // epoch 守卫（P1-3）：串行链已挡掉同进程并发；这层再挡「探测时刻读到新
+    // epoch 守卫：串行链已挡掉同进程并发；这层再挡「探测时刻读到新
     // epoch、一致读却落回旧值」的跨进程回退（恢复出旧备份的极端场景之外
     // 不该触发，触发了就说明有乱序写，拒绝把旧快照发布出去）。守卫比较的是
     // 发布时刻的快照（当前进程 overlay 注入也可能推快 epoch）。

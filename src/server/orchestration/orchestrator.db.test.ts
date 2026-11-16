@@ -518,7 +518,7 @@ describe('orchestrator trigger semantics', () => {
 // （夜间断电 / compose down 部署 / 镜像拉取慢）→ 该夜锚点根本没入过队 → 14 个成员一个不跑，
 // `dag_orchestration_run` 里连一行都没有，直到次日 02:30。
 // ─────────────────────────────────────────────────────────────────────────────
-describe('YUK-781 A — boot catch-up for a missed anchor', () => {
+describe('boot catch-up for a missed anchor', () => {
   // 全部以真实 Asia/Shanghai 时区算 —— 窗口判据用的就是这套 Intl 换算，不另设 DI seam。
   const AT_ANCHOR = new Date('2026-07-25T02:30:00+08:00'); // 距锚点 0min
   const HALF_HOUR_PAST = new Date('2026-07-25T03:00:00+08:00'); // 30min
@@ -533,6 +533,8 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
     await resetDb();
   });
 
+  // @invariant concurrency: a repeated boot creates no second run and does not fork the tick chain
+  // @fails-if a second run is created or the tick chain forks
   it('A2 a repeated boot creates no second run and does not fork the tick chain', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'), member('b', ['a']));
@@ -549,6 +551,8 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
     expect(boss.tickSends).toBe(ticksAfterFirst);
   });
 
+  // @invariant data: a run that already completed today is not re-run by a later boot
+  // @fails-if the completed run re-executes
   it('A3 a run that already completed today is not re-run by a later boot', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'));
@@ -618,6 +622,8 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
   // 「两个副本查同一个 pg-boss 库」—— B 的 getJobById 查得到 A 插的行，于是
   // pollInflightNode 不走 `send never landed` 自愈补发那一支。把 bossB 换成独立 job 表
   // （即修复前的建模）这条立刻转红，正是 CI 上那条 `[ 'r1', 'r1' ]` 的机理。
+  // @invariant concurrency: a second replica advancing the same run does not re-enqueue the already-enqueued root
+  // @fails-if the root is enqueued twice across replicas
   it('A7b 另一个副本推进同一条 run 时不重发已入队的根（确定性交错）', async () => {
     const sharedJobs = new Map<string, { state: string; output?: unknown }>();
     const bossA = new FakeBoss(sharedJobs);
@@ -656,7 +662,7 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
 //
 // 这些用例断言的是 orchestrator 对着**空日志**说话这件事被修好了；YUK-779 修的是另一件
 // （succeeded 却零产出），两者互不覆盖。
-describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', () => {
+describe('the scheduling control plane leaves a diagnosable trail', () => {
   let logs: { level: 'log' | 'warn' | 'error'; line: string }[];
 
   beforeEach(async () => {
@@ -688,6 +694,8 @@ describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', 
   // pollInflightNode returns early (node already terminal) and never reaches settleNode — the
   // assertion still holds, but for a different reason. It is a smoke test for the composed
   // behavior; the deterministic proof that the gate's input is correct is L7/L8.
+  // @invariant concurrency: a losing CAS logs nothing — concurrent ticks settle and report a node exactly once
+  // @fails-if the loser logs or a node settles/reports twice
   it('L6 a losing CAS logs nothing — concurrent ticks settle a node once and report it once', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'), member('b', ['a']));
@@ -705,6 +713,8 @@ describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', 
     expect(linesMatching(/node 'a' failed/, 'error')).toHaveLength(1);
   });
 
+  // @invariant concurrency: finishRun reports only when it performed the transition, so completion is logged once
+  // @fails-if a non-transitioning finishRun reports completion
   it('L7 finishRun reports whether IT performed the transition, so completion is logged once', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'));
@@ -724,6 +734,8 @@ describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', 
     expect(settled.status).toBe('completed'); // the loser changed nothing
   });
 
+  // @invariant concurrency: updateNodeStatus reports whether the terminal guard let the write through
+  // @fails-if a blocked write is reported as applied
   it('L8 updateNodeStatus reports whether the terminal guard let the write through', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'));
@@ -748,7 +760,7 @@ describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', 
 // 成员 job 用 `provider_wait` 输出标记「已证明未计费的 provider 拒绝」，编排器
 // 拥有等待预算：CAS 换 boss_job_id + provider_waits+1 + startAfter 重派，
 // enqueued_at 不动（节点超时仍包整个等+跑窗口）。耗尽 → failed 留原因。
-describe('YUK-2030 — provider-wait redelivery', () => {
+describe('provider-wait redelivery', () => {
   beforeEach(async () => {
     await resetDb();
   });
@@ -757,7 +769,7 @@ describe('YUK-2030 — provider-wait redelivery', () => {
 
   // @invariant data: a proven-unbilled provider refusal redelivers the node instead of losing the run — waits counted, identity repointed, timeout window preserved
   // @fails-if the wait branch settles the node, drops the waits increment, reuses the old job id, or resets enqueued_at so a stranding or a doubled charge slips through
-  it('W1 a member leaving provider_wait output waits instead of settling', async () => {
+  it('a member leaving provider_wait output waits instead of settling', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'), member('b', ['a']));
     const run = must(
@@ -790,7 +802,7 @@ describe('YUK-2030 — provider-wait redelivery', () => {
 
   // @invariant data: a node that burns its wait budget lands terminal with an auditable reason — no silent park and no extra paid send
   // @fails-if the exhaustion path leaves the node non-terminal, drops the provider_wait_exhausted detail, or sends another delivery after the last wait
-  it('W2 exhausting the wait budget fails the node with an explicit reason', async () => {
+  it('exhausting the wait budget fails the node with an explicit reason', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'));
     const run = must(
@@ -824,7 +836,7 @@ describe('YUK-2030 — provider-wait redelivery', () => {
 
   // @invariant concurrency: two replicas polling a waiting node land exactly one replacement job
   // @fails-if the reschedule CAS or the repoint-then-send order breaks, so a second job row or a second waits increment appears
-  it('W3 a second replica ticking a re-armed node sends no duplicate', async () => {
+  it('a second replica ticking a re-armed node sends no duplicate', async () => {
     const sharedJobs = new Map<string, { state: string; output?: unknown }>();
     const bossA = new FakeBoss(sharedJobs);
     const bossB = new FakeBoss(sharedJobs);
@@ -860,7 +872,7 @@ describe('YUK-2030 — provider-wait redelivery', () => {
   // @fails-if the WHERE stops pinning the observed boss_job_id, letting both
   // ticks win and double-arm the node (two live paid jobs, double-counted
   // waits)
-  it('W4 two ticks racing the same re-arm CAS exactly once on the observed job id', async () => {
+  it('two ticks racing the same re-arm CAS exactly once on the observed job id', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'));
     const run = must(

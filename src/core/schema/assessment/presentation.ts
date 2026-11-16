@@ -937,7 +937,7 @@ export function validatePresentation(
 /**
  * 纯推导：按题目契约生成一份【合法的】声明式缺省展示 ——
  * stack → 每个 part 一块 text_math → 每个可作答槽按【槽形态】选一个输入积木
- * （review R1：先看 item 形状，再看 axes）：
+ * （先看 item 形状，再看 axes）：
  *   gap items（全带 gap_after_codepoint）→ break_tap；
  *   coordinated items（全带 coordinates）+ axes{left,right} → matching_columns；
  *   coordinated items + axes{position,object} → ordering；

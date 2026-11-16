@@ -120,7 +120,7 @@ const D3A_RESPONSE: ResponseSetT = {
   ],
 };
 
-describe('YUK-1445 D3a — partial_unknown_points 结算边界（DB，prepared not run）', () => {
+describe('D3a — partial_unknown_points 结算边界（DB）', () => {
   beforeEach(resetDb);
 
   // @invariant grading: no-rule 2/3 correctness remains public with null score and no learning mutation.

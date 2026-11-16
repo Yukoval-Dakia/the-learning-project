@@ -119,15 +119,17 @@ async function post(body: unknown): Promise<Response> {
   );
 }
 
-describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
+describe('POST /api/prep-desk/brief/ack', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
-  // Round-3 (codex P2): idempotency must win over the chain gate. A first ack succeeds but
+  // idempotency must win over the chain gate. A first ack succeeds but
   // its response is lost; before the retry the chain breaks (probe removed / proposal
   // retracted). The retry must still return 200/idempotent, NOT 409 — the existing ack is
   // the record of truth, and re-gating it would surface a completed ack as a failure.
+  // @invariant data: an idempotent ack retry succeeds after the outcome chain breaks — no 409, no new append
+  // @fails-if the retry 409s or appends a duplicate outcome event
   it('idempotent retry succeeds even after the outcome chain breaks (no 409, no new append)', async () => {
     const resultId = await seedOutcome('confirmed');
     const first = TeachingBriefAckResponseSchema.parse(
@@ -153,12 +155,14 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
     expect(await ackEvents(resultId)).toHaveLength(1);
   });
 
-  // Round-6 (codex P2): the concurrency window. Two concurrent route acks on the same target
+  // Concurrency window: two concurrent route acks on the same target
   // must resolve to one create + one idempotent — NEVER a not_current_primary 409. The loser's
   // pre-lock loadOutcomeBrief may see the target already excluded (the winner committed its
   // ack), but the in-lock existing-ack re-check runs BEFORE the primary verdict, so the loser
   // gets idempotent success. (Deterministic regardless of interleaving: the advisory lock
   // serializes the append and the loser always finds the winner's ack inside the lock.)
+  // @invariant concurrency: concurrent acks resolve to one 201 plus one 200 with a single anchor — never a 409
+  // @fails-if a concurrent ack 409s or creates a second anchor
   it('concurrent route acks resolve to one 201 + one 200, never 409, single anchor', async () => {
     const resultId = await seedOutcome('confirmed');
 

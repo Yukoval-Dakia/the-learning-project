@@ -99,7 +99,9 @@ async function waitForBackendLock(applicationName: string): Promise<void> {
 
 beforeEach(() => resetDb());
 
-describe('YUK-751 durable event subscription runtime', () => {
+describe('durable event subscription runtime', () => {
+  // @invariant concurrency: an event in-flight during single-tx bootstrap is not skipped — it is delivered later
+  // @fails-if the bootstrap marks the in-flight event delivered or drops it
   it('single-tx bootstrap: an event in-flight during bootstrap is NOT skipped, later delivered (Tcx98/TcWGH)', async () => {
     // The creation tx's OWN snapshot defines history — no seq/xmin/snapshot fence. An event still
     // in-flight (uncommitted) when bootstrap runs is absent from that snapshot, so it is not skipped;
@@ -138,6 +140,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     );
   });
 
+  // @invariant data: a historical event whose row was later updated is still skipped — not over-delivered
+  // @fails-if the post-bootstrap update makes the historical event deliver again
   it('single-tx bootstrap: a historical event whose row was later UPDATED is still skipped, not over-delivered (Tcx98)', async () => {
     // event rows are NOT immutable — the memory outbox UPDATEs ingest_at, moving xmin. That broke the
     // xmin-based fence (an outbox-touched historical event read as in-flight → over-delivered). The
@@ -158,6 +162,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease)).toBe(0);
   });
 
+  // @invariant concurrency: checkpoint leases fence deliveries — a later delivery cannot run while an earlier retry waits
+  // @fails-if a later delivery overtakes the waiting earlier retry
   it('fences checkpoint leases and prevents a later delivery from running while an earlier retry waits', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('one');
@@ -188,6 +194,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(await renewSubscriptionLease(testDb(), firstLease)).toBe(false);
   });
 
+  // @invariant data: deliveries retry to the configured dead-letter bound and terminal failures are redriven only explicitly
+  // @fails-if retry overruns the bound or a terminal failure redrives implicitly
   it('retries to dead-letter at the configured bound and explicitly redrives terminal failures', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('source');
@@ -209,6 +217,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     );
   });
 
+  // @invariant security: unknown declarations, declaration drift, and paused checkpoints all fail closed
+  // @fails-if any of the three is delivered instead of refused
   it('fails closed for unknown declarations, declaration drift, and paused checkpoints', async () => {
     const unknown = { ...SUBSCRIBER, version: 2 };
     await expect(bootstrapSubscription(testDb(), registry(), unknown)).rejects.toThrow(
@@ -226,6 +236,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     ).rejects.toThrow(/declaration hash mismatch/);
   });
 
+  // @invariant concurrency: delivery renew, completion, and failure are fenced on the checkpoint lease that created the claim
+  // @fails-if a foreign or expired lease renews, completes, or fails the delivery
   it('fences delivery renew, completion, and failure on the checkpoint lease that created the claim', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('renew-source');
@@ -273,6 +285,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     ).toBe('lost_lease');
   });
 
+  // @invariant concurrency: a stale subscriber is serialized behind checkpoint takeover and then rejected
+  // @fails-if the stale subscriber delivers or mutates state after losing the checkpoint
   it.each(['renew', 'complete', 'fail'] as const)(
     'serializes stale %s behind checkpoint takeover and then rejects it',
     async (transition) => {
@@ -333,6 +347,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     },
   );
 
+  // @invariant data: discovered deliveries roll back when the checkpoint expires before final advancement
+  // @fails-if deliveries commit after the checkpoint lease is lost
   it('rolls back discovered deliveries when the checkpoint expires before final advancement', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('discovery-expire');
@@ -370,6 +386,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     }
   });
 
+  // @invariant concurrency: the exact checkpoint lease is released after no-claim and handler-failure cycles
+  // @fails-if a stale lease is released or the release targets the wrong lease
   it('releases the exact checkpoint lease after no-claim and handler-failure cycles', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await runSubscriptionDispatchCycle(testDb(), registry(), { owner: 'worker', maxAttempts: 1 });
@@ -391,6 +409,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     ).not.toBeNull();
   });
 
+  // @invariant concurrency: redrive is rejected once a later delivery has reached a terminal state
+  // @fails-if redrive resurrects a superseded delivery
   it('rejects redrive when a later delivery has reached a terminal state', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('first');
@@ -414,6 +434,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     );
   });
 
+  // @invariant security: a checkpoint lease from another subscriber is rejected without mutating the target delivery
+  // @fails-if the foreign lease mutates the delivery
   it('rejects a checkpoint lease from another subscriber without mutating the target delivery', async () => {
     const other = {
       ...SUBSCRIBER,
@@ -453,6 +475,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(otherDelivery?.status).toBe('pending');
   });
 
+  // @invariant concurrency: redrive is rejected while a later delivery sits in retry_wait
+  // @fails-if redrive overtakes the retrying delivery
   it('rejects redrive when a later delivery has failed into retry_wait', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('first-dead');
@@ -480,7 +504,9 @@ describe('YUK-751 durable event subscription runtime', () => {
   // 旧版本 outstanding delivery 不许盲标 bootstrap_skipped：stable source_event_id
   // 下把 pending/claimed/retry_wait 翻译进新版本（保序、保重试预算），其余终态化。
 
-  it('translates outstanding deliveries into the bumped version instead of blindly skipping them (YUK-1055)', async () => {
+  // @invariant data: outstanding deliveries translate into the bumped version instead of being blindly skipped
+  // @fails-if the version bump drops or double-delivers outstanding deliveries
+  it('translates outstanding deliveries into the bumped version instead of blindly skipping them', async () => {
     const V1 = SUBSCRIBER; // actions ['test:handled']
     const V2: LoadedEventSubscription = {
       ...SUBSCRIBER,
@@ -631,6 +657,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(count?.n).toBe(5);
   });
 
+  // @invariant data: deliveries for events the bumped version no longer subscribes to are superseded
+  // @fails-if an unsubscribed old-version delivery still runs
   it('supersedes old-version deliveries for events the bumped version no longer subscribes to', async () => {
     const V1: LoadedEventSubscription = {
       ...SUBSCRIBER,

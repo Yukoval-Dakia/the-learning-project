@@ -321,7 +321,7 @@ export type NativeCategory =
   | 'correction_cycle_unresolved'
   | 'fsrs_review_lineage'
   | 'state_snapshot_lineage'
-  /** 因 evidence/causal 闭包被捕获的非评估事件（P1-7）—— 只作引用世系。 */
+  /** 因 evidence/causal 闭包被捕获的非评估事件 —— 只作引用世系。 */
   | 'causal_closure_lineage';
 
 /**
@@ -338,7 +338,7 @@ export type MigrationTargetRef =
        */
       judge_event_id: string | null;
       /**
-       * 一次 occurrence 至多一个 effective head（P1-4）：多 verdict 按 legacy
+       * 一次 occurrence 至多一个 effective head：多 verdict 按 legacy
        * newest-judge-wins（practice-read.ts 读语义）选头；并列/被纠正 → 不选。
        */
       has_effective_head: boolean;
@@ -406,7 +406,7 @@ export interface MigrationManifest {
   manifest_version: 1;
   tool: { name: 'migration-capture'; version: string };
   /**
-   * 整个观测 checkpoint 的内容身份（P1-1）：覆盖 rawFacts + ops + queues +
+   * 整个观测 checkpoint 的内容身份：覆盖 rawFacts + ops + queues +
    * subscriptions + ai_task_runs + environment（不含随运行变化的
    * snapshot_at/captured_at）+ provenance。工件文件名按它寻址 —— 运维态
    * （队列/订阅/ingest_at）变化会产生新 checkpoint，不会被旧工件吞掉。
@@ -461,7 +461,7 @@ export interface MigrationManifest {
     question_image_refs_total: number;
     answer_image_refs_total: number;
   };
-  /** 完整分类输出随清单持久化（P1-2）：records + unresolved + deferred_replay。 */
+  /** 完整分类输出随清单持久化：records + unresolved + deferred_replay。 */
   classification: {
     classification_version: string;
     /** canonical hash of {records, unresolved, deferred_replay} —— 刷新判据。 */

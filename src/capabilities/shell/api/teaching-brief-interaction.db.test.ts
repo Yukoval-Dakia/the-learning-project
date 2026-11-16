@@ -26,11 +26,13 @@ async function rows(action: string, briefId: string) {
     );
 }
 
-describe('teaching-brief interaction ledger (YUK-710)', () => {
+describe('teaching-brief interaction ledger', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant concurrency: concurrent brief_seen writes land exactly one ledger row
+  // @fails-if the double-write inserts two rows
   it('concurrent brief_seen double-write lands exactly one row', async () => {
     const [a, b] = await Promise.all([
       recordBriefSeen(testDb(), { briefId: 'b1', briefState: 'finding' }, DAY1),
@@ -40,6 +42,8 @@ describe('teaching-brief interaction ledger (YUK-710)', () => {
     expect(await rows(BRIEF_SEEN_ACTION, 'b1')).toHaveLength(1);
   });
 
+  // @invariant data: primary_action_started is idempotent per action identity while distinct recurrences each count
+  // @fails-if a retry duplicates the row or a distinct recurrence is deduped away
   it('primary_action_started is idempotent per action identity and counts both recurrence probes', async () => {
     const accept = await recordPrimaryActionStarted(
       testDb(),

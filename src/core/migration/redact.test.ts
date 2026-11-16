@@ -11,7 +11,7 @@ import {
   withEvents,
 } from './test-fixtures';
 
-// YUK-1048 — 脱敏单测（终轮 P1-4：默认拒绝 + 完整分区事件家族哨兵）。
+// YUK-1048 — 脱敏单测（默认拒绝 + 完整分区事件家族哨兵）。
 // 内容哈希化但结构/标记保留 → 分类结果不变（§14 redacted flags 的诚实支撑）。
 
 const SENTINEL = 'PRIVATE-LEARNER-TEXT-私密的作答';
@@ -58,7 +58,7 @@ function learnerCapture() {
     subject_id: 'a1',
     payload: { coarse_outcome: 'incorrect', score: 0, feedback_md: `${SENTINEL}-feedback` },
   });
-  // P1-4（终轮）：完整分区带进的非评估家族 —— 真实生产 payload 形状。
+  // 完整分区带进的非评估家族 —— 真实生产 payload 形状。
   const copilotUserAsk = ev({
     id: 'cop-1',
     action: 'copilot_user_ask',
@@ -128,7 +128,9 @@ function learnerCapture() {
   return capture;
 }
 
-describe('redactMigrationCapture（终轮：默认拒绝 + 完整分区家族）', () => {
+describe('redactMigrationCapture（默认拒绝 + 完整分区家族）', () => {
+  // @invariant security: unknown text keys of unknown families are redacted by default while markers and structure stay intact
+  // @fails-if an unrecognized text key passes through unredacted or the structure is destroyed
   it('未知家族的未知文本键默认被脱敏（默认拒绝），标记/结构保留 → 分类逐类不变', () => {
     const capture = learnerCapture();
     // 模拟未来新增家族的未知文本键（+ 一个已登记的安全枚举键）。

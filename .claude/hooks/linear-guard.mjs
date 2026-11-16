@@ -21,7 +21,7 @@
 // Internal failures exit 0 so a buggy guard never blocks unrelated work —
 // matches git-guard / json-edit-guard convention.
 //
-// Parser handles (codex review 2026-05-23 findings on PR #95):
+// Parser handles:
 //   - multiple -m / --message (all segments joined for YUK check)
 //   - long options --message=<msg> / --file=<file> (= and space forms)
 //   - -F <file> resolved relative to the target repo cwd

@@ -205,7 +205,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
 
   // @invariant concurrency: Concurrent paper requests produce one durable execution and one learning receipt
   // @fails-if concurrent callers charge twice or apply the accepted learning effect twice
-  it('YUK-695: concurrent model requests share one durable execution and one accepted receipt', async () => {
+  it('concurrent model requests share one durable execution and one accepted receipt', async () => {
     const { db, input } = await modelPaper();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -240,7 +240,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
   // ── YUK-1445: mixed papers stay openable — gate-refused slots are typed-withheld ──
   // @invariant grading: a mixed paper issues only gate-admitted slots — the refused slot never gains a learner-facing issuance row, and reopen never re-asks the gate into serving it
   // @fails-if make paper opening ignore per-slot serving decisions or issue-then-mask; the assessment_issuance row count or the typed withheld_slots reason assertions fail
-  it('YUK-1445: mixed paper opens servable slots and lists gate-refused slots as typed withheld', async () => {
+  it('mixed paper opens servable slots and lists gate-refused slots as typed withheld', async () => {
     const db = testDb();
     await seedQuestion('q_ok', 'true');
     await seedQuestion('q_model', '必须列出方程、解释消元并保留速度单位。');

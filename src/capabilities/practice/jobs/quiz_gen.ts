@@ -653,7 +653,7 @@ async function generateQuizDrafts(
       );
     }
     // recordPlacementAttemptOutput commits the actual provider run id + cost (retention) and
-    // reports over-cap; block the delivery here so the settlement is preserved (codex P2).
+    // reports over-cap; block the delivery here so the settlement is preserved.
     const { overCap, costUnknown } = await recordPlacementAttemptOutput(
       db,
       params.placementAttempt,
@@ -1182,7 +1182,7 @@ export function buildQuizGenHandler(
           });
           continue;
         }
-        // Pre-attempt budget exhaustion (codex P2-A): acquirePlacementAttempt threw
+        // Pre-attempt budget exhaustion: acquirePlacementAttempt threw
         // PlacementStarterBudgetExhaustedError BEFORE placementAttempt was assigned, so the
         // finishPlacementAttempt path below cannot terminalize. A budget-exhausted claim can never
         // make progress (known_cost only grows), so terminalize it as 'exhausted' and COMPLETE the
@@ -1215,12 +1215,12 @@ export function buildQuizGenHandler(
         // (parse/exact-count/persist failure, admission block, fence-still-ours abort). Without
         // this the attempt stays 'running' holding a 20-min lease that blocks every pg-boss retry
         // (acquirePlacementAttempt rejects behind the live lease), and the claim stays pinned
-        // non-terminal with no recovery — the zombie the codex P1 flagged. 'interrupted' routes the
+        // non-terminal with no recovery — a zombie. 'interrupted' routes the
         // claim to retry_scheduled (non-final) or exhausted (final delivery) via finishPlacementAttempt.
         // Skip on StaleAuthority: the fence is already lost, so a superseding delivery owns
         // termination. reconcile's own terminal paths already finalized the attempt; a redundant
         // finalize there simply finds a terminal row and throws StaleAuthority, which we swallow so
-        // the ORIGINAL error still propagates (YUK-452 review).
+        // the ORIGINAL error still propagates (YUK-452).
         if (placementAttempt && !(err instanceof PlacementStarterStaleAuthorityError)) {
           try {
             await finishPlacementAttempt(
