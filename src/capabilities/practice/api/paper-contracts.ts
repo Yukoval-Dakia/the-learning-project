@@ -61,6 +61,12 @@ export const PaperListItemSchema = z.object({
   knowledge_ids: z.array(z.string()),
   knowledge: z.array(z.object({ id: z.string(), name: z.string() })),
   total_slots: z.number().int().nonnegative(),
+  // Canonical shelf estimate (YUK-1633): scheduling owner pace + paper formula
+  // via kernel port. Null trio = estimate unavailable on the serving host —
+  // honest unknown; the UI must not substitute a local coefficient.
+  estimated_minutes: z.number().nullable(),
+  estimated_minutes_source: z.enum(['observed', 'default']).nullable(),
+  estimated_minutes_sample_count: z.number().int().nonnegative().nullable(),
   session: z
     .object({
       id: z.string(),

@@ -41,6 +41,14 @@ export async function installDailyReviewPlanFacts(): Promise<void> {
   installDailyReviewPlanFactReader(readDailyReviewPlanFacts);
 }
 
+// YUK-1633 — installs the paper-time estimate into the kernel port so session's
+// shelf read consumes the owner fact without an upward scheduling edge (the
+// daily-review-plan precedent).
+export async function installPaperTimeEstimateFacts(): Promise<void> {
+  const { installPaperTimeEstimateFacts: install } = await import('./server/paper-time-estimate');
+  install();
+}
+
 /** The get_review_due tool body that the root host binds behind the kernel review-due port. */
 export async function loadReviewDueReader() {
   return (await import('./tools/question-context')).executeGetReviewDue;

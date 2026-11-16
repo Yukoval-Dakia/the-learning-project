@@ -545,6 +545,14 @@ export interface PaperListItem {
   generation_status: string;
   knowledge: Array<{ id: string; name: string }>;
   total_slots: number;
+  /**
+   * Canonical scheduling-owner estimate (YUK-1633). Null trio = the serving
+   * host had no estimate reader — honest unknown, never a UI-invented number.
+   * Optional until the generated schema picks up the wire fields.
+   */
+  estimated_minutes?: number | null;
+  estimated_minutes_source?: 'observed' | 'default' | null;
+  estimated_minutes_sample_count?: number | null;
   session: {
     id: string;
     status: string;

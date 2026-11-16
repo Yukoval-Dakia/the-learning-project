@@ -42,6 +42,21 @@ const SRC_LOOK: Record<'paper' | 'on_demand' | 'import', { icon: LucideIcon; ton
   on_demand: { icon: Send, tone: 'neutral' },
 };
 
+/**
+ * YUK-1633 — 估时文案如实标注 pace 来源：observed 是学习者实测中位数，
+ * default 是样本不足的默认口径；null（host 未装估时读口/估时不可得）
+ * 不编数字。UI 不得重立系数，分钟数只经 canonical wire。
+ */
+function estimateLabel(p: PaperListItem): string {
+  if (p.estimated_minutes == null || p.estimated_minutes_source == null) {
+    return '估时未知';
+  }
+  const minutes = Math.ceil(p.estimated_minutes);
+  return p.estimated_minutes_source === 'observed'
+    ? `约 ${minutes} 分钟 · 按你的做题速度`
+    : `约 ${minutes} 分钟 · 默认估时`;
+}
+
 /** A card's foot: what state the paper is in and its one action (same order as before). */
 function paperFoot(
   p: PaperListItem,
@@ -80,13 +95,11 @@ function paperFoot(
   return (
     <>
       {/* 待做态显示估时（设计 pface-shelf.jsx L83 待做卷显示 today.est）。
-          估算依据：PaperListItem wire 无 est/duration 字段（仅 total_slots），按题数
-          × 1.5 分钟/题估算——沿用 PfStream etaMin 的题数系数惯例（设计点播卷示例
-          8 题≈12 分钟，即 1.5 分钟/题）。FOLLOW-UP（phase-deferred）：补 paper 读模型
-          est 真值后接真值，见报告。在做态仍显 draft（恢复优先于估时）。 */}
-      <span className="pf-paper-when">
-        {sess ? '读取此会话已保存的版本' : `约 ${Math.ceil(p.total_slots * 1.5)} 分钟`}
-      </span>
+          YUK-1633：估时走 scheduling owner 的 canonical 值（pace 一次批量读 +
+          owner 定价公式），UI 不再套本地系数。observed 与 default 来源分开标注，
+          不冒充个人观测；估时不可得（null）如实不显示数字。在做态仍显
+          draft（恢复优先于估时）。 */}
+      <span className="pf-paper-when">{sess ? '读取此会话已保存的版本' : estimateLabel(p)}</span>
       {/* Resuming is the one filled action; a fresh start stays outlined, as in the queue. */}
       <Button
         variant={sess ? 'primary' : 'secondary'}
