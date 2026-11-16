@@ -414,8 +414,25 @@ export async function batchAcceptProposals(db: Db, input: unknown): Promise<Batc
   }
   const { acceptedIds: recordedAccepted } = await loadBatchAnchors(db, batchId);
 
+  // A batch that closes with no accepted member reports batch_id=null; surface
+  // only the desensitized item shape so the failing mode is visible without
+  // logging proposal ids or reason text. DTO unchanged.
+  const resolvedBatchId = recordedAccepted.size > 0 ? batchId : null;
+  if (resolvedBatchId === null) {
+    console.warn('[proposal-batch-accept] batch closed without accepted members', {
+      batch_id: resolvedBatchId,
+      batch_id_typeof: typeof resolvedBatchId,
+      requested: ids.length,
+      items: items.map((entry, index) => ({
+        index,
+        status: entry.status,
+        code: entry.code,
+      })),
+    });
+  }
+
   return {
-    batch_id: recordedAccepted.size > 0 ? batchId : null,
+    batch_id: resolvedBatchId,
     items,
     summary: {
       requested: ids.length,

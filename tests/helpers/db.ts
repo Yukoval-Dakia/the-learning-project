@@ -304,5 +304,97 @@ export async function resetDb() {
   // Vitest fork owns an isolated database, so taking the complete TRUNCATE lock set
   // atomically cannot contend with another test file.
   const tables = ALL_TABLES.map((table) => `"${table}"`).join(', ');
-  await db.execute(sql.raw(`TRUNCATE TABLE ${tables} RESTART IDENTITY CASCADE`));
+  try {
+    await db.execute(sql.raw(`TRUNCATE TABLE ${tables} RESTART IDENTITY CASCADE`));
+  } catch (error) {
+    // 40P01 means another backend held the lock TRUNCATE needed; snapshot that
+    // fork's activity for the pids named in the deadlock report, then rethrow.
+    await reportDeadlockParticipants(error).catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * Best-effort snapshot of the backends named in a 40P01 deadlock report, read
+ * through a dedicated short-lived connection to THIS fork's TEST_DATABASE_URL
+ * (the same env testDb() already used — not another worker's DB). Records only
+ * safe metadata columns (pid/state/wait_event/lock mode) — never query text,
+ * params, client address, or row data. Drizzle wraps the driver PostgresError
+ * in a DrizzleQueryError whose own message embeds the SQL+params, so we unwrap
+ * the cause chain for the real code/detail and never log the outer error.
+ * Always resolves; a dead/wedged probe returns early and never masks the
+ * original outer error, which the caller rethrows unchanged.
+ */
+async function reportDeadlockParticipants(error: unknown): Promise<void> {
+  // Walk the cause chain: db.execute throws DrizzleQueryError{query,params,
+  // cause} — the code/detail live only on the inner PostgresError.
+  let node: unknown = error;
+  let detail: string | undefined;
+  let isDeadlock = false;
+  for (let depth = 0; depth < 8 && node !== null && node !== undefined; depth += 1) {
+    const rec = node as { code?: unknown; detail?: unknown; cause?: unknown };
+    if (rec.code === '40P01') {
+      isDeadlock = true;
+      if (typeof rec.detail === 'string') detail = rec.detail;
+      break;
+    }
+    node = rec.cause;
+  }
+  if (!isDeadlock) return;
+  // Postgres prints "Process <pid> waits for ..." per participant — these are
+  // the real lock parties, not pg_blocking_pids(our own backend).
+  const pids = [...(detail ?? '').matchAll(/Process (\d+) waits for/g)].map((m) => Number(m[1]));
+  if (pids.length === 0) return;
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url) return;
+  let probe: postgres.Sql | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      (async () => {
+        probe = postgres(url, { max: 1, connect_timeout: 2 });
+        const rows = await probe`
+          SELECT
+            a.pid,
+            a.state,
+            a.wait_event_type,
+            a.wait_event,
+            a.backend_xid IS NOT NULL AS has_xid,
+            (SELECT l.mode FROM pg_locks l WHERE l.pid = a.pid AND NOT l.granted LIMIT 1)
+              AS waiting_mode,
+            (SELECT l.mode FROM pg_locks l WHERE l.pid = a.pid AND l.granted LIMIT 1)
+              AS held_mode
+          FROM pg_stat_activity a
+          WHERE a.datname = current_database()
+            AND a.pid = ANY(${pids})
+          ORDER BY a.pid
+          LIMIT 16
+        `;
+        // Post-hoc snapshot — the named pid may already be gone; an empty row
+        // does not prove the lock was absent.
+        console.warn('[resetDb] TRUNCATE 40P01 deadlock participants', {
+          captured_at: new Date().toISOString(),
+          named_pids: pids,
+          snapshot: rows.map((row) => ({
+            pid: row.pid,
+            state: row.state,
+            wait_event_type: row.wait_event_type,
+            wait_event: row.wait_event,
+            has_xid: row.has_xid,
+            waiting_mode: row.waiting_mode,
+            held_mode: row.held_mode,
+          })),
+        });
+      })(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, 3000);
+        timer.unref?.();
+      }),
+    ]);
+  } catch {
+    // Diagnostic must never fail the reset — the original 40P01 is rethrown.
+  } finally {
+    if (timer) clearTimeout(timer);
+    await probe?.end({ timeout: 1 }).catch(() => undefined);
+  }
 }
