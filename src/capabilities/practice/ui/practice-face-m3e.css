@@ -77,6 +77,18 @@
     color: var(--un-caution);
   }
 
+  /* YUK-1593 — 复盘的未判定计数是中性状态（无对错色），状态行更小一号。 */
+  & .pf-dist-legend .pf-dist-neutral {
+    color: var(--un-md-sys-color-on-surface-variant);
+  }
+
+  & .pf-dist-status {
+    margin: 0;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-small-size);
+    line-height: 1.5;
+  }
+
   /* ═══ Shelf (练习卷) ═══ */
   & .pf-shelf {
     display: grid;
@@ -485,6 +497,13 @@
   & .pf-rq-none,
   & .pf-rq-note {
     color: var(--un-md-sys-color-on-surface-variant);
+  }
+
+  /* YUK-1593 — native retrospective body: block tree + per-slot rows share the
+     answer cell's vertical rhythm. */
+  & .pf-rq-native-body {
+    display: grid;
+    gap: var(--un-sp-3);
   }
 
   & .pf-rq-note {

@@ -16,6 +16,8 @@ import { EvidenceLightbox } from '@/ui/components/response/EvidenceLightbox';
 import {
   COARSE_OUTCOME_META,
   type CoarseOutcome,
+  isSlotResponseAnswered,
+  nativeResponseValue,
   optionsFromChoicesMd,
 } from '@/ui/components/response/response-types';
 import { SlotResultBadge } from '@/ui/components/response/SlotResultBadge';
@@ -25,6 +27,7 @@ import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { Button, Chip } from '@/ui-next/public';
 
 import type { PaperTaskRef } from '../session/public';
+import { PaperRetroResponse } from './PaperRetroResponse';
 import type { PaperSlot } from './practice-api';
 import { usePracticeClient } from './practice-client';
 
@@ -67,6 +70,27 @@ export function PfrQRow({
   const isChoice = choiceOptions.length > 0;
   const releasedOutcome = visible ? coarseOutcomeOf(visible.outcome) : null;
   const answerImages = sub?.answer_image_refs ?? [];
+  // YUK-1593 — 已公开 assessment 的作答/题面/证据从冻结字段回读；提交槽恒 answered，
+  // 未提交槽按 response_set 条目判定（missing 才是真未作答），不再读 answer_md。
+  const native = slot.assessment !== undefined;
+  const nativeEntries = slot.assessment?.response_set.entries ?? [];
+  const nativeAnswered =
+    sub !== null ||
+    nativeEntries.some((entry) => isSlotResponseAnswered(nativeResponseValue(entry)));
+  // 辨认不清/主动留白是有记录的作答状态，不能当未作答；没有内容条目才是 missing。
+  const nativeMissing =
+    !nativeAnswered &&
+    nativeEntries.every(
+      (entry) => !('state' in entry) || (entry.state !== 'unknown' && entry.state !== 'blank'),
+    );
+  // 记录状态的精确字样：有 answered 条目按「已作答 · 待评」，否则如实辨认不清/主动留白。
+  const nativeRecordedCopy = nativeEntries.some(
+    (entry) => 'state' in entry && entry.state === 'unknown',
+  )
+    ? '无法辨认'
+    : nativeEntries.some((entry) => 'state' in entry && entry.state === 'blank')
+      ? '主动留白'
+      : '已作答 · 待评';
 
   return (
     <div className="pf-rq">
@@ -89,6 +113,11 @@ export function PfrQRow({
             // 交卷缓冲（visible_to_user=false）= 联合组暂定：已提交待全组解锁，无对错色。
             <SlotResultBadge lifecycle="group_tentative" />
           )
+        ) : native && nativeMissing ? (
+          <Chip>未作答</Chip>
+        ) : native ? (
+          // 有记录但判分未 release：如实记录状态（辨认不清/主动留白/已作答待评），不当对错。
+          <Chip tone="caution">{nativeRecordedCopy}</Chip>
         ) : (
           <Chip>未作答</Chip>
         )}
@@ -104,35 +133,44 @@ export function PfrQRow({
               variant="inline"
             />
           ))}
-          <div className="pf-rq-row">
-            <span className="pf-rq-label">你的作答</span>
-            {isChoice && sub ? (
-              <ChoiceSetResponse
-                options={choiceOptions}
-                mode="single"
-                value={answeredText ? selectedIds : null}
-                onChange={() => {}}
-                disabled
-                notation={slot.question.notation}
-                feedback="graded"
-                selectionOutcome={
-                  releasedOutcome === null
-                    ? null
-                    : releasedOutcome === 'correct'
-                      ? 'correct'
-                      : 'not_correct'
-                }
-                ariaLabel={`第 ${n} 题选项`}
-              />
-            ) : sub?.answer_md ? (
-              // de-wenyan: PaperSlot carries no subject profile and this is the
-              // student's own typed answer (not a classical-Chinese passage), so
-              // it renders in the neutral default font.
-              <span>{sub.answer_md}</span>
-            ) : (
-              <span className="pf-rq-none">（未作答）</span>
-            )}
-          </div>
+          {native ? (
+            <PaperRetroResponse
+              slot={slot}
+              notation={slot.question.notation}
+              releasedOutcome={releasedOutcome}
+              onPreview={setZoomAsset}
+            />
+          ) : (
+            <div className="pf-rq-row">
+              <span className="pf-rq-label">你的作答</span>
+              {isChoice && sub ? (
+                <ChoiceSetResponse
+                  options={choiceOptions}
+                  mode="single"
+                  value={answeredText ? selectedIds : null}
+                  onChange={() => {}}
+                  disabled
+                  notation={slot.question.notation}
+                  feedback="graded"
+                  selectionOutcome={
+                    releasedOutcome === null
+                      ? null
+                      : releasedOutcome === 'correct'
+                        ? 'correct'
+                        : 'not_correct'
+                  }
+                  ariaLabel={`第 ${n} 题选项`}
+                />
+              ) : sub?.answer_md ? (
+                // de-wenyan: PaperSlot carries no subject profile and this is the
+                // student's own typed answer (not a classical-Chinese passage), so
+                // it renders in the neutral default font.
+                <span>{sub.answer_md}</span>
+              ) : (
+                <span className="pf-rq-none">（未作答）</span>
+              )}
+            </div>
+          )}
           {answerImages.length > 0 && (
             <div className="pf-rq-row">
               <span className="pf-rq-label">作答附件</span>
@@ -243,23 +281,57 @@ export function PfRetro({
     );
 
   const slots = detail.sections.flatMap((s) => s.slots);
-  const verdicts = slots.map((s) => {
-    const sub = s.slot_state.submission;
-    if (sub && 'visible_to_user' in sub && sub.visible_to_user === true)
-      return verdictOf(sub.outcome);
-    return null;
-  });
-  const good = verdicts.filter((v) => v === 'good').length;
-  const hard = verdicts.filter((v) => v === 'hard').length;
-  const again =
-    verdicts.filter((v) => v === 'again').length + verdicts.filter((v) => v === null).length;
-  const total = slots.length;
-  const summaryMd = detail.session?.summary_md;
-  const unknownScores = slots.filter(
-    (slot) =>
-      slot.slot_state.submission?.visible_to_user &&
-      slot.slot_state.submission.outcome === 'partial_unknown',
+  // YUK-1593 — 分数计数只收权威已发布且已知的 outcome；未发布/缓冲/已记录无判定/
+  // 未知 outcome 与真正未作答各归中性状态，绝不混入对/部分/错，也不从作答条目猜对错。
+  const good = slots.filter(
+    (s) =>
+      s.slot_state.submission?.visible_to_user === true &&
+      s.slot_state.submission.outcome === 'correct',
   ).length;
+  const hard = slots.filter(
+    (s) =>
+      s.slot_state.submission?.visible_to_user === true &&
+      s.slot_state.submission.outcome === 'partial',
+  ).length;
+  const wrong = slots.filter(
+    (s) =>
+      s.slot_state.submission?.visible_to_user === true &&
+      s.slot_state.submission.outcome === 'incorrect',
+  ).length;
+  const total = slots.length;
+  const pending = slots.filter((s) => {
+    const sub = s.slot_state.submission;
+    if (sub?.visible_to_user === false) return true; // buffered 联合组暂定
+    // released outcome 但无法判对错（unsupported=暂不能自动判）或 outcome 不可读 → 中性待评。
+    return (
+      sub?.visible_to_user === true &&
+      (sub.outcome === 'unsupported' || !(sub.outcome in COARSE_OUTCOME_META))
+    );
+  }).length;
+  const recordedUnpublished = slots.filter((s) => {
+    const sub = s.slot_state.submission;
+    if (sub || !s.assessment) return false;
+    return s.assessment.response_set.entries.some(
+      (entry) =>
+        isSlotResponseAnswered(nativeResponseValue(entry)) ||
+        ('state' in entry && (entry.state === 'unknown' || entry.state === 'blank')),
+    );
+  }).length;
+  const unknown = slots.filter((s) => {
+    const sub = s.slot_state.submission;
+    if (sub?.visible_to_user === true) return sub.outcome === 'partial_unknown';
+    return false;
+  }).length;
+  const unanswered = slots.filter((s) => {
+    if (s.slot_state.submission) return false;
+    if (!s.assessment) return true;
+    return s.assessment.response_set.entries.every(
+      (entry) =>
+        !isSlotResponseAnswered(nativeResponseValue(entry)) &&
+        !('state' in entry && (entry.state === 'unknown' || entry.state === 'blank')),
+    );
+  }).length;
+  const summaryMd = detail.session?.summary_md;
 
   return (
     <div className="pf-retro un-m3e-bridge" data-screen-label={`复盘 · ${artifactId}`}>
@@ -286,7 +358,7 @@ export function PfRetro({
           <div className="pf-dist-bar pf-dist-bar-lg" aria-hidden="true">
             {good > 0 && <span data-seg="good" style={{ flex: good }} />}
             {hard > 0 && <span data-seg="hard" style={{ flex: hard }} />}
-            {again > 0 && <span data-seg="again" style={{ flex: again }} />}
+            {wrong > 0 && <span data-seg="again" style={{ flex: wrong }} />}
           </div>
           <p className="pf-dist-legend">
             <span data-seg="good">{good} 对</span>
@@ -297,8 +369,28 @@ export function PfRetro({
               </>
             )}
             <span aria-hidden="true">·</span>
-            <span data-seg="again">{again} 错/未答</span>
+            <span data-seg="again">{wrong} 错</span>
+            {pending + recordedUnpublished + unknown + unanswered > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="pf-dist-neutral">
+                  {pending + recordedUnpublished + unknown + unanswered} 无判定
+                </span>
+              </>
+            )}
           </p>
+          {(pending > 0 || recordedUnpublished > 0 || unknown > 0 || unanswered > 0) && (
+            <p className="pf-dist-status">
+              {[
+                pending > 0 ? `${pending} 待评/缓冲` : null,
+                recordedUnpublished > 0 ? `${recordedUnpublished} 已作答未发布` : null,
+                unknown > 0 ? `${unknown} 分数未知` : null,
+                unanswered > 0 ? `${unanswered} 未作答` : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </p>
+          )}
         </div>
       </div>
 
@@ -313,8 +405,17 @@ export function PfRetro({
         ) : (
           <>
             <p className="pf-retro-summary-text">
-              {good} 题完整正确，{hard} 题部分正确，{again} 题错或未答。
-              {unknownScores > 0 ? `其中 ${unknownScores} 题分数未知。` : ''}
+              {good} 题完整正确，{hard} 题部分正确，{wrong} 题错。
+              {pending + recordedUnpublished + unknown + unanswered > 0
+                ? `另有 ${[
+                    pending > 0 ? `${pending} 题待评或缓冲` : null,
+                    recordedUnpublished > 0 ? `${recordedUnpublished} 题已作答未发布` : null,
+                    unknown > 0 ? `${unknown} 题分数未知` : null,
+                    unanswered > 0 ? `${unanswered} 题未作答` : null,
+                  ]
+                    .filter(Boolean)
+                    .join('，')}。`
+                : ''}
             </p>
             <p className="pf-retro-summary-meta">系统小结 · 按这张卷的判分统计</p>
           </>
