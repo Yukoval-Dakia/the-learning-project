@@ -29,6 +29,8 @@ export interface ConfigOverride {
     maxCost?: number;
     transientRetries?: number;
     timeout?: number;
+    /** Structured-submit 纠正余量；见 TaskBudget.submitCorrectionMarginMs。 */
+    submitCorrectionMarginMs?: number;
   };
   /** task.<kind>.reasoning：模型原生推理参数（键 = wire 参数名）。 */
   reasoning?: {
@@ -981,13 +983,28 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
   // 元数据通道：超时按普通失败记账（outcome failed，判决不变、无锚点）。
   'practice.question_admission_prior_timeout_ms': {
     schema: z.number().positive().lt(STUCK_RUN_THRESHOLD_MS),
-    codeDefault: 120_000,
+    codeDefault: 60_000,
     envName: 'QUESTION_ADMISSION_PRIOR_TIMEOUT_MS',
     envParse: numberEnv,
     tier: 'B',
     description:
       '准入 solution-prior 单次执行超时 ms；盲解不受此键影响，超时按普通失败记账、判决不变。' +
-      '注意：结构化提交纠正余量 = 本值 − 60s，低于约 60s 时多分部先验必然失败、首轮被拒无补救',
+      '纠正余量另由 practice.question_admission_prior_correction_margin_ms 决定，' +
+      'timeout−margin 就是可用的提交纠正窗口，margin>timeout 时先验必然失败',
+    consumers: ['practice.question-admission'],
+    reload: 'per-call',
+    exposure: 'operator',
+  },
+  'practice.question_admission_prior_correction_margin_ms': {
+    schema: z.number().positive().lt(STUCK_RUN_THRESHOLD_MS),
+    codeDefault: 15_000,
+    envName: 'QUESTION_ADMISSION_PRIOR_CORRECTION_MARGIN_MS',
+    envParse: numberEnv,
+    tier: 'B',
+    description:
+      '准入 solution-prior 的结构化提交纠正余量 ms（deadline=启动+窗口−本值，默认 15s 替代共享 60s）；' +
+      '只随 runSolutionPriorPass 的调用方覆盖生效，盲解与其他任务仍为 60s 共享默认。' +
+      '调大=更多补救轮次但失控更晚收口；调小=更快收口但多分部先验可能来不及落地',
     consumers: ['practice.question-admission'],
     reload: 'per-call',
     exposure: 'operator',

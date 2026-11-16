@@ -286,6 +286,9 @@ export function buildQueryOptions(
     maxTurns: budget.maxIterations === 'unbounded' ? undefined : budget.maxIterations || 1,
     // Keep the HTTP timers behind the task lifecycle timeout.
     providerTimeoutMs: providerHttpTimeoutMs(budget.timeout),
+    ...(budget.submitCorrectionMarginMs !== undefined
+      ? { submitCorrectionMarginMs: budget.submitCorrectionMarginMs }
+      : {}),
     transportEvidence,
     ...(declaredDef.enforceMaxCost === true ||
     declaredDef.structuredOutputMode === 'tool' ||

@@ -221,6 +221,7 @@ export function getTaskOverride(kind: string):
         maxCost?: number;
         transientRetries?: number;
         timeout?: number;
+        submitCorrectionMarginMs?: number;
       };
       /** YUK-1806 — 期望思考层级；legacy `reasoning_effort` 值按 level 兼容读。 */
       reasoning?: {
@@ -254,6 +255,7 @@ export function getTaskOverride(kind: string):
             maxCost?: number;
             transientRetries?: number;
             timeout?: number;
+            submitCorrectionMarginMs?: number;
           },
         }
       : {}),

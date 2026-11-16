@@ -14,6 +14,8 @@ export interface TaskBudgetOverride {
   readonly timeoutMs?: number;
   /** Caller money cap in USD. It only lowers the configured maxCost, never raises it. */
   readonly maxCost?: number;
+  /** See TaskBudget.submitCorrectionMarginMs — structured-submit kinds only. */
+  readonly submitCorrectionMarginMs?: number;
 }
 
 /**
@@ -53,6 +55,15 @@ export function createTaskBudgetReaders<const Catalog extends TaskCatalog>(tasks
       throw new RangeError('Caller maxCost must be a finite non-negative USD amount');
     }
     const configuredMaxCost = configured?.maxCost ?? defaults.maxCost;
+    const margin = explicit?.submitCorrectionMarginMs ?? configured?.submitCorrectionMarginMs;
+    if (
+      margin !== undefined &&
+      !(Number.isFinite(margin) && margin > 0 && margin < STUCK_RUN_THRESHOLD_MS)
+    ) {
+      throw new RangeError(
+        `Submit correction margin must be positive and below ${STUCK_RUN_THRESHOLD_MS}ms`,
+      );
+    }
     return Object.freeze({
       maxIterations: explicit?.maxIterations ?? configured?.maxIterations ?? defaults.maxIterations,
       maxCost:
@@ -62,6 +73,7 @@ export function createTaskBudgetReaders<const Catalog extends TaskCatalog>(tasks
       transientRetries: configured?.transientRetries ?? defaults.transientRetries,
       timeout,
       timeoutSource,
+      ...(margin !== undefined ? { submitCorrectionMarginMs: margin } : {}),
     });
   }
 
@@ -75,6 +87,7 @@ export function createTaskBudgetReaders<const Catalog extends TaskCatalog>(tasks
       maxCost: typed || structuredTool || def.enforceMaxCost === true,
       transientRetries: true,
       timeout: true,
+      submitCorrectionMarginMs: structuredTool,
     };
   }
 
@@ -89,6 +102,9 @@ export function createTaskBudgetReaders<const Catalog extends TaskCatalog>(tasks
         maxCost: wired.maxCost ? budget.maxCost : null,
         transientRetries: budget.transientRetries,
         timeout: budget.timeout,
+        submitCorrectionMarginMs: wired.submitCorrectionMarginMs
+          ? (budget.submitCorrectionMarginMs ?? null)
+          : null,
       },
     };
   }

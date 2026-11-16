@@ -1009,10 +1009,18 @@ export function settledKeysFromDefinition(
 
 /**
  * system_config key for the prior pass's caller-side execution cap; blind
- * solves keep task.<kind>.budget. Values ≲60s leave no structured-submit
- * correction window, so multi-part priors can never complete.
+ * solves keep task.<kind>.budget. The usable submit-correction window is
+ * timeout − correction margin (see the margin key below).
  */
 export const SOLUTION_PRIOR_TIMEOUT_CONFIG_KEY = 'practice.question_admission_prior_timeout_ms';
+
+/**
+ * system_config key for the prior pass's structured-submit correction margin
+ * (correctionDeadline = run start + window − margin). Caller-side like the
+ * timeout key; blind solves and all other kinds keep the 60s shared default.
+ */
+export const SOLUTION_PRIOR_CORRECTION_MARGIN_CONFIG_KEY =
+  'practice.question_admission_prior_correction_margin_ms';
 
 export interface SolutionPriorPassResult {
   record: SolutionPriorRecordT | null;
@@ -1063,12 +1071,16 @@ export async function runSolutionPriorPass(
     });
     const wire = admissionWireInput(payload, deps.images);
     const configured = getConfig(SOLUTION_PRIOR_TIMEOUT_CONFIG_KEY);
+    const configuredMargin = getConfig(SOLUTION_PRIOR_CORRECTION_MARGIN_CONFIG_KEY);
     const result = await deps.runTask(QUESTION_ADMISSION_TASK_KIND, wire, {
       judgeRetryPolicy: 'none',
       budgetOverride: {
         maxIterations: 1,
         ...(typeof configured === 'number' && Number.isFinite(configured)
           ? { timeoutMs: configured }
+          : {}),
+        ...(typeof configuredMargin === 'number' && Number.isFinite(configuredMargin)
+          ? { submitCorrectionMarginMs: configuredMargin }
           : {}),
       },
       ...(deps.subjectProfile != null ? { subjectProfile: deps.subjectProfile } : {}),

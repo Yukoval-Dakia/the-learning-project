@@ -47,6 +47,13 @@ export interface Options {
    */
   resume?: string;
   /**
+   * Structured-submit correction reserve: the submit loop's deadline is
+   * `executionWindowMs − this value`. Absent → the shared
+   * NO_PROGRESS_BUDGET_LANDING_MARGIN_MS default. Wired only for
+   * structuredOutputMode='tool' kinds.
+   */
+  submitCorrectionMarginMs?: number;
+  /**
    * Whole-request HTTP budget so the lifecycle, not the SDK's 10-minute default,
    * ends the call.
    */

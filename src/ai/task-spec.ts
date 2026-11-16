@@ -42,6 +42,13 @@ export interface TaskBudget {
   readonly maxCost: number;
   readonly transientRetries: number;
   readonly timeout: number;
+  /**
+   * Structured-submit correction reserve: the submit loop's deadline is
+   * `executionWindowMs − this value`. Absent →
+   * `NO_PROGRESS_BUDGET_LANDING_MARGIN_MS` (60s). Only consumed by
+   * `structuredOutputMode='tool'` kinds; everything else ignores it.
+   */
+  readonly submitCorrectionMarginMs?: number;
 }
 
 export type TaskPrompt =

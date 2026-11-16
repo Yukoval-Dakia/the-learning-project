@@ -571,7 +571,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           correctionDeadline:
             Date.now() +
             (this.args.executionWindowMs ?? Number.POSITIVE_INFINITY) -
-            NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
+            (options.submitCorrectionMarginMs ?? NO_PROGRESS_BUDGET_LANDING_MARGIN_MS),
         })
       : undefined;
     if (structuredOutput) {
