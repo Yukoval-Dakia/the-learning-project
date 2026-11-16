@@ -38,6 +38,7 @@ export { editArtifactBodyBlocks } from './server/body-blocks-edit';
 // root folds them into GET /api/admin/config.
 export { notesConfigEffectiveFacts } from './server/config-effective-facts';
 export { requestEditingBlur, requestEditingHeartbeat } from './server/editing-request';
+export { installNotesHostOperations } from './server/host-operations';
 export type { NoteListQuery, NoteListResponse } from './server/note-list-read';
 export { loadNoteList } from './server/note-list-read';
 export { loadNotePage } from './server/note-page';

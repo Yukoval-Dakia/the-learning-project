@@ -12,7 +12,7 @@ import {
 
 import { ApiAuthError, ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
-import { readCompanionFocus } from '@/ui/lib/use-copilot-dwell';
+import { readCompanionFocus, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import {
   type PersistedPendingCopilotRequestBody,
   type PersistedPendingCopilotTurn,
@@ -222,6 +222,11 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     if (requestBody.derivation_policy === 'answer_only') {
       if (!(await confirmAnswerOnly(key, Boolean(recovery), sessionId))) return;
     }
+    // A goal focus comes from a today-page 「改」/「撤回」 and names the arrangement for the turn the
+    // learner types next. Kept on, every later turn on /today would name it too, and an
+    // arrangement changed by mistake can't be taken back; so a typed turn that carries it uses it
+    // up. Card confirmations and replays don't.
+    if (!recovery && !explicit && readCompanionFocus()?.kind === 'goal') setCompanionFocus(null);
     const pending: PendingTurn = {
       v: 2,
       idempotencyKey: key,
@@ -243,6 +248,9 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     const showing = () => ctx.get().currentSessionId === sessionId;
     const s = ctx.get();
     if (!recovery) {
+      // A handed sentence that is sent is the learner's now: if it comes back after a failed
+      // send, the next handoff must add to it, not replace it.
+      internals.handedDraft = null;
       ctx.set({
         error: null,
         refreshFailed: false,

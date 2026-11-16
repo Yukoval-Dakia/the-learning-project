@@ -822,6 +822,110 @@ describe('edit/submit question boundary', () => {
     expect(revisions[revisions.length - 1].structure.parts[0].prompt_md).toContain('函数值已接受');
   });
 
+  // @invariant data: an empty blank_order stores as undeclared — same saved form and digest as omitting it — while a real blank part still enforces declared-order coverage
+  // @fails-if a choice draft with blank_order:[] is rejected, the stored part keeps the key (two canonical forms / two digests), or a non-covering order passes the publish seam
+  it('stores an empty blank_order as undeclared and still enforces declared orders', async () => {
+    const db = testDb();
+    const doc = selectDocument('下列函数在区间上递增的是', null);
+    const bare = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
+    const withEmpty = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
+    (withEmpty.parts as Record<string, unknown>[])[0].blank_order = [];
+
+    const savedEmpty = await saveDraftEdit(db, {
+      input: { action: 'save', document: withEmpty, request_id: 'empty-blank-order' },
+      ctx: ACTOR,
+    });
+    expect(savedEmpty.status).toBe('saved');
+    if (savedEmpty.status !== 'saved') return;
+    const savedBare = await saveDraftEdit(db, {
+      input: { action: 'save', document: bare, request_id: 'bare-blank-order' },
+      ctx: ACTOR,
+    });
+    expect(savedBare.status).toBe('saved');
+    if (savedBare.status !== 'saved') return;
+    const [emptyBlock] = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.id, blockIdOf(savedEmpty.draft_ref)));
+    const [bareBlock] = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.id, blockIdOf(savedBare.draft_ref)));
+    const emptyPart = (emptyBlock.structured as unknown as { parts: Record<string, unknown>[] })
+      .parts[0];
+    expect('blank_order' in emptyPart).toBe(false);
+    expect(JSON.stringify(emptyBlock.structured)).toBe(JSON.stringify(bareBlock.structured));
+    const digestOf = (d: QuestionDraftDocumentT): string => {
+      const c = draftDocumentToContract(d, 'g');
+      return contractIntegrityDigest({
+        structure: c.structure,
+        response_spec: c.response_spec,
+        scoring_basis: c.scoring_basis,
+        execution_plan: c.execution_plan,
+      });
+    };
+    expect(digestOf(QuestionDraftDocument.parse(withEmpty))).toBe(
+      digestOf(QuestionDraftDocument.parse(bare)),
+    );
+
+    const twoBlank = JSON.parse(JSON.stringify(twoBlankDocument('按序填写'))) as Record<
+      string,
+      unknown
+    >;
+    (twoBlank.parts as Record<string, unknown>[])[0].blank_order = ['s2', 's1'];
+    const declared = await saveDraftEdit(db, {
+      input: { action: 'save', document: twoBlank, request_id: 'declared-order' },
+      ctx: ACTOR,
+    });
+    expect(declared.status).toBe('saved');
+    if (declared.status === 'saved') {
+      expect(declared.issues.filter((i) => i.code.includes('blank_order'))).toEqual([]);
+    }
+
+    const missing = JSON.parse(JSON.stringify(twoBlank)) as Record<string, unknown>;
+    (missing.parts as Record<string, unknown>[])[0].blank_order = ['s1'];
+    const missingSaved = await saveDraftEdit(db, {
+      input: { action: 'save', document: missing, request_id: 'missing-order' },
+      ctx: ACTOR,
+    });
+    expect(missingSaved.status).toBe('saved');
+    if (missingSaved.status === 'saved') {
+      expect(missingSaved.issues.map((i) => i.code)).toContain(
+        'response_spec_blank_order_coverage',
+      );
+    }
+
+    const stray = JSON.parse(JSON.stringify(bare)) as Record<string, unknown>;
+    (stray.parts as Record<string, unknown>[])[0].blank_order = ['s1'];
+    const straySaved = await saveDraftEdit(db, {
+      input: { action: 'save', document: stray, request_id: 'stray-order' },
+      ctx: ACTOR,
+    });
+    expect(straySaved.status).toBe('saved');
+    if (straySaved.status === 'saved') {
+      expect(
+        straySaved.issues.some(
+          (i) =>
+            i.code === 'response_spec_blank_order_unresolved_slot' &&
+            i.detail.includes('remove blank_order'),
+        ),
+      ).toBe(true);
+    }
+
+    const mistyped = JSON.parse(JSON.stringify(bare)) as Record<string, unknown>;
+    (mistyped.parts as Record<string, unknown>[])[0].blank_order = 's1';
+    const rejected = await saveDraftEdit(db, {
+      input: { action: 'save', document: mistyped, request_id: 'mistyped-order' },
+      ctx: ACTOR,
+    });
+    expect(rejected.status).toBe('rejected');
+    if (rejected.status === 'rejected') {
+      expect(rejected.issues[0]?.code).toBe('invalid_document');
+      expect(rejected.issues[0]?.detail).toContain('parts[0].blank_order');
+      expect(rejected.issues[0]?.detail).toContain('omit');
+    }
+  });
+
   // @invariant grading: a prompt-only edit of an admitted question stays issuable on the current revision and in the practice pool
   // @fails-if submit withholds a scoring-unchanged edit, or the admitted legacy row is left unchanged while issuance rejects the current revision
   it('keeps an admitted question issuable after a content edit', async () => {

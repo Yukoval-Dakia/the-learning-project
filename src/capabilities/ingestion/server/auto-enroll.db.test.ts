@@ -442,7 +442,7 @@ describe('runAutoEnrollForSession', () => {
         expect(enrolledQuestions).toHaveLength(2);
         for (const row of enrolledQuestions) {
           expect(row.metadata).toMatchObject({
-            ingestion_enrollment: { knowledge: 'missing' },
+            ingestion_enrollment: { knowledge: 'restricted' },
           });
         }
       }

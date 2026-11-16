@@ -303,6 +303,55 @@ function eventToText(input: MemoryEventInput): string {
   });
 }
 
+// One process shares one SDK instance per database and model. Each `new Memory()`
+// starts PGVector DDL immediately, so a fresh client per call races CREATE TABLE
+// on pg_type. The OpenAI session header is a new UUID per config build and must
+// not split that instance.
+const memoryRuntimes = new Map<string, Promise<Mem0Like>>();
+
+function memoryRuntimeKey(config: MemoryConfig): string {
+  const vector = config.vectorStore.config;
+  const embedder = config.embedder.config;
+  const llm = config.llm.config;
+  return JSON.stringify([
+    config.vectorStore.provider,
+    vector.collectionName ?? null,
+    vector.dbname ?? null,
+    vector.host ?? null,
+    vector.port ?? null,
+    vector.user ?? null,
+    vector.password ?? null,
+    vector.embeddingModelDims ?? null,
+    vector.hnsw ?? null,
+    vector.diskann ?? null,
+    config.embedder.provider,
+    embedder.model ?? null,
+    embedder.baseURL ?? null,
+    embedder.apiKey ?? null,
+    embedder.embeddingDims ?? null,
+    config.llm.provider,
+    llm.model ?? null,
+    llm.baseURL ?? null,
+    llm.apiKey ?? null,
+    config.disableHistory ?? null,
+    config.historyDbPath ?? null,
+  ]);
+}
+
+function sharedMemoryRuntime(config: MemoryConfig): Promise<Mem0Like> {
+  const key = memoryRuntimeKey(config);
+  const existing = memoryRuntimes.get(key);
+  if (existing) return existing;
+  const created = import('mem0ai/oss')
+    .then(({ Memory }) => new Memory(config))
+    .catch((error: unknown) => {
+      if (memoryRuntimes.get(key) === created) memoryRuntimes.delete(key);
+      throw error;
+    });
+  memoryRuntimes.set(key, created);
+  return created;
+}
+
 export function createMemoryClient(
   opts: { env?: Env; memoryFactory?: (config: MemoryConfig) => Mem0Like } = {},
 ): MemoryClient {
@@ -311,17 +360,8 @@ export function createMemoryClient(
   // Config is validated eagerly, the real SDK loads on first operation.
   const config = createMem0Config(env);
   const injectedMemory = opts.memoryFactory?.(config);
-  let memoryPromise: Promise<Mem0Like> | undefined;
-  const getMemory = (): Promise<Mem0Like> => {
-    if (injectedMemory) return Promise.resolve(injectedMemory);
-    memoryPromise ??= import('mem0ai/oss')
-      .then(({ Memory }) => new Memory(config))
-      .catch((error) => {
-        memoryPromise = undefined;
-        throw error;
-      });
-    return memoryPromise;
-  };
+  const getMemory = (): Promise<Mem0Like> =>
+    injectedMemory ? Promise.resolve(injectedMemory) : sharedMemoryRuntime(config);
   const findByEventId = async (eventId: string): Promise<MemoryEventResult> => {
     const memory = await getMemory();
     const raw = await memory.getAll({

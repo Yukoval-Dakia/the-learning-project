@@ -14,6 +14,7 @@ import {
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { question } from '@/db/schema';
+import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 
 export interface FewShotExample {
   id: string;
@@ -125,6 +126,11 @@ export async function retrieveFewShotExamples(
       FROM question
       WHERE kind = ${kind}
         AND ${notDraftPredicate(question.draft_status)}
+        -- Consent boundary: exemplar text (prompt/choices/reference) is rendered into the
+        -- QuizGenTask prompt — question content used to author ANOTHER question. Restricted
+        -- lineage is excluded before the pool limit so it can neither reach the model nor
+        -- starve the candidate pool.
+        AND ${sourceAllowsDerivationSql({ kind: 'question', id: question.id })}
         ${overlapPredicate}
       ORDER BY ${tierRank} ASC, created_at DESC
       LIMIT ${CANDIDATE_POOL}

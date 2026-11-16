@@ -102,7 +102,6 @@ const ATTEMPT_WRAPPER_SURFACES = [
 
 const MIGRATED_COST_SURFACES = [
   'src/capabilities/agency/server/memory/triggers.ts',
-  'src/capabilities/knowledge/server/propose_edge.ts',
   'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts',
   'src/capabilities/ingestion/server/provider-attempts.ts',
   'src/server/ai/provider-attempt-runtime.ts',

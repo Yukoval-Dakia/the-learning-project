@@ -21,7 +21,7 @@ import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { loadEnv } from '../server/env';
 import { guardDatabaseUrl } from './local-db-env';
 
-// YUK-365 (Codex review P2, Finding 2): the standalone worker MUST load the same
+// The standalone worker MUST load the same
 // env files the Hono API loads (server/index.ts → loadEnv()), and it must do so
 // BEFORE importing @/db/client (which reads DATABASE_URL at module top and throws
 // if it's unset). Most AI tasks run as BACKGROUND pg-boss jobs in THIS process, so

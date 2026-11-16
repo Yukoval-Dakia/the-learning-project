@@ -220,10 +220,8 @@ const ALL_TABLES = [
   'editing_presence',
   // YUK-342 P2 — memory reconcile write-ahead log.
   'memory_reconciliation_log',
-  // YUK-344 增量 2 / ADR-0034 §3 — knowledge-edge reconcile write-ahead log.
-  'edge_reconciliation_log',
   // YUK-531 (A5 S4 / RT1) — misconception-edge reconcile AUDIT log. No FK, so resetDb
-  // must list it explicitly or it leaks across tests (same footgun as edge_reconciliation_log).
+  // must list it explicitly or it leaks across tests (same footgun as memory_reconciliation_log).
   'misconception_reconciliation_log',
   // YUK-143 / ADR-0024 — North-Star goal entity.
   'goal',

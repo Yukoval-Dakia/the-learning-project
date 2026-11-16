@@ -201,7 +201,8 @@ export const QuestionBlockCreateExperimental = z
         // reducer reads it VERBATIM as the row's base state — same shape genesis carries.
         row: QuestionBlockRowSnapshot,
         // creation provenance; rescue = overwrite of an existing blockId (fold last-write-wins, §5.2).
-        origin: z.enum(['ocr', 'rescue', 'docx', 'import', 'edit_draft']),
+        // handwriting_trace stamps evidence onto the same block without changing question text.
+        origin: z.enum(['ocr', 'rescue', 'handwriting_trace', 'docx', 'import', 'edit_draft']),
         // Inherited source-document usage policy; absent === 'allow'.
         derivation_policy: DerivationPolicy.optional(),
       })

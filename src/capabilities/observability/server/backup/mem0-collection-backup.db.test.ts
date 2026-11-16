@@ -543,7 +543,7 @@ describe('mem0 collection empty-archive wipe (#491 follow-up)', () => {
     expect(res.status).toBe(200);
 
     // The target collection is now EMPTY — matches the archived (empty) collection.
-    // RED against the `mem0Rows.length > 0` gate, which skipped the wipe entirely.
+    // An empty archive must wipe the live collection.
     expect(await readRows()).toHaveLength(0);
   });
 });
@@ -648,14 +648,14 @@ describe('mem0/FK restore atomicity — mid-restore failure rolls back (YUK-355)
 
     // The operator-facing MESSAGE must reflect ATOMIC rollback now that the whole
     // restore runs inside a single transaction: on failure the DB is left UNCHANGED.
-    // It must NOT mislead with the stale "half-wiped state" wording (Bugbot MEDIUM,
-    // PR #495), which implies partial/corrupt restore that no longer happens.
+    // It must NOT mislead with the stale "half-wiped state" wording, which implies
+    // a partial restore that no longer happens.
     expect(failBody.message).not.toMatch(/half-wiped/i);
     expect(failBody.message).toMatch(/rolled back|unchanged|atomic/i);
 
     // CRITICAL: the whole mutation rolled back — the FK_ORDER wipe was undone, so the
-    // canary (never in the archive) still exists. RED against the non-transactional
-    // restore, where the wipe committed before the mem0 insert threw.
+    // canary (never in the archive) still exists. A failure mid-restore must not
+    // commit the wipe.
     expect(await knowledgeNames()).toEqual(['CANARY survives rollback']);
     // And the mem0 collection still holds its original row (its delete rolled back too).
     expect(await readRows()).toHaveLength(1);

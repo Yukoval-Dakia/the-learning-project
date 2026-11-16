@@ -166,7 +166,7 @@ const LABEL_BY_KIND: Readonly<Record<string, string>> = {
   // 笔记与知识 — note artifacts and the knowledge graph.
   NoteGenerateTask: '笔记生成：按科目模板写一篇学习笔记全文',
   NoteRefineTask: '笔记精修：按触发原因给已有笔记出一组小编辑，大改动先经确认',
-  KnowledgeReviewTask: '知识图谱维护：看整棵知识树和近期错题，提议结构和关系调整',
+  KnowledgeReviewTask: '知识图谱维护：按科目看知识树和近期错题，提议结构和关系调整',
   FrontierPrerequisiteTask: '先修补边：给还没有先修关系的知识点提议少量临时前置边',
 };
 

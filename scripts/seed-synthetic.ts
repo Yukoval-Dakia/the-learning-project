@@ -279,7 +279,7 @@ async function seedQuestions(dbh: DbLike, now: Date): Promise<SeededQuestion[]> 
       updated_at: now,
       version: 0,
     });
-    // YUK-1043（复审 P1-6，§2 矩阵 seeds 行）—— seed 也铸完整 revision，不靠
+    // （，§2 矩阵 seeds 行）—— seed 也铸完整 revision，不靠
     // 审计豁免漏迁。synthetic 答案非官方 ⇒ admission withheld/unverified_rules
     //（provenance system_proposed 已在契约内如实标注）；synthetic 标识保留在
     // row metadata。幂等：重复 seed 时 digest 不变 ⇒ noop。

@@ -13,11 +13,19 @@ import {
 } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
-import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import {
+  type ProposalInboxRow,
+  type ProposalStatus,
+  listProposalInboxRows,
+} from '@/kernel/proposals/inbox';
 import { findActiveProposalCooldown, withProposalGateLock } from '@/kernel/proposals/signals';
 import { type WriteAiProposalInput, writeAiProposal } from '@/kernel/proposals/writer';
 import { getKnowledgeEdgeById } from './edges';
-import { type RubricVerdict, validateProposalQuality } from './rubric-validator';
+import {
+  RUBRIC_GATE_CRITERIA,
+  type RubricVerdict,
+  validateProposalQuality,
+} from './rubric-validator';
 
 type DbLike = Db | Tx;
 
@@ -50,6 +58,12 @@ interface ProposalCooldownSkip {
   proposal_id?: string;
   cooldown_key: string;
   cooldown_until?: string;
+  /** The proposal this call collides with, so the caller can cite it instead of re-proposing. */
+  existing_proposal?: { title: string; status: ProposalStatus };
+}
+
+function existingProposal(row: ProposalInboxRow) {
+  return { title: row.presentation?.title ?? row.kind, status: row.status };
 }
 
 /**
@@ -76,6 +90,7 @@ export async function checkProposalCooldownGate(
       status: 'skipped:duplicate_pending',
       proposal_id: pending.id,
       cooldown_key: cooldownKeys[0] ?? (pending.payload.cooldown_key as string),
+      existing_proposal: existingProposal(pending),
     };
   }
   const cooling = await findActiveProposalCooldown(db, kind, cooldownKeys);
@@ -93,6 +108,7 @@ export async function checkProposalCooldownGate(
       proposal_id: source?.id,
       cooldown_key: cooling.cooldown_key,
       cooldown_until: cooling.cooldown_until.toISOString(),
+      ...(source ? { existing_proposal: existingProposal(source) } : {}),
     };
   }
   return null;
@@ -200,6 +216,7 @@ export type RubricEdgeProposalResult =
       proposal_id?: string;
       cooldown_key: string;
       gate: string;
+      criterion: string;
       reason: string;
     }
   | { status: 'skipped:no_evidence'; cooldown_key: string; reason: string };
@@ -368,6 +385,7 @@ async function foldRubricRejectedCreate(
     proposal_id: proposalId,
     cooldown_key: cooldownKey,
     gate: verdict.gate,
+    criterion: RUBRIC_GATE_CRITERIA[verdict.gate],
     reason: verdict.reason,
   };
 }
@@ -409,6 +427,7 @@ async function writeRubricArchive(
       status: 'skipped:rubric_rejected',
       cooldown_key: cooldownKey,
       gate: verdict.gate,
+      criterion: RUBRIC_GATE_CRITERIA[verdict.gate],
       reason: verdict.reason,
     };
   }

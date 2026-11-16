@@ -159,6 +159,9 @@ export function buildIngestionOperationHandler(
                 message:
                   typeof body.message === 'string' ? body.message : 'Ingestion operation failed',
                 status: response.status,
+                // Optional machine-readable detail (e.g. a paid rescue result that
+                // could not be written); callers read it off the failed resource.
+                ...(body.details !== undefined ? { details: body.details } : {}),
               },
             },
           });

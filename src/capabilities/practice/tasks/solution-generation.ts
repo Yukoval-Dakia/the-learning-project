@@ -1,5 +1,6 @@
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { SolutionGenerateOutput, type SolutionGenerateOutputT } from '@/core/schema/solution';
+import { LEARNER_HANDWRITING_RULE } from '@/core/schema/structured_question';
 import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
 
@@ -39,7 +40,7 @@ function buildSolutionGeneratePrompt(profile: SubjectProfile): string {
 function buildSolutionGenerateVisionPrompt(profile: SubjectProfile): string {
   return `${buildSolutionGeneratePrompt(profile)}
 
-多模态补充：本次 user message 在 JSON 文字之后附带 prompt_image_refs 对应的题目图片；必须实际读取这些图片中的图形、标注、坐标、表格或几何关系后再作答，禁止只凭题面文字猜测。`;
+多模态补充：本次 user message 在 JSON 文字之后附带 prompt_image_refs 对应的题目图片；必须实际读取这些图片中的图形、标注、坐标、表格或几何关系后再作答，禁止只凭题面文字猜测。图片里若有手写：${LEARNER_HANDWRITING_RULE}；只依据印刷内容作答。`;
 }
 
 export const solutionGenerateTaskSpec = {

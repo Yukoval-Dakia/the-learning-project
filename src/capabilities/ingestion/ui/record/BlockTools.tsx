@@ -172,13 +172,7 @@ export function RescueButton({ sessionId, block }: { sessionId: string; block: B
         disabled={read.isPending}
         onClick={() => read.mutate(tier)}
       >
-        {read.isPending
-          ? '正在重新认…'
-          : tier === 3
-            ? '认得更仔细些'
-            : block.ingestion_enrollment.reason === 'needs_text'
-              ? '再认一次'
-              : '没认对？再认一次'}
+        {read.isPending ? '正在重新认…' : tier === 3 ? '认得更仔细些' : '再认一次'}
       </button>
       {read.isError && <span className="rc-problem">这次没认出来，原来的文字没变。</span>}
     </>

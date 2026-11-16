@@ -13,7 +13,7 @@ import type {
   SubmissionRecordT,
 } from './judgment';
 import { EvaluationInputSnapshot, photoJudgingNoticeFromUnitResults } from './judgment';
-import { SharedMaterialKind, isPublicSharedMaterial } from './materials';
+import { LearnerHandwritingMarker, SharedMaterialKind, isPublicSharedMaterial } from './materials';
 import { prunePresentation } from './presentation';
 import { LifecycleQualification, PublishDecision } from './publish';
 import type { ResponseSetT } from './response';
@@ -52,6 +52,8 @@ export const PublicMaterialView = z.object({
   alt_text: z.string().optional(),
   /** Exact inline bytes from the frozen public material; never from a mutable question row. */
   content_md: z.string().optional(),
+  /** Stored figure marker; readers without one resolve it from the figure's origin. */
+  contains_learner_handwriting: LearnerHandwritingMarker.optional(),
 });
 export type PublicMaterialViewT = z.infer<typeof PublicMaterialView>;
 
@@ -220,6 +222,9 @@ export function projectPracticeIssuance(
       caption: material.caption,
       alt_text: material.alt_text,
       content_md: material.content_md,
+      ...(material.contains_learner_handwriting !== undefined
+        ? { contains_learner_handwriting: material.contains_learner_handwriting }
+        : {}),
     })),
     response_spec: {
       slots: orderedSlots,

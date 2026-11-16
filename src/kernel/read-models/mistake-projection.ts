@@ -1,18 +1,18 @@
-import { and, eq, gte, inArray, or, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Db } from '@/db/client';
-import { event, question } from '@/db/schema';
+import { event, learning_record, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import {
   type FailureAttempt,
+  getCurrentFailureAttempts,
   getFailureAttemptById,
   getFailureAttempts,
 } from '@/kernel/read-models/failure-attempts';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { MistakeProjection } from '@/kernel/records/mistake-projection-contract';
-import { listLearningRecords } from '@/kernel/records/queries';
 import { readNativeMistakeEvidence } from './native-mistake-evidence';
 
 export interface ListMistakeProjectionFilter {
@@ -92,55 +92,28 @@ function decodeMistakeCursor(cursor: string): MistakeCursor {
   }
 }
 
-async function projectMistakeRecords(
+async function projectMistakeFailures(
   db: Db,
-  records: Awaited<ReturnType<typeof listLearningRecords>>,
-  filter: ListMistakeProjectionFilter,
+  failures: FailureAttempt[],
 ): Promise<MistakeProjection[]> {
-  if (records.length === 0) return [];
-
-  const attemptIds = new Set(
-    records
-      .map((record) => record.attempt_event_id)
-      .filter((id): id is string => typeof id === 'string' && id.length > 0),
-  );
-  const questionIds = [
-    ...new Set(
-      records.map((record) => record.question_id).filter((id): id is string => id !== null),
+  if (failures.length === 0) return [];
+  const attemptIds = failures.map((failure) => failure.attempt_event_id);
+  const linkedRecords = await db
+    .select({ id: learning_record.id, attempt_event_id: learning_record.attempt_event_id })
+    .from(learning_record)
+    .where(
+      and(
+        inArray(learning_record.attempt_event_id, attemptIds),
+        eq(learning_record.kind, 'mistake'),
+        isNull(learning_record.archived_at),
+      ),
+    );
+  const recordIdByAttempt = new Map(
+    linkedRecords.flatMap((row) =>
+      row.attempt_event_id ? [[row.attempt_event_id, row.id] as const] : [],
     ),
-  ];
-  const failures = await getFailureAttempts(db, {
-    limit: Math.max(filter.limit * 4, 100),
-    questionIds,
-    since: filter.since,
-  });
-  const failureByAttempt = new Map(failures.map((failure) => [failure.attempt_event_id, failure]));
-  // A record cursor can point past this question's newest failure window; resolve
-  // only the missing page identities instead of widening the scan.
-  const missingAttempts = [...attemptIds].filter((id) => !failureByAttempt.has(id));
-  const missingAttemptRows =
-    missingAttempts.length > 0
-      ? await db
-          .select({ id: event.id })
-          .from(event)
-          .where(
-            and(
-              inArray(event.id, missingAttempts),
-              inArray(event.action, ['attempt', 'experimental:assessment_attempt']),
-              eq(event.subject_kind, 'question'),
-              questionIds.length > 0 ? inArray(event.subject_id, questionIds) : undefined,
-              filter.since ? gte(event.created_at, filter.since) : undefined,
-            ),
-          )
-      : [];
-  for (const failure of await Promise.all(
-    missingAttemptRows.map(({ id }) => getFailureAttemptById(db, id)),
-  )) {
-    if (failure) failureByAttempt.set(failure.attempt_event_id, failure);
-  }
-  const pageFailures = [...failureByAttempt.values()].filter((failure) =>
-    attemptIds.has(failure.attempt_event_id),
   );
+  const pageFailures = failures;
   const nativeEvidence = await readNativeMistakeEvidence(db, pageFailures);
   const legacyFailures = pageFailures.filter((failure) => failure.question_snapshot === undefined);
   const legacyQuestionIds = [...new Set(legacyFailures.map((failure) => failure.question_id))];
@@ -195,8 +168,8 @@ async function projectMistakeRecords(
   // loop does not query per row. Raw ids stay in the projection; callers fall back
   // from label to id.
   const causeByAttempt = new Map(
-    [...failureByAttempt.entries()].map(([id, failure]) => [
-      id,
+    pageFailures.map((failure) => [
+      failure.attempt_event_id,
       effectiveCauseForFailureAttempt(failure),
     ]),
   );
@@ -207,11 +180,8 @@ async function projectMistakeRecords(
     ),
   );
 
-  return records.flatMap((record) => {
-    if (!record.attempt_event_id || !attemptIds.has(record.attempt_event_id)) return [];
-    const failure = failureByAttempt.get(record.attempt_event_id);
-    if (!failure) return [];
-    const effectiveCause = causeByAttempt.get(record.attempt_event_id);
+  return pageFailures.map((failure) => {
+    const effectiveCause = causeByAttempt.get(failure.attempt_event_id);
     const cause = effectiveCause
       ? {
           source: effectiveCause.source,
@@ -223,23 +193,59 @@ async function projectMistakeRecords(
           confidence: effectiveCause.confidence,
         }
       : null;
-    return [
-      {
-        id: failure.attempt_event_id,
-        record_id: record.id,
-        question_id: failure.question_id,
-        ...(nativeEvidence.get(failure.attempt_event_id) ?? {
-          ...historicalQuestionText(failure, questionById, editsByQuestionId),
-          prompt_materials: [],
-          wrong_answer_md: (failure.answer_md ?? '').slice(0, 200),
-          wrong_answer_image_refs: failure.answer_image_refs,
-        }),
-        knowledge_ids: learnerVisibleKnowledgeIds(failure.referenced_knowledge_ids),
-        cause,
-        correction_state: failure.correction_state,
-        created_at: Math.floor(failure.created_at.getTime() / 1000),
-      },
-    ];
+    return {
+      id: failure.attempt_event_id,
+      record_id: recordIdByAttempt.get(failure.attempt_event_id) ?? '',
+      question_id: failure.question_id,
+      ...(nativeEvidence.get(failure.attempt_event_id) ?? {
+        ...historicalQuestionText(failure, questionById, editsByQuestionId),
+        prompt_materials: [],
+        wrong_answer_md: (failure.answer_md ?? '').slice(0, 200),
+        wrong_answer_image_refs: failure.answer_image_refs,
+      }),
+      knowledge_ids: learnerVisibleKnowledgeIds(failure.referenced_knowledge_ids),
+      cause,
+      correction_state: failure.correction_state,
+      created_at: Math.floor(failure.created_at.getTime() / 1000),
+    };
+  });
+}
+
+function isOlderThanCursor(failure: FailureAttempt, cursor: MistakeCursor): boolean {
+  const at = failure.created_at.getTime();
+  const cursorAt = cursor.createdAt.getTime();
+  if (at !== cursorAt) return at < cursorAt;
+  return failure.attempt_event_id < cursor.id;
+}
+
+/** Mistake records keep their attempt even after a later correct grade. */
+async function failuresForMistakeRecords(
+  db: Db,
+  records: ReadonlyArray<{ attempt_event_id: string | null; question_id: string | null }>,
+  filter: ListMistakeProjectionFilter,
+): Promise<FailureAttempt[]> {
+  const attemptIds = [
+    ...new Set(
+      records.flatMap((record) => (record.attempt_event_id ? [record.attempt_event_id] : [])),
+    ),
+  ];
+  if (attemptIds.length === 0) return [];
+  const questionIds = [
+    ...new Set(records.flatMap((record) => (record.question_id ? [record.question_id] : []))),
+  ];
+  const found = await getFailureAttempts(db, {
+    ...(questionIds.length > 0 ? { questionIds } : {}),
+    since: filter.since,
+    limit: null,
+  });
+  const byId = new Map(found.map((failure) => [failure.attempt_event_id, failure]));
+  const missing = attemptIds.filter((id) => !byId.has(id));
+  for (const failure of await Promise.all(missing.map((id) => getFailureAttemptById(db, id)))) {
+    if (failure) byId.set(failure.attempt_event_id, failure);
+  }
+  return attemptIds.flatMap((id) => {
+    const failure = byId.get(id);
+    return failure ? [failure] : [];
   });
 }
 
@@ -266,21 +272,69 @@ export async function listMistakeProjectionPage(db: Db, filter: ListMistakeProje
     filter.questionIds === undefined || subjectQuestionIds === undefined
       ? (filter.questionIds ?? subjectQuestionIds)
       : filter.questionIds.filter((id) => subjectQuestionIds.includes(id));
-  const fetchedRecords = await listLearningRecords(db, {
-    kind: ['mistake'],
-    question_id: questionIds?.length === 1 ? questionIds[0] : undefined,
-    question_ids: questionIds?.length !== 1 ? questionIds : undefined,
-    since: filter.since,
-    before_created_at: cursor?.createdAt,
-    before_id: cursor?.id,
-    limit: filter.limit + 1,
-  });
-  const hasMore = fetchedRecords.length > filter.limit;
-  const records = hasMore ? fetchedRecords.slice(0, filter.limit) : fetchedRecords;
-  const last = records.at(-1);
+  if (questionIds && questionIds.length === 0) return { rows: [], next_cursor: null };
+  const recordRows = await db
+    .select({
+      id: learning_record.id,
+      attempt_event_id: learning_record.attempt_event_id,
+      question_id: learning_record.question_id,
+    })
+    .from(learning_record)
+    .where(
+      and(
+        eq(learning_record.kind, 'mistake'),
+        isNull(learning_record.archived_at),
+        questionIds ? inArray(learning_record.question_id, questionIds) : undefined,
+        filter.since ? gte(learning_record.created_at, filter.since) : undefined,
+      ),
+    );
+  const recordIdByAttempt = new Map(
+    recordRows.flatMap((row) =>
+      row.attempt_event_id ? [[row.attempt_event_id, row.id] as const] : [],
+    ),
+  );
+  const archivedAttemptIds = new Set(
+    (
+      await db
+        .select({ attempt_event_id: learning_record.attempt_event_id })
+        .from(learning_record)
+        .where(
+          and(
+            eq(learning_record.kind, 'mistake'),
+            isNotNull(learning_record.archived_at),
+            isNotNull(learning_record.attempt_event_id),
+          ),
+        )
+    ).flatMap((row) => (row.attempt_event_id ? [row.attempt_event_id] : [])),
+  );
+  const historical = await failuresForMistakeRecords(db, recordRows, filter);
+  const nativeOnly = (
+    await getCurrentFailureAttempts(db, {
+      ...(questionIds ? { questionIds } : {}),
+      since: filter.since,
+      limit: null,
+    })
+  ).filter(
+    (failure) =>
+      failure.assessment !== undefined &&
+      !recordIdByAttempt.has(failure.attempt_event_id) &&
+      !archivedAttemptIds.has(failure.attempt_event_id),
+  );
+  const visible = [...historical, ...nativeOnly].sort(
+    (a, b) =>
+      b.created_at.getTime() - a.created_at.getTime() ||
+      b.attempt_event_id.localeCompare(a.attempt_event_id),
+  );
+  const paged = cursor ? visible.filter((failure) => isOlderThanCursor(failure, cursor)) : visible;
+  const hasMore = paged.length > filter.limit;
+  const page = hasMore ? paged.slice(0, filter.limit) : paged;
+  const last = page.at(-1);
   return {
-    rows: await projectMistakeRecords(db, records, filter),
-    next_cursor: hasMore && last ? encodeMistakeCursor(last) : null,
+    rows: await projectMistakeFailures(db, page),
+    next_cursor:
+      hasMore && last
+        ? encodeMistakeCursor({ created_at: last.created_at, id: last.attempt_event_id })
+        : null,
   };
 }
 

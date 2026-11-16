@@ -144,7 +144,7 @@ export function ppiPlusMean(
     capFactor,
   );
   let correction = 0;
-  let weightSum = 0; // Σ(capped 1/π) — Hájek 自归一化分母（FINDING #1）。
+  let weightSum = 0; // Σ(capped 1/π) — Hájek 自归一化分母。
   for (let i = 0; i < labeled.length; i++) {
     const s = labeled[i];
     const w = weights[i];
@@ -153,7 +153,7 @@ export function ppiPlusMean(
     correction += w === 1 / s.pi ? xi / s.pi : xi * w;
     weightSum += weights[i];
   }
-  // Hájek 自归一化：÷ Σ(capped 1/π)（精确），不是 ÷N / ÷round(Σ1/π)（FINDING #1）。
+  // Hájek 自归一化：÷ Σ(capped 1/π)（精确），不是 ÷N / ÷round(Σ1/π)。
   return lambda * predictionMean + (weightSum > 0 ? correction / weightSum : 0);
 }
 

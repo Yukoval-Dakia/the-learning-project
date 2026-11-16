@@ -1705,7 +1705,7 @@ describe('migration smoke — YUK-857 note verification claim', () => {
 });
 
 describe('migration smoke — YUK-1044 assessment contract truth source', () => {
-  // 0104 建表；0105（复审）FK/trigger/选择位；0106（终验）head 三坐标 FK；
+  // 0104 建表；0105FK/trigger/选择位；0106（终验）head 三坐标 FK；
   // 0107（CI 修复）restore 通道 GUC + 自 FK deferrable。
   const FINAL_TAG = '0107_yuk1044_backup_restore_channel';
   let container: StartedPostgreSqlContainer;
@@ -1730,7 +1730,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     await container?.stop();
   });
 
-  // ---- coherent fixture helpers（P1-2：所有身份坐标必须真实存在且互相一致）----
+  // ---- coherent fixture helpers（所有身份坐标必须真实存在且互相一致）----
 
   async function insertRevision(
     revisionId: string,
@@ -1805,7 +1805,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     });
   });
 
-  // ---- P1-1：不可变事实的 DB 层防线 ----
+  // ---- 不可变事实的 DB 层防线 ----
 
   it('P1-1: immutable fact tables reject UPDATE and DELETE via triggers', async () => {
     await expect(client`
@@ -1863,7 +1863,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     });
   });
 
-  // ---- P1-2：FK + 冗余坐标一致性 ----
+  // ---- FK + 冗余坐标一致性 ----
 
   it('P1-2: submissions require existing issuance/group and a revision that agrees with the issuance', async () => {
     await client`
@@ -1937,7 +1937,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
   // ---- 有效 head：默认值 + CAS 谓词（窄声明） ----
 
   it('effective head columns default to effective=NULL / generation=0; stale CAS predicate updates 0 rows', async () => {
-    // 窄声明（复审）：本用例只断言 DDL 默认值与一个手写 CAS 谓词的行为；
+    // 窄声明：本用例只断言 DDL 默认值与一个手写 CAS 谓词的行为；
     // group/submission/head 的【同事务原子创建】、generation 单调性与并发
     // activation 串行化由事务性 writer 保证并须在 writer 落地时测试。
     const initial = await client<{ effective_evaluation_id: string | null; generation: number }[]>`
@@ -2060,7 +2060,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     `).rejects.toMatchObject({ constraint_name: 'assessment_submission_group_idem_uq' });
   });
 
-  // ---- P1-3 / P2-B：身份映射 ----
+  // ---- 身份映射 ----
 
   async function insertMapping(
     mappingId: string,
@@ -2093,7 +2093,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     ).rejects.toMatchObject({
       constraint_name: 'assessment_identity_mapping_locator_nonempty_ck',
     });
-    // mapped 必须带目标 revision；historical_unresolved 不得带目标（P2-B）。
+    // mapped 必须带目标 revision；historical_unresolved 不得带目标。
     await expect(insertMapping('map_notarget', '11', 'mapped')).rejects.toMatchObject({
       constraint_name: 'assessment_identity_mapping_mapped_target_ck',
     });
@@ -2148,7 +2148,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
   });
 
   it('admission verification records (revision_id, digest, policy, generation); lifecycle carries the split dimensions', async () => {
-    // 不存在的 revision ⇒ FK 拒绝（P1-2）。
+    // 不存在的 revision ⇒ FK 拒绝。
     await expect(client`
       INSERT INTO question_admission_verification (
         id, revision_id, revision_digest, policy_id, generation, outcome, recorded_at
@@ -2165,7 +2165,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     `;
     expect(rows[0]).toMatchObject({ revision_id: 'rev_a', outcome: 'passed', generation: 1 });
 
-    // P2-C：分支完整性 —— admitted 必须有 decided_at+evidence；withheld 必须有 reason。
+    // ：分支完整性 —— admitted 必须有 decided_at+evidence；withheld 必须有 reason。
     await expect(client`
       INSERT INTO question_group_lifecycle (
         group_id, availability, scoring_admission_state, claim_policy, created_at, updated_at
@@ -2415,7 +2415,7 @@ describe('migration smoke — YUK-1097 assessment truth guards', () => {
 
   it('identity mapping: adjudication fields frozen; only is_current/supersedes mutable + pending annotation refresh', async () => {
     await insertMapping('map_97_pending', 'pending');
-    // pending 占位行：evidence/algorithm_version 操作性注释刷新放行（P1-5）。
+    // pending 占位行：evidence/algorithm_version 操作性注释刷新放行。
     await client`
       UPDATE assessment_identity_mapping
       SET evidence = '{"note":"retry"}'::jsonb, algorithm_version = 'yuk1050-apply/r2'

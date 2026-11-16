@@ -12,7 +12,7 @@ import type {
   ProposalAcceptInput,
   ProposalRetractApplier,
 } from '@/kernel/proposals';
-import { requireLaterProposalCorrection, toProposalLifecycleResult } from '@/kernel/proposals';
+import { requireLaterProposalCorrection } from '@/kernel/proposals';
 import {
   asPlainRecord,
   ensureAcceptOnly,
@@ -193,7 +193,7 @@ export const causeCategoryProposalAcceptApplier: ProposalAcceptApplier = async (
       };
     },
   });
-  return { kind: 'cause_category', result: toProposalLifecycleResult(run.result) };
+  return { kind: 'cause_category', result: { ...run.result } };
 };
 
 // retract 语义：accept 已落 overlay 行 → 置 archived_at（唯一回退

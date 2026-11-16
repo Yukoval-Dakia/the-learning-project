@@ -8,7 +8,9 @@ import type {
   PendingStateT,
   VersionedAssetRefT,
 } from '@/core/schema/assessment';
+import type { LearnerHandwritingMarkerT } from '@/core/schema/assessment/materials';
 import type { Db } from '@/db/client';
+import { readFigureMaterialMarkers } from '@/kernel/read-models/figure-origin';
 import {
   type AssessmentAssetBytes,
   type AssessmentAssetLoader,
@@ -42,6 +44,7 @@ export async function prepareAssessmentModelInput(
   request: ModelExecutorRequest,
   load: AssessmentAssetLoader,
   signal: AbortSignal,
+  db: Db,
 ): Promise<{ ok: true; input: AssessmentModelInput } | { ok: false; pending: PendingStateT }> {
   const hold = (detail: string) => ({
     ok: false as const,
@@ -61,11 +64,19 @@ export async function prepareAssessmentModelInput(
   );
   if ([...ruleText, ...answerText].some(containsRenderedImage))
     return hold('rule or submitted text contains an unbound original image');
+  // A question figure may show the learner's earlier work; the judge must know which.
+  const figureMarkers = await readFigureMaterialMarkers(db, request.materials);
+  const materials = request.materials.map((material) =>
+    figureMarkers.has(material.material_id)
+      ? { ...material, contains_learner_handwriting: figureMarkers.get(material.material_id) }
+      : material,
+  );
   const images: AssessmentModelInput['images'] = [];
   const imageManifest: Array<{
     index: number;
     material_id?: string;
     evidence_id?: string;
+    contains_learner_handwriting?: LearnerHandwritingMarkerT;
     asset: VersionedAssetRefT;
   }> = [];
   const textEvidence: Array<{ evidence_id: string; text: string }> = [];
@@ -79,7 +90,11 @@ export async function prepareAssessmentModelInput(
   const attach = (
     asset: AssessmentAssetBytes,
     ref: VersionedAssetRefT,
-    identity: { material_id?: string; evidence_id?: string },
+    identity: {
+      material_id?: string;
+      evidence_id?: string;
+      contains_learner_handwriting?: LearnerHandwritingMarkerT;
+    },
   ) => {
     // pi's image wire supports these MIME types; audio/video/PDF are held below.
     if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(asset.mime_type))
@@ -106,7 +121,13 @@ export async function prepareAssessmentModelInput(
     if (material.kind !== 'figure')
       return hold(`original ${material.kind} analysis is not supported by this executor`);
     const asset = await read(material.asset);
-    if (!asset || !attach(asset, material.asset, { material_id: material.material_id })) {
+    if (
+      !asset ||
+      !attach(asset, material.asset, {
+        material_id: material.material_id,
+        contains_learner_handwriting: figureMarkers.get(material.material_id),
+      })
+    ) {
       return {
         ok: false,
         pending: { reason: 'missing_materials', material_ids: [material.material_id] },
@@ -186,7 +207,7 @@ export async function prepareAssessmentModelInput(
         response_slots: request.response_slots,
         slot_responses: request.slot_responses,
         group_evidence: request.group_evidence,
-        materials: request.materials,
+        materials,
         image_manifest: imageManifest,
         text_evidence: textEvidence,
       }),

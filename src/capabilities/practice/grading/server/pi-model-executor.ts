@@ -363,6 +363,7 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
           request,
           options.loadAsset ?? createAssessmentAssetLoader(options.db),
           signal,
+          options.db,
         );
         if (!prepared.ok) return pending(prepared.pending, priorRefs);
         signal.throwIfAborted();

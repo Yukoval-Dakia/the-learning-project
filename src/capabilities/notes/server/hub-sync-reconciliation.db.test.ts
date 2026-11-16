@@ -1,4 +1,4 @@
-// YUK-384 Task 2 — trigger-backed durable dirty generations (RED Tests 2–6).
+// trigger-backed durable dirty generations.
 //
 // These adversarial DB tests validate the PostgreSQL topology triggers installed
 // by drizzle/0071 (mark_hub_sync_dirty + fanout_hub_sync_dirty): dirtying is
@@ -355,7 +355,7 @@ describe('YUK-384 durable hub-sync topology triggers', () => {
     // Deliberately NOT asserted here: the final cursor `status`. Each hub is
     // cancelled by its own type-loss but re-marked pending by the other's
     // fan-out, so which of the two lands last is a scheduling detail, not an
-    // invariant. RED 19 owns cursor-vs-hub consistency.
+    // invariant.
   });
 
   // YUK-782 — a direct, single-writer assertion on the acquisition ORDER itself,
@@ -435,7 +435,7 @@ async function claimRequired(owner: string): Promise<HubSyncClaim> {
   return claim;
 }
 
-// ── Task 4 (RED Tests 10–14): deterministic compute + atomic fenced apply ─────
+// ── Task 4: deterministic compute + atomic fenced apply ─────
 
 function createDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
@@ -446,7 +446,7 @@ function createDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) 
 }
 
 // Pauses finalization at a named point so a competing mutation can race the
-// held cursor lock (RED 11).
+// held cursor lock.
 class FinalizeBarrier {
   private readonly reached = createDeferred();
   private readonly released = createDeferred();
@@ -622,7 +622,7 @@ describe('YUK-384 hub-sync fenced apply', () => {
   });
 });
 
-// ── Task 7 (RED Tests 19–21): race closure across hub lifecycle ───────────────
+// ── Task 7: race closure across hub lifecycle ───────────────
 
 describe('YUK-384 hub-sync lifecycle race closure', () => {
   beforeEach(async () => {
@@ -672,7 +672,7 @@ describe('YUK-384 hub-sync lifecycle race closure', () => {
   });
 });
 
-// ── Task 8 (RED Tests 22–24): unified wake / recovery / continuation / retry ──
+// ── Task 8: unified wake / recovery / continuation / retry ──
 
 describe('YUK-384 unified hub-sync cycle', () => {
   beforeEach(async () => {

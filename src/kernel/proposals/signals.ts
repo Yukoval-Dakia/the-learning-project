@@ -478,7 +478,7 @@ async function rebuildProposalDecisionSignal(
     }
   }
 
-  // YUK-76 codex round-3 P1-B + P1-C — `cooldown_until` must reflect the
+  // B + — `cooldown_until` must reflect the
   // **key-wide latest** decision, not just the existence of any prior dismiss.
   // Same `(kind, cooldown_key)` can carry a history like dismiss→accept (user
   // changed their mind / accepted a different proposal on the same key). The

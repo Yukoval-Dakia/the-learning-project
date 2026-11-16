@@ -25,6 +25,11 @@ export const agent_workspace = pgTable(
     // Fencing lease renewed by the holder's heartbeat probe; expiry is the
     // reclaim proof that survives hostname/container reincarnation.
     execution_lease_until: timestamp('execution_lease_until', { withTimezone: true }),
+    // The ai_task_runs attempt that last claimed this row. Task-owner ids are
+    // stable directory keys rather than run rows, so liveness/completion is
+    // proven on the attempt that actually ran — and a dead claimant's row
+    // stops proving anything once its attempt ends.
+    claim_run_id: text('claim_run_id'),
     delete_reason: text('delete_reason').$type<'expired' | 'deleted' | 'completed'>(),
     tombstoned_at: timestamp('tombstoned_at', { withTimezone: true }),
     deleted_at: timestamp('deleted_at', { withTimezone: true }),

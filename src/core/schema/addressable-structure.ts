@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LearnerHandwritingMarker } from './assessment/materials';
 import { QuestionKind } from './business';
 import type { AddressableStructure } from './structured_question';
 
@@ -6,6 +7,7 @@ const AddressableFigureSchema = z.object({
   asset_id: z.string(),
   role: z.string(),
   attached_to_index: z.string(),
+  contains_learner_handwriting: LearnerHandwritingMarker,
 });
 
 const AddressableNodeSchema: z.ZodType<AddressableStructure['tree']> = z.lazy(() =>

@@ -27,6 +27,7 @@ import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import { hasProposalWithCooldownKey } from '@/kernel/proposals/inbox';
 import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
+import { agentCauseCountsAsObservation } from '@/kernel/read-models/cause-confidence';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttemptForDerivationById } from '@/kernel/read-models/failure-attempts';
 import { getMisconceptionsByIds } from '@/kernel/read-models/failure-learning-context';
@@ -66,6 +67,7 @@ export interface RunVariantGenResult {
     | 'skipped:max_depth'
     | 'skipped:variant_chain_terminus'
     | 'skipped:cause_not_targetable'
+    | 'skipped:low_cause_confidence'
     | 'skipped:already_has_variant'
     | 'skipped:variants_max_reached'
     | 'failed:invalid_model_output';
@@ -109,6 +111,11 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   const cause = effectiveCauseForFailureAttempt(failure);
   if (!cause) return { status: 'skipped:no_judge_yet' };
   if (!cause.primary_category) return { status: 'skipped:cause_not_targetable' };
+  // Paid variant generation stops here: a cause the model is not sure of does
+  // not spend a generation call. User attribution has null confidence and stays eligible.
+  if (cause.source === 'agent' && !agentCauseCountsAsObservation(cause.confidence)) {
+    return { status: 'skipped:low_cause_confidence' };
+  }
 
   // Load the parent question
   const qRows = await db

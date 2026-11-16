@@ -1,5 +1,5 @@
 /**
- * YUK-1007 review P1-6 — restore leaves stale runtime.
+ * restore leaves stale runtime.
  *
  * Bug class: restoreFromArchive re-inserted the archived `system_config_epoch`
  * verbatim. If that epoch value coincides with the restoring process's already
@@ -15,13 +15,13 @@
  *
  * Deterministic repro (no reliance on sequence reset — TRUNCATE RESTART IDENTITY
  * does not touch the standalone `config_change_seq`):
- *   1. setConfig(111) → snapshot epoch E (whatever the seq issued) → archive.
- *   2. Inject the diverged runtime: publish a snapshot of the SAME epoch E with
- *      value 222 — the exact collision shape (epoch says "same", content says
- *      different).
- *   3. Restore the archive. Pre-fix the archived epoch E lands verbatim →
- *      restore-time hydrate (and every later probe) sees epoch "unchanged" →
- *      runtime keeps 222 forever.
+ * 1. setConfig(111) → snapshot epoch E (whatever the seq issued) → archive.
+ * 2. Inject the diverged runtime: publish a snapshot of the SAME epoch E with
+ * value 222 — the exact collision shape (epoch says "same", content says
+ * different).
+ * 3. Restore the archive. Pre-fix the archived epoch E lands verbatim →
+ * restore-time hydrate (and every later probe) sees epoch "unchanged" →
+ * runtime keeps 222 forever.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {

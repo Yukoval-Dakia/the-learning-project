@@ -286,9 +286,14 @@ async function applyOneMove(
   if (updated.length === 0) return { status: 'skip:changed', detail: 'row changed under CAS' };
 
   const enrolledKnowledgeIds = new Set<string>();
-  const enroll = async (draftStatus: string | null, evidenceEventId: string) => {
+  const enroll = async (
+    questionId: string,
+    draftStatus: string | null,
+    evidenceEventId: string,
+  ) => {
     if (draftStatus === 'draft') return;
     for (const id of await enrollAddedKnowledgeScheduling(tx, {
+      questionId,
       knowledgeIds: [node.id],
       evidenceEventId,
       now,
@@ -342,14 +347,14 @@ async function applyOneMove(
       .returning({ id: question.id });
     if (moved.length === 0) continue;
     const partEventId = createId();
-    await enroll(part.draftStatus, partEventId);
+    await enroll(part.id, part.draftStatus, partEventId);
     await writeRefileEvent(partEventId, part.id, part.knowledgeIds, part.version, {
       part_of_question_id: row.id,
     });
   }
 
   const rowEventId = createId();
-  await enroll(row.draftStatus, rowEventId);
+  await enroll(row.id, row.draftStatus, rowEventId);
   await writeRefileEvent(rowEventId, row.id, row.knowledgeIds, row.version, {
     ...(enrolledKnowledgeIds.size > 0
       ? { enrolled_knowledge_ids: [...enrolledKnowledgeIds].sort() }

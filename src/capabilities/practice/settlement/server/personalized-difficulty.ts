@@ -15,24 +15,23 @@ import { and, eq, sql } from 'drizzle-orm';
 import { impliedDifficultyResidual } from '@/core/calibration/aipw';
 import { newId } from '@/core/ids';
 import { DIFFICULTY_PROXY_WEIGHT, difficultyToLogitB } from '@/core/theta';
-import type { Db, Tx } from '@/db/client';
+import type { Tx } from '@/db/client';
 import { item_calibration, item_family_calibration, mastery_state } from '@/db/schema';
 import {
   getFamilyCalibration,
   resolveFamilyKeyForQuestion,
 } from '@/kernel/read-models/question-difficulty';
+import { liveFamilyObservationQuestionIds } from './settle-read';
 
 export {
   type FamilyCalibrationRow,
   effectiveFamilyB,
 } from '@/kernel/read-models/question-difficulty';
 
-type DbLike = Db | Tx;
-
 // Gates (ADR-0043 "shrinkage 守保守"): enough observations, enough distinct questions
 // (so one repeatedly-drilled question cannot masquerade as family evidence), and an
 // empirical-Bayes prior strength. Thresholds are owner-tunable placeholders; until the
-// gates pass, only evidence_count moves and b_delta stays 0.
+// gates first pass, only evidence_count moves and b_delta stays 0.
 export const FAMILY_MIN_EVIDENCE = 20;
 export const FAMILY_MIN_DISTINCT_QUESTIONS = 5;
 export const SHRINKAGE_PRIOR_STRENGTH = 20;
@@ -81,8 +80,8 @@ export function shrinkageFactor(n: number, priorStrength = SHRINKAGE_PRIOR_STREN
 // holds regardless of gate-crossing order.
 // Update path: accumulate one objective attempt and recompute the shrunk delta.
 // Gates: (a) objective outcome, (b) n ≥ FAMILY_MIN_EVIDENCE, (c) at least
-// FAMILY_MIN_DISTINCT_QUESTIONS distinct questions. Until all pass, only evidence_count
-// moves and b_delta stays 0.
+// FAMILY_MIN_DISTINCT_QUESTIONS distinct questions. An observation that misses a gate only
+// moves evidence_count: b_delta stays 0 before the first fold and keeps its folded mean after.
 //
 // The distinct count is supplied by the caller because this table deliberately stores no
 // question ids (keeping families question-agnostic and bounded). Callers run this inside
@@ -153,8 +152,11 @@ export async function updateFamilyCalibration(
     anchorWeight * impliedDifficultyResidual(input.theta, input.bAnchor, input.outcome);
   const foldedThisObs = gatesPassedNow;
 
-  let storedDelta = 0;
-  let storedConfidence = 0;
+  // The distinct count drops when a revert removes a question's last observation. A gate
+  // that closes after folding only keeps this residual out: zeroing b_delta while
+  // calibrated_n stays would corrupt the next mean reconstruction and the unfold inverse.
+  let storedDelta = foldedBefore ? (existing?.b_delta ?? 0) : 0;
+  let storedConfidence = foldedBefore ? (existing?.confidence ?? 0) : 0;
   let newCalibratedN = oldCalibratedN;
   if (gatesPassedNow) {
     newCalibratedN = foldedBefore ? oldCalibratedN + 1 : 1;
@@ -268,52 +270,6 @@ export interface RecordFamilyObservationInput {
   now: Date;
 }
 
-/**
- * Distinct questions in this family that actually produced an objective observation.
- *
- * Counting the question pool would let one repeatedly-drilled question pass the distinct
- * gate. The authoritative observation is the `judge` event linked to an attempt/review
- * event; both single and paper submissions write that shape.
- *
- * Runs inside the attempt tx after the attempt and judge events are written, so the
- * current question is included.
- */
-export async function countDistinctQuestionsInFamily(
-  db: DbLike,
-  primaryKnowledgeId: string,
-  kind: string,
-  source: string,
-): Promise<number> {
-  // Whitelist constants, not user input.
-  const objectiveRoutes = [...OBJECTIVE_JUDGE_ROUTES];
-  const routeList = sql.join(
-    objectiveRoutes.map((r) => sql`${r}`),
-    sql`, `,
-  );
-  const rows = await db.execute<{ n: number }>(sql`
-    SELECT COUNT(DISTINCT attempt.subject_id)::int AS n
-    FROM event AS attempt
-    WHERE attempt.subject_kind = 'question'
-      AND attempt.action IN ('review', 'attempt')
-      AND attempt.subject_id IN (
-        SELECT q.id
-        FROM question AS q
-        WHERE q.knowledge_ids->>0 = ${primaryKnowledgeId}
-          AND q.kind = ${kind}
-          AND q.source = ${source}
-      )
-      AND EXISTS (
-        SELECT 1
-        FROM event AS judge
-        WHERE judge.action = 'judge'
-          AND judge.subject_kind = 'event'
-          AND judge.caused_by_event_id = attempt.id
-          AND judge.payload->>'judge_route' IN (${routeList})
-      )
-  `);
-  return Number([...rows][0]?.n ?? 0);
-}
-
 export async function recordFamilyObservationForAttempt(
   tx: Tx,
   input: RecordFamilyObservationInput,
@@ -367,12 +323,10 @@ export async function recordFamilyObservationForAttempt(
     theta = stateRows[0]?.theta_hat ?? 0;
   }
 
-  const distinctQuestionCount = await countDistinctQuestionsInFamily(
-    tx,
-    primaryKnowledgeId,
-    input.kind,
-    input.source,
-  );
+  // Distinct questions behind the family's live observations, not the question pool: one
+  // repeatedly drilled question must not pass the gate. The current one is not receipted yet.
+  const observedQuestionIds = await liveFamilyObservationQuestionIds(tx, key);
+  observedQuestionIds.add(input.questionId);
 
   return updateFamilyCalibration(tx, {
     familyKey: key,
@@ -380,7 +334,7 @@ export async function recordFamilyObservationForAttempt(
     bAnchor,
     outcome: input.outcome,
     isObjective: true,
-    distinctQuestionCount,
+    distinctQuestionCount: observedQuestionIds.size,
     anchorWeight,
     now: input.now,
   });

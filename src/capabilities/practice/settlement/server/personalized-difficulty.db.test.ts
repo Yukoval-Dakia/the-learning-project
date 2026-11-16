@@ -1,10 +1,5 @@
-// YUK-361 Phase 5 — 家族级 b_personalized 门控 update 路径 db 测。
-//
-// 验证 (Phase 5 step 5 + 本 driver 验收):
-//   (a) n<20 / <5 distinct questions / 非客观 outcome → b_delta 不离 0；
-//   (b) 全门控过后 → 收缩后的 b_delta 被应用；
-//   (c) family_key 组装 + recordFamilyObservationForAttempt 端到端 (subject 派生);
-//   (d) soft/subjective outcome 一条都不累 (isObjective=false 早返)。
+// 家族级 b_personalized 门控 update 路径 db 测：distinct 门读结算账本里仍有效的家族观测
+// 回执，两门全过后残差按作答前 θ̂ 折进收缩均值。
 
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -81,44 +76,45 @@ async function readFamily(key: string) {
 }
 
 /**
- * Seed an attempt/review event + a sibling judge event for `questionId` so the
- * OBSERVED-distinct query (finding #1) counts this question as having produced a
- * judged observation. `judgeRoute` controls objectivity (exact/keyword =
- * objective; semantic etc. = soft → not counted). `action` mirrors the two hot
- * paths (review = /api/review/submit, attempt = paper-submit). Returns the
- * attempt event id.
+ * Seed one live applied settlement whose family_fold receipt names `familyKey` and whose
+ * sealed plan anchors `questionId`, the shape writeSettlementEvent records for an
+ * objective family observation. The distinct gate counts these receipts.
  */
-async function seedJudgedAttemptEvent(
-  questionId: string,
-  judgeRoute: string,
-  action: 'review' | 'attempt' = 'attempt',
-): Promise<string> {
-  const createdAt = new Date();
-  const attemptId = newId();
+async function seedFamilyObservationReceipt(familyKey: string, questionId: string) {
+  const occurredAt = new Date();
+  const groupId = `grp_${createId()}`;
+  const evaluationId = `ev_${createId()}`;
   await db.insert(event).values({
-    id: attemptId,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action,
-    subject_kind: 'question',
-    subject_id: questionId,
-    outcome: 'failure',
-    payload: {},
-    created_at: createdAt,
-  });
-  await db.insert(event).values({
-    id: newId(),
-    actor_kind: 'agent',
-    actor_ref: 'test_judge',
-    action: 'judge',
-    subject_kind: 'event',
-    subject_id: attemptId,
+    id: `stl_${createId()}`,
+    actor_kind: 'system',
+    actor_ref: 'assessment_settlement',
+    action: 'experimental:assessment_settlement',
+    subject_kind: 'evaluation_group',
+    subject_id: groupId,
     outcome: 'success',
-    payload: { judge_route: judgeRoute },
-    caused_by_event_id: attemptId,
-    created_at: createdAt,
+    payload: {
+      effect: 'applied',
+      evaluation_group_id: groupId,
+      evaluation_id: evaluationId,
+      occurrence_at: occurredAt.toISOString(),
+      reverted_settlement_event_ids: [],
+      effects: {
+        family_observation_recorded: true,
+        family_fold: { familyKey, folded: false, residual: 0 },
+      },
+      replay_inputs: {
+        kind: 'plan',
+        groupId,
+        evaluationId,
+        submissionId: `sub_${createId()}`,
+        occurrenceAt: occurredAt.toISOString(),
+        fsrsSubjects: [],
+        kcObservations: [],
+        theta: { applied: true, anchorQuestionId: questionId },
+      },
+    },
+    created_at: occurredAt,
   });
-  return attemptId;
 }
 
 const now = () => new Date();
@@ -128,14 +124,15 @@ describe('mastery_state θ̂ 锚组合 (effectiveFamilyB 消费接缝 sanity)', 
     await resetDb();
   });
 
-  // ── finding #3 修复回归 — 残差用 PRE-attempt θ̂（thetaBefore），不读 POSTERIOR ────
   // hook 在 updateThetaForAttempt 之后调用，mastery_state.theta_hat 已被本次作答移动
   // （POSTERIOR）。残差必须对着**作答前**的 θ̂ 算（mirror state.ts thetaBefore=s.theta
   // 纪律）。caller 在 Elo 下移前捕获 θ̂ 传入 thetaBefore；hook 优先用它，不读已移动的
   // mastery_state。本测：mastery_state 种 POSTERIOR θ̂=-3（远低），thetaBefore 传 -1，
   // 全答错。两者残差都 <clamp 且不同：θ=-1 → wrong residual=1/(1-σ(-1))≈1.368；若误读
   // mastery_state(θ=-3) → 1/(1-σ(-3))≈1.0497。b_delta = shrink(residual, 20) = 0.5·residual。
-  it('(finding #3) 残差用传入的 PRE-attempt thetaBefore，而非已移动的 mastery_state θ̂', async () => {
+  // @invariant grading: 结算账本里仍有效的家族观测回执覆盖 5 道不同题且 n≥20 后，每条客观残差按作答前 θ̂ 折进收缩后的家族均值
+  // @fails-if distinct 门不读仍有效的 family_fold 回执（calibrated_n 停在 0），或残差改读已移动的 mastery_state 后验 θ̂
+  it('残差用传入的 PRE-attempt thetaBefore，而非已移动的 mastery_state θ̂', async () => {
     const k = createId();
     await seedKnowledge(k, 'yuwen');
     const qs: string[] = [];
@@ -143,7 +140,7 @@ describe('mastery_state θ̂ 锚组合 (effectiveFamilyB 消费接缝 sanity)', 
       const q = createId();
       await seedQuestion(q, [k], 'short_answer', 'manual');
       await seedItemCalibration(q, 0); // bAnchor=0
-      await seedJudgedAttemptEvent(q, 'keyword'); // observed-distinct=5
+      await seedFamilyObservationReceipt(familyKey('yuwen', k, 'short_answer', 'manual'), q); // observed-distinct=5
       qs.push(q);
     }
     // 种一个 POSTERIOR θ̂=-3（代表本次作答 Elo 下移后的值）。若 hook 误读它，残差会偏。

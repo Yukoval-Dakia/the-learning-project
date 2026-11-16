@@ -14,6 +14,7 @@ import {
 import { eventAllowsDerivationSql } from './derivation-policy';
 import { bindEventUsage } from './event-usage';
 import { computeAffectedScopes } from './scope-tagger';
+import { subscriptionWakeActions } from './subscription-wake';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -292,15 +293,18 @@ export async function writeEvents(db: DbLike, inputs: WriteEventInput[]): Promis
       .values(rows)
       .onConflictDoNothing({ target: event.id })
       .returning({ action: event.action });
-    if (inserted.some((row) => row.action === 'experimental:assessment_publish')) {
-      // NOTIFY is delivered only at outer commit. A failed hint must not roll back
-      // the durable event; the minute dispatcher remains the recovery path.
+    // NOTIFY is delivered only at outer commit. A failed hint must not roll back
+    // the durable event; the minute dispatcher remains the recovery path.
+    // The channel name is historical: the listener wakes every subscriber, and
+    // the action set is the composition root's subscription union.
+    const wakeActions = subscriptionWakeActions();
+    if (inserted.some((row) => wakeActions.has(row.action))) {
       try {
         await tx.transaction(async (hint) => {
           await hint.execute(sql`select pg_notify('assessment_publication', '')`);
         });
       } catch {
-        console.warn('[events] publication wake hint failed; cron will discover the event');
+        console.warn('[events] subscription wake hint failed; cron will discover the event');
       }
     }
     return inputs.map((input) => input.id);

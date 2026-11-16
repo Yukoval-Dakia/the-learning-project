@@ -436,6 +436,7 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
   const enrolledKnowledgeIds =
     row.draftStatus !== 'draft'
       ? await enrollAddedKnowledgeScheduling(tx, {
+          questionId: row.id,
           knowledgeIds: addedKnowledgeIds,
           evidenceEventId: eventId,
           now: params.now,
@@ -537,6 +538,7 @@ export async function mergeKnowledgeForSourceDuplicate(
   const enrolledKnowledgeIds =
     row.draftStatus !== 'draft'
       ? await enrollAddedKnowledgeScheduling(tx, {
+          questionId: row.id,
           knowledgeIds: addedKnowledgeIds,
           evidenceEventId: eventId,
           now: params.now,

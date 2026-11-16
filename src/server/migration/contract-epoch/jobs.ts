@@ -22,8 +22,6 @@ export type JobEpochDisposition = 'drain' | 'translate' | 'fenced';
  */
 export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>> = {
   // ── drain：合同无关的 housekeeping / 只产触发 / 纯元数据清扫 ──
-  // golden E2E 探针：无业务写。
-  echo: 'drain',
   // job 遥测与孤儿会话清扫：只写运维/session 状态机表。
   prune_job_events: 'drain',
   prune_orphan_review_sessions: 'drain',

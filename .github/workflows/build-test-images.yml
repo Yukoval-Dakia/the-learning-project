@@ -97,7 +97,9 @@ jobs:
       # whole Dockerfile (runner is one of its ancestors), so a single mode=max
       # export from the worker build captures every stage. The runner/builder
       # builds only import; exporting from all three would fight over the same
-      # cache dir. Mirror build args are deliberately not passed.
+      # cache dir. Mirror build args (NPM_REGISTRY / PLAYWRIGHT_DOWNLOAD_HOST)
+      # stay unset. TLP_SOURCE_COMMIT is the same public SHA as the image tag;
+      # the runner stage writes it to BUILD_COMMIT for /api/ready.
       - name: Build runner / worker / builder images
         env:
           SHA: ${{ steps.src.outputs.sha }}
@@ -121,6 +123,7 @@ jobs:
               --target "$target" \
               --tag "tlp-test:${SHA}-${target}" \
               --label "org.opencontainers.image.revision=${SHA}" \
+              --build-arg "TLP_SOURCE_COMMIT=${SHA}" \
               --cache-from 'type=local,src=/tmp/tlp-buildx-cache' \
               $cache_to \
               . >"$ev/build-${target}.log" 2>&1; then

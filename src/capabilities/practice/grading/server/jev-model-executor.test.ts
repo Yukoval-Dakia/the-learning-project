@@ -1,6 +1,7 @@
 // YUK-1049 — Jev ModelUnitExecutorPort adapter unit tests (no DB).
 //
-// Only the wire transport is stubbed (fetchImpl); @/server/ai/log is mocked
+// Only the wire transport is stubbed (fetchImpl). Start/retry are mocked on
+// @/server/ai/log and the terminal writer on @/kernel/records/ai-attempt-facts,
 // so lifecycle writers never touch Postgres — the REAL lifecycle state
 // machine still drives admission/timeout/terminal accounting.
 
@@ -15,9 +16,18 @@ const logMocks = vi.hoisted(() => ({
 
 vi.mock('@/server/ai/log', () => ({
   writeAiTaskRunStarted: logMocks.started,
-  writeAiTaskAttemptFinished: logMocks.terminal,
   writeAiTaskRunRetried: logMocks.retried,
 }));
+
+vi.mock('@/kernel/records/ai-attempt-facts', async () => {
+  const actual = await vi.importActual<typeof import('@/kernel/records/ai-attempt-facts')>(
+    '@/kernel/records/ai-attempt-facts',
+  );
+  return {
+    ...actual,
+    writeAiTaskAttemptFinished: logMocks.terminal,
+  };
+});
 
 vi.mock('@/kernel/tools/call-evidence', () => ({
   writeToolCallLog: logMocks.tool,

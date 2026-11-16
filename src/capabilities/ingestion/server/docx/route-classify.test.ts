@@ -123,7 +123,7 @@ function readRels(archive: Uint8Array, part: string): Map<string, Record<string,
   return out;
 }
 
-// ---------- independent namespace-aware readback (R1 P1-1) ----------
+// ---------- independent namespace-aware readback ----------
 
 interface NsRelationship {
   namespace: string;
@@ -134,7 +134,7 @@ interface NsRelationship {
  * A minimal XML tag tokenizer + in-scope namespace resolver, deliberately NOT
  * fast-xml-parser: it mirrors how a namespace-aware consumer (Python
  * ElementTree / pandoc / LibreOffice) addresses relationships, which is exactly
- * the reader class that saw 0 relationships before the P1-1 fix. Known test-only
+ * the reader class that saw 0 relationships before the fix. Known test-only
  * limitation: attribute values must not contain a literal '>' — true for the
  * canonical serializer output (escaped to &gt;) and for these fixtures.
  */
@@ -219,7 +219,7 @@ describe('prepareDocxForConversion — external refs NEVER reach converters', ()
     expect(copyRels.get('rId1')?.Target).toBe('media/image2.png');
     expect(copyRels.get('rId1')?.TargetMode).toBeUndefined();
 
-    // R1 P1-1 — namespace-aware readback (independent reader): the rebuilt part
+    // namespace-aware readback (independent reader): the rebuilt part
     // must address every surviving relationship under the OPC namespace, with
     // the canonical declaration on the root element.
     const footerRelsBytes = unzipSync(copy)['word/_rels/footer1.xml.rels'] as Uint8Array;

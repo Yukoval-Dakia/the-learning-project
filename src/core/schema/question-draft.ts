@@ -291,9 +291,13 @@ export const DraftPart = z.object({
   /**
    * （可选）本 part 独立 blank 槽的默认逻辑序（显式
    * slot_id 列表，恰覆盖本 part 的 blank 槽各一次；交叉校验在发布 barrier）。
-   * 缺省 = 未声明，不注入默认值，旧文档 JSON/digest 不变。
+   * 空数组与缺省同为「未声明」——解析时去掉，存储/摘要与不写同形，
+   * 不注入默认值，旧文档 JSON/digest 不变。
    */
-  blank_order: z.array(z.string().min(1)).min(1).optional(),
+  blank_order: z.preprocess(
+    (value) => (Array.isArray(value) && value.length === 0 ? undefined : value),
+    z.array(z.string().min(1)).min(1).optional(),
+  ),
   /** 解析/讲解文本（公开）。 */
   explanation_md: z.string().optional(),
   metadata: DraftMetadata.default({}),
@@ -342,6 +346,36 @@ export const QuestionDraftDocument = z.object({
   base: DraftBase.optional(),
 });
 export type QuestionDraftDocumentT = z.infer<typeof QuestionDraftDocument>;
+
+/** zod issue path → `parts[0].blank_order` 定位串。 */
+function formatIssuePath(path: readonly PropertyKey[]): string {
+  let out = '';
+  for (const seg of path) {
+    out += typeof seg === 'number' ? `[${seg}]` : out === '' ? String(seg) : `.${String(seg)}`;
+  }
+  return out === '' ? '(document)' : out;
+}
+
+const DRAFT_DOC_FIELD_HINTS: readonly { field: string; hint: string }[] = [
+  {
+    field: 'blank_order',
+    hint: "blank_order lists this part's blank-slot ids (units with response_spec.kind='blank'), each exactly once; parts without blank slots (e.g. choice questions) must omit the field — [] is treated as omitted",
+  },
+];
+
+/**
+ * 文档 schema 错误的 agent 可读版：逐条 `<path>: <message>`，已知结构坑附修法。
+ * raw zod message 是一整块 JSON，调用方拿不到「哪个字段、这个题型该怎么填」。
+ */
+export function formatDraftDocumentIssues(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => {
+      const path = issue.path ?? [];
+      const hint = DRAFT_DOC_FIELD_HINTS.find((h) => path.includes(h.field))?.hint;
+      return `${formatIssuePath(path)}: ${issue.message}${hint != null ? ` — ${hint}` : ''}`;
+    })
+    .join('\n');
+}
 
 // ---------- 类型守卫与归一 ----------
 

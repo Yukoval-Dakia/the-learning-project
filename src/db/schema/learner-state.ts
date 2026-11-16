@@ -192,6 +192,12 @@ export const intervention = pgTable(
       .$type<JsonObject[]>()
       .notNull()
       .default([]),
+    // YUK-2030 provider-wait receipt on the aggregate: the waits spent and the
+    // scheduled wake instant. The pg-boss row carrying provider_waits can
+    // vanish; the recovery floor re-arms from here so the budget survives the
+    // row. Written by the wait re-arm; a fresh preparation round defaults 0.
+    preparation_waits: integer('preparation_waits').notNull().default(0),
+    preparation_wait_until: timestamp('preparation_wait_until', { withTimezone: true }),
     failure_code: text('failure_code'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

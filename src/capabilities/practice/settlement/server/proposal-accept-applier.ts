@@ -3,11 +3,7 @@
 
 import type { Db } from '@/db/client';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-import {
-  type ProposalAcceptApplier,
-  type ProposalAcceptInput,
-  toProposalLifecycleResult,
-} from '@/kernel/proposals/index';
+import type { ProposalAcceptApplier, ProposalAcceptInput } from '@/kernel/proposals/index';
 import {
   type JudgeRetractionApplierOpts,
   acceptJudgeRetractionProposal,
@@ -43,5 +39,5 @@ export const judgeRetractionProposalAcceptApplier: ProposalAcceptApplier = async
     inboxView(input),
     runtimeOptions(input, runtime),
   );
-  return { kind: result.kind, result: toProposalLifecycleResult(result) };
+  return { kind: result.kind, result: { ...result } };
 };

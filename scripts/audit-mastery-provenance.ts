@@ -28,6 +28,7 @@ const REPO_ROOT = resolve(__dirname, '..');
 export const TRACKED_CONSUMERS: readonly string[] = [
   'src/capabilities/agency/jobs/research_meeting_nightly.ts',
   'src/capabilities/practice/grading/server/mastery-progress-signal.ts',
+  'src/capabilities/practice/scheduling/server/stream-inputs.ts',
   'src/capabilities/knowledge/server/node-page.ts',
   'src/capabilities/knowledge/server/frontier-read.ts',
   'src/kernel/read-models/learnable-frontier.ts',

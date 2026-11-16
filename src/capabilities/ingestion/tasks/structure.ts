@@ -14,6 +14,7 @@ export type StructureNodeT = {
   kind?: string | null;
   role: 'stem' | 'sub' | 'standalone';
   question_no?: string | null;
+  section?: string | null;
   prompt_text: string;
   options?: { label: string; text: string; figure_ids?: number[] | null }[] | null;
   answers?: string[] | null;
@@ -29,6 +30,7 @@ const StructureNode: z.ZodType<StructureNodeT> = z.lazy(() =>
     kind: QuestionKind.nullable().optional(),
     role: z.enum(['stem', 'sub', 'standalone']),
     question_no: z.string().nullable().optional(),
+    section: z.string().nullable().optional(),
     prompt_text: z.string(),
     options: z.array(QuestionOptionOut).nullable().optional(),
     answers: z.array(z.string()).nullable().optional(),
@@ -95,11 +97,13 @@ function buildStructurePrompt(profile: SubjectProfile): string {
 {"layout_quality":"structured"|"partial"|"text_only","extraction_confidence":0.0-1.0,"warnings":["..."],"content_lost":true|false|null,"figure_handwriting":[{"figure_index":0,"student_answer_present":true|false|null}],"questions":[StructureNode, ...]}
 
 StructureNode（递归，**不要**输出 id，运行时会补）：
-{"kind":"choice|true_false|fill_blank|short_answer|essay|computation|reading|translation|derivation 或原题题型","role":"stem"|"sub"|"standalone","question_no":"1"|null,"prompt_text":"...","options":[{"label":"A","text":"","figure_ids":[0]}]|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null,"figure_ids":[0,1]|null,"student_answer_present":true|false|null}
+{"kind":"choice|true_false|fill_blank|short_answer|essay|computation|reading|translation|derivation 或原题题型","role":"stem"|"sub"|"standalone","question_no":"1"|null,"section":"一、选择题"|null,"prompt_text":"...","options":[{"label":"A","text":"","figure_ids":[0]}]|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null,"figure_ids":[0,1]|null,"student_answer_present":true|false|null}
 
 约束：
 - kind 是原题的题型标签，依据题面填写；选择题的选项必须进入 options，不能只拼进 prompt_text。题型标签不是评分准入，不据此生成参考答案。
 - role 三选一：stem（容器，含 passage + sub_questions）/ sub（大题下的小问）/ standalone（独立单题）。只有 stem 能有 sub_questions；sub / standalone 的 sub_questions 必须为 null 或省略。
+- question_no 收该节点在卷面上的**印刷题号**，归一成号码本身（如 "6"）：「6.」「第6题」「（6）」都写成 "6"。印刷题号**不得留在 prompt_text 开头**——prompt_text 从题号之后的题干原文开始；没印题号才给 null。
+- section 收该节点所属的**印刷栏目/大题区段名**（如「一、选择题」「三、解答题」），栏目名下辖的连续若干题都标同一个 section；栏目/部分标题**不得写进 prompt_text**，卷面没有栏目标题才给 null。
 - page_index 是 0-based 整数，指该节点主要出现在第几张图（跨页 stem 用它起始页）。
 - figure_ids 是裁剪图序号数组（0-based，与输入 figures[].index 对应）；无配图时给 null 或省略。**仅当输入含 figures 字段时才填写 figure_ids**，否则省略。
 - student_answer_present 是布尔：该节点的题面区域是否有学生手写作答 / 批改痕迹。**只报 true/false，绝不转写手写文字**（手写是作答像素，下游判分用，不做 OCR）。无 / 不确定给 null 或省略。
@@ -108,7 +112,8 @@ StructureNode（递归，**不要**输出 id，运行时会补）：
 - extraction_confidence：你对整棵结构树与原图一致性的置信度（0 到 1）。跨页归属、题号、选项或层级有疑点时必须降低；不要把字段固定写成 1。
 - content_lost：原图可见的题、选项或内容有丢弃/无法转写时必须为 true 并写明 warning；跨页合并只去掉「（接上页）」「（续）」等版面续页标记不算内容丢失，题面正文、选项、原文缺一才算。全部保留填 false，无法判断填 null。不能只在 warning 报丢失。
 - answers / analysis 只转写印刷的参考答案/解析；不求解，不把手写当答案键。没有就给 null 或省略。
-- 禁止：输出 JSON 之外的文字、把跨页同一大题拆成多个顶层节点、把腾讯文字 hint 当成不可改的结构。`;
+- 一道题在同一页内也必须保持完整：它的题干、全部选项、小问、印刷答案/解析属于同一个顶层节点，**不得**把后半部分（剩余选项、答案行或解析行）拆成第二个顶层节点；拿不准是不是同一道题时保持为一个节点。
+- 禁止：输出 JSON 之外的文字、把跨页同一大题拆成多个顶层节点、把同一页内一道题的后半部分拆成新顶层节点、把腾讯文字 hint 当成不可改的结构。`;
 }
 
 export const structureTaskSpec = {

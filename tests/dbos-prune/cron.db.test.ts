@@ -29,13 +29,25 @@ let unrelatedJob: string | null;
 let originalProducerFunction: string | undefined;
 let originalJobClock: string | undefined;
 
-async function advanceClock(at: string) {
-  await sql`update prune_cron_clock.state set frozen_at = null,
-    offset_ms = greatest(offset_ms, ceil(extract(epoch from (${at}::timestamptz - pg_catalog.clock_timestamp())) * 1000)::bigint) where singleton`;
-  expect(
-    (await sql`select prune_cron_clock.clock_timestamp() >= ${at}::timestamptz as reached`)[0]
-      .reached,
-  ).toBe(true);
+async function freshRollbackMinute(horizon: string) {
+  const recentAtHorizon = await sql.begin(async (tx) => {
+    await tx`update prune_cron_clock.state set frozen_at = ${horizon}::timestamptz where singleton`;
+    const [row] = await tx`select exists(select 1 from prune_job_events_receipt
+      where cutoff > prune_cron_clock.clock_timestamp() - interval '2592060 seconds') as recent`;
+    await tx`update prune_cron_clock.state
+      set frozen_at = ${horizon}::timestamptz - interval '1 microsecond' where singleton`;
+    return z.boolean().parse(row.recent);
+  });
+  expect(recentAtHorizon).toBe(false);
+  const [slot] = await sql`select (date_trunc('minute', greatest(
+      ${horizon}::timestamptz,
+      pg_catalog.clock_timestamp()
+    )) + interval '1 minute 20 seconds')::text as at`;
+  const at = z.string().parse(slot.at);
+  await sql`update prune_cron_clock.state set
+    offset_ms = greatest(offset_ms, ceil(extract(epoch from (${at}::timestamptz - pg_catalog.clock_timestamp())) * 1000)::bigint)
+    where singleton`;
+  return at;
 }
 
 async function advanceClockBy(seconds: number) {
@@ -296,7 +308,7 @@ afterAll(async () => {
             clocksChanged: true,
             nativeTestCron: 'one shared future calendar point',
             clockStrategy:
-              'legacy ticks start three minutes before native time; align before DBOS cutover; freeze cooldown boundary',
+              'legacy ticks start three minutes before native time; align before DBOS cutover; freeze cooldown boundary; open rollback on one later minute',
             pgMonitorSeconds: 1,
             pgForwardPollSeconds: 1,
             reconcileMilliseconds: 50,
@@ -528,27 +540,43 @@ it('observes actual minute ticks, cached legacy forwarding, drain, two DBOS sche
   expect(await sql`select * from job_events where business_id = ${marker}`).toHaveLength(1);
   expect(suppressed.jobs.find((job) => job.id === lateCached.id)?.state).toBe('completed');
 
-  await sql`update prune_cron_clock.state set frozen_at = ${horizon}::timestamptz where singleton`;
-  expect(
-    (
-      await sql`select exists(select 1 from prune_job_events_receipt
-    where cutoff > clock_timestamp() - interval '2592060 seconds') as recent`
-    )[0].recent,
-  ).toBe(false);
-  await advanceClock(horizon);
+  // Keep the schedule off until both process clocks sit in one post-horizon
+  // minute. pg-boss files one job per minute of that clock, and the completion
+  // poll lasts longer than the gap left when the cooldown ends near :00.
+  const rollbackMinute = await freshRollbackMinute(horizon);
   await worker.command({ kind: 'sync-clock' });
   await peer.command({ kind: 'sync-clock' });
+  await pollSchedules('none');
+  await sql`update prune_cron_clock.state set frozen_at = null where singleton`;
+  expect(
+    (await sql`select prune_cron_clock.clock_timestamp() >= ${horizon}::timestamptz as reached`)[0]
+      .reached,
+  ).toBe(true);
+  observations.push({ rollbackCronSlot: rollbackMinute });
   await pollSchedules('pg-boss');
 
-  await expect
-    .poll(
-      async () =>
-        (
-          await sql`select count(*)::int as count from pgboss.job where name = 'prune_job_events' and state = 'completed'`
-        )[0]?.count,
-      { timeout: 15000, interval: 100 },
-    )
-    .toBe(3);
+  try {
+    await expect
+      .poll(
+        async () =>
+          (
+            await sql`select count(*)::int as count from pgboss.job where name = 'prune_job_events' and state = 'completed'`
+          )[0]?.count,
+        { timeout: 15000, interval: 100 },
+      )
+      .toBe(3);
+  } catch (error) {
+    const failed = await snapshot('prune-completed-count-mismatch');
+    const jobs = failed.jobs.map((job) => ({
+      id: job.id,
+      name: job.name,
+      state: job.state,
+      singleton_on: job.singleton_on,
+      created_on: job.created_on,
+    }));
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${message}\npgboss.job ${JSON.stringify(jobs)}`, { cause: error });
+  }
   await pollSchedules('pg-boss');
   const rollback = await snapshot('real-pg-cron-after-rollback');
   expect(rollback.receipts).toHaveLength(1);

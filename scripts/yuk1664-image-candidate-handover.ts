@@ -1,17 +1,15 @@
 /**
- * YUK-1664 — one-off handover driver for legacy `image_candidate` proposals.
+ * One-off handover driver for still-pending `image_candidate` proposals.
  *
- * The web-supply writer was removed (#2216) and the accept applier is retired in
- * the same change, so a still-pending image_candidate has no producer and no
- * live accept path. plan exports the candidate URL list as the handover receipt
+ * A still-pending image_candidate has no producer and no live accept path.
+ * plan exports the candidate URL list as the handover receipt
  * for the supply agent (备题员); apply writes one `rate`/`rollback` event per
  * pending proposal so the inbox classifies it as stale.
  *
  * Lock order inside apply's per-proposal transaction: proposal_decision first
  * (the shared decision lock every lifecycle path takes first), then
- * image_candidate_accept (the retired path's claim/finalize lock — a rolling
- * deploy's old worker can still hold it). No live path inverts this order: the
- * old accept path never takes proposal_decision, and the generic
+ * image_candidate_accept (a rolling deploy's old worker can still hold the
+ * claim lock). No live path inverts this order: the generic
  * dismiss/retract paths never take image_candidate_accept.
  *
  *   plan   — read-only. Lists every pending image_candidate proposal (id,

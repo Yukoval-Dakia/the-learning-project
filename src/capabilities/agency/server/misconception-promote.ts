@@ -60,18 +60,6 @@ export function misconceptionPromoteEnabled(): boolean {
   return getConfigFlag('MISCONCEPTION_PROMOTE_ENABLED');
 }
 
-/**
- * Kill switch for the HARD-confirm track (source: 'soft'→'hard' upgrade). Default OFF; when
- * OFF, decideDissociation is structurally unable to return HARD_CONFIRM, so no
- * evidence-driven hard upgrade can fire. A soft→hard flip additionally requires a FRESH owner
- * confirmation at the command call site — never automatic; the nightly accountability reader
- * passes fresh=false, so it can rank but never mutate the hard track.
- */
-export function misconceptionHardConfirmEnabled(): boolean {
-  // DB > env > default(false)。
-  return getConfigFlag('MISCONCEPTION_HARD_CONFIRM_ENABLED');
-}
-
 // misconceptionIdForConjecture 身份约定已上移到 core/schema/misconception.ts（kernel 读面共享）。
 
 export interface ArchiveSoftMisconceptionResult {
@@ -154,10 +142,8 @@ export interface PromoteConjectureInput {
   /** Caller-supplied write instant (house convention — no defaultNow). */
   now: Date;
   /**
-   * Which track this promotion writes. 'soft' (default) = an AI prior the owner agreed with —
-   * the ONLY value the live accept path passes. 'hard' requires a decideDissociation()
-   * 'HARD_CONFIRM' verdict AND a fresh owner confirmation; the nightly accountability caller
-   * always passes fresh=false. The conflict guard makes 'soft' never downgrade a 'hard' row.
+   * Which track this promotion writes. 'soft' (default) is the only value the live accept
+   * path passes: an AI prior the owner agreed with. A soft write never downgrades a hard row.
    */
   source?: 'hard' | 'soft';
   /**

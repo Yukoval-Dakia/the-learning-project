@@ -48,12 +48,16 @@ export async function readWorkspace(
   return (await db.select().from(agent_workspace).where(ownerWhere(owner)).limit(1))[0] ?? null;
 }
 
-async function requireOwner(tx: Tx, owner: WorkspaceOwner): Promise<void> {
+async function requireOwner(tx: Tx, owner: WorkspaceOwner, claimRunId?: string): Promise<void> {
   if (owner.kind === 'task') {
+    // The owner's id is a stable directory key, not necessarily a run row —
+    // logical run keys, per-spawn child ids, and caller-anchored ids all land
+    // here. Liveness is proven on the claiming attempt's own run row instead.
+    const anchor = claimRunId ?? owner.id;
     const [run] = await tx
       .select({ status: ai_task_runs.status })
       .from(ai_task_runs)
-      .where(eq(ai_task_runs.id, owner.id))
+      .where(eq(ai_task_runs.id, anchor))
       .limit(1);
     if (run?.status !== 'running') throw new Error('workspace_owner_closed');
     return;
@@ -120,25 +124,25 @@ export async function requestWorkspaceDeletion(
       }
     }
     if (reason === 'completed') {
+      const anchor = row.claim_run_id ?? owner.id;
       const [run] = await tx
         .select({ status: ai_task_runs.status })
         .from(ai_task_runs)
-        .where(eq(ai_task_runs.id, owner.id))
+        .where(eq(ai_task_runs.id, anchor))
         .limit(1);
       if (!run || run.status === 'running') return row;
     }
     if (reason === 'deleted' && owner.kind === 'conversation') {
+      // A physically deleted conversation row is itself the proof: the owner
+      // can never be claimed again, so its workspace is safe to reclaim.
       const [session] = await tx
-        .select({ id: learning_session.id })
+        .select({
+          deleting: sql<boolean>`(${learning_session.deletion_requested_at} IS NOT NULL OR ${learning_session.deleted_at} IS NOT NULL)`,
+        })
         .from(learning_session)
-        .where(
-          and(
-            eq(learning_session.id, owner.id),
-            sql`(${learning_session.deletion_requested_at} IS NOT NULL OR ${learning_session.deleted_at} IS NOT NULL)`,
-          ),
-        )
+        .where(eq(learning_session.id, owner.id))
         .limit(1);
-      if (!session) return row;
+      if (session && !session.deleting) return row;
     }
     await tx
       .update(agent_workspace)
@@ -160,11 +164,17 @@ export async function workspaceClaimEnded(row: WorkspaceRow): Promise<boolean> {
   return lease != null && lease.getTime() < Date.now();
 }
 
-async function claim(db: Db, owner: WorkspaceOwner, mode: 'read' | 'write', reservation: number) {
+async function claim(
+  db: Db,
+  owner: WorkspaceOwner,
+  mode: 'read' | 'write',
+  reservation: number,
+  claimRunId?: string,
+) {
   if (!(await launcherAvailable())) throw new Error('workspace_unavailable');
   return db.transaction(async (tx) => {
     await lockAgentWorkspacePool(tx);
-    await requireOwner(tx, owner);
+    await requireOwner(tx, owner, claimRunId);
     const volume = await volumeIdentity();
     let row: Awaited<ReturnType<typeof readWorkspace>> = await readWorkspace(tx, owner);
     if (row && row.volume_id !== volume) {
@@ -236,6 +246,7 @@ async function claim(db: Db, owner: WorkspaceOwner, mode: 'read' | 'write', rese
         execution_token: token,
         execution_runtime: runtime,
         execution_lease_until: new Date(Date.now() + WORKSPACE_EXECUTION_LEASE_MS),
+        claim_run_id: claimRunId ?? null,
         last_activity_at: new Date(),
         last_error: null,
       })
@@ -259,9 +270,10 @@ export async function withWorkspace<T>(
   run: (id: string, signal: AbortSignal) => Promise<T>,
   signal?: AbortSignal,
   reservation = 0,
+  claimRunId?: string,
 ): Promise<T> {
   signal?.throwIfAborted();
-  const row = await claim(db, owner, mode, reservation);
+  const row = await claim(db, owner, mode, reservation, claimRunId);
   const controller = new AbortController();
   const abort = () => controller.abort(signal?.reason);
   signal?.addEventListener('abort', abort, { once: true });

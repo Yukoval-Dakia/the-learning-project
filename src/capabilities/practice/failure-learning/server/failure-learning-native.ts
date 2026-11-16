@@ -8,6 +8,7 @@ import {
 } from '@/kernel/read-models/assessment-verdict';
 import { getFailureAttemptForDerivationById } from '@/kernel/read-models/failure-attempts';
 import { projectFrozenStudyContext } from '../../grading/public';
+import { extractGradingEvidence } from '../tasks/attribution-evidence';
 
 /** Content and scope for attribution come from the original issuance and submission. */
 export async function loadNativeFailureContext(db: Db | Tx, attemptEventId: string) {
@@ -23,6 +24,12 @@ export async function loadNativeFailureContext(db: Db | Tx, attemptEventId: stri
   );
   if (!scope) return null;
   const context = projectFrozenStudyContext(verdict.revision, verdict.issuance);
+  const grading = extractGradingEvidence({
+    unitResults: verdict.effective.row.unit_results,
+    scoringBasis: verdict.revision.scoring_basis,
+    responseSpec: verdict.revision.response_spec,
+    issuedPartIds: verdict.issuance.part_ids,
+  });
   const entries = verdict.submission.response_set.entries;
   // The attribution task is text-only. Image metadata is not the student's image content.
   if (
@@ -39,5 +46,8 @@ export async function loadNativeFailureContext(db: Db | Tx, attemptEventId: stri
     reference_md: context.reference_md,
     answer_md: JSON.stringify(verdict.submission.response_set),
     knowledge_ids: verdict.knowledge_ids,
+    revision_id: verdict.revision.revision_id,
+    grading_evidence: grading.evidence,
+    failed_part_ids: grading.failedPartIds,
   };
 }

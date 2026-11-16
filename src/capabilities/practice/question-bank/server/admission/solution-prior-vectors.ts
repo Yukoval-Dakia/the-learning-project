@@ -5,7 +5,12 @@
 import { sql } from 'drizzle-orm';
 import { EMBED_VERSION, embedHash } from '@/core/embed-source';
 import type { Db } from '@/db/client';
-import { question_solution_prior, question_solution_prior_vector } from '@/db/schema';
+import {
+  question_revision,
+  question_solution_prior,
+  question_solution_prior_vector,
+} from '@/db/schema';
+import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 import { EMBED_MODEL, type EmbedProviderAttemptOptions, embedMany } from '@/server/ai/embed';
 import { SolutionPriorPart, type SolutionPriorPartT } from './solution-prior';
 
@@ -44,6 +49,8 @@ export async function embedSolutionPriorVectors(
   db: Db,
   limit: number,
   providerAttempt: EmbedProviderAttemptOptions,
+  /** Test seam, threaded through by runEmbedBackfill's own embedFn. */
+  embedFn: typeof embedMany = embedMany,
 ): Promise<number> {
   const priors = await db
     .select()
@@ -54,6 +61,14 @@ export async function embedSolutionPriorVectors(
             WHERE v.revision_id = ${question_solution_prior.revision_id}
               AND v.part_id = ${question_solution_prior.part_id}
               AND v.embed_version >= ${EMBED_VERSION}
+          )
+          -- Facet text derives from the question; a prior produced before consent
+          -- was restricted must not leak derived text to the embedder either. An
+          -- unresolvable revision→question link fails closed.
+          AND EXISTS (
+            SELECT 1 FROM ${question_revision} r
+            WHERE r.revision_id = ${question_solution_prior.revision_id}
+              AND ${sourceAllowsDerivationSql({ kind: 'question', id: sql`r.group_id` })}
           )`,
     )
     .limit(limit);
@@ -64,7 +79,7 @@ export async function embedSolutionPriorVectors(
     const part = SolutionPriorPart.safeParse(row.prior);
     if (!part.success) continue;
     const facets = solutionPriorFacetTexts(part.data);
-    const vectors = await embedMany(
+    const vectors = await embedFn(
       facets.map((facet) => facet.text),
       providerAttempt,
     );

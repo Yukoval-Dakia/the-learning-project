@@ -10,6 +10,7 @@ import {
   hasLearningItemGenesisAnchor,
   projectLearningItemGuarded,
 } from '@/kernel/records/learning-items';
+import { learningIntentTopic, sealLearningIntentOutlineReceiptTx } from './learning-intent-request';
 
 type ArchiveProposalArtifacts = (
   tx: Tx,
@@ -75,4 +76,6 @@ export async function retractLearningItemProposal(
     proposalId: input.proposalId,
     archivedAt: input.correction_at,
   });
+  const topic = learningIntentTopic(input.proposal.payload);
+  if (topic) await sealLearningIntentOutlineReceiptTx(tx, topic, input.proposalId);
 }

@@ -19,7 +19,12 @@ import type { ActiveRun, CompanionCtx } from './companion-context';
 import type { RunSnapshot } from './companion-state';
 import { plainError } from './plain-errors';
 import { PICKUP_STALLED_COPY, isPickupStalled, isTerminal, progressStage } from './run-copy';
-import { addThinkingFrame, thinkingClosed, visibleThinking } from './thinking-lane';
+import {
+  addThinkingFrame,
+  thinkingClosed,
+  trimThinkingForRetries,
+  visibleThinking,
+} from './thinking-lane';
 
 /** Replay-last-N window (matches the turns route default). */
 const REPLAY_LIMIT = 20;
@@ -27,7 +32,7 @@ const REPLAY_LIMIT = 20;
 export interface RunTracker {
   /** Track an accepted run (from a 202) and attach its stream. */
   trackAccepted: (
-    run: Omit<ActiveRun, 'view' | 'stopPending' | 'cancelRequested' | 'thinking'>,
+    run: Omit<ActiveRun, 'view' | 'stopPending' | 'cancelRequested' | 'thinking' | 'retriesSeen'>,
   ) => void;
   detachSubscriptions: (sessionId?: string, notify?: boolean) => void;
   refetchTurns: () => Promise<boolean>;
@@ -117,6 +122,7 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
         const current = owns();
         if (!current) return;
         current.view = view;
+        current.thinking = trimThinkingForRetries(current.thinking, view, current.retriesSeen);
         applyRunView(current);
         publishThinking(current);
         publishRuns();
@@ -159,7 +165,10 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
   }
 
   function trackAccepted(
-    accepted: Omit<ActiveRun, 'view' | 'stopPending' | 'cancelRequested' | 'thinking'>,
+    accepted: Omit<
+      ActiveRun,
+      'view' | 'stopPending' | 'cancelRequested' | 'thinking' | 'retriesSeen'
+    >,
   ) {
     const run: ActiveRun = runs.get(accepted.runId) ?? {
       ...accepted,
@@ -167,6 +176,7 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
       stopPending: false,
       cancelRequested: false,
       thinking: [],
+      retriesSeen: new Set(),
     };
     run.location = accepted.location;
     run.userMessage = accepted.userMessage;
@@ -211,6 +221,7 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
         stopPending: false,
         cancelRequested: item.status === 'cancel_requested',
         thinking: [],
+        retriesSeen: new Set(),
       });
     }
     // Drop runs the snapshot no longer lists, but only ones known when the read started.

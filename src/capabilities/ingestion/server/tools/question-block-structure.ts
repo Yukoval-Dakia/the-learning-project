@@ -11,6 +11,7 @@ import {
   projectAddressableStructure,
 } from '@/core/schema/structured_question';
 import { question_block } from '@/db/schema';
+import { readFigureOrigins } from '@/kernel/read-models/figure-origin';
 import type { DomainTool, ToolContext } from './types';
 
 const GetQuestionBlockStructureInputSchema = z.object({
@@ -93,7 +94,14 @@ async function executeGetQuestionBlockStructure(
     });
   }
   return GetQuestionBlockStructureOutputSchema.parse({
-    structure: projectAddressableStructure(block.structured, block.figures ?? []),
+    structure: projectAddressableStructure(
+      block.structured,
+      block.figures ?? [],
+      await readFigureOrigins(
+        ctx.db,
+        (block.figures ?? []).map((figure) => figure.asset_id),
+      ),
+    ),
   });
 }
 

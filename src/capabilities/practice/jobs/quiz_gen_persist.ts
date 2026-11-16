@@ -419,7 +419,7 @@ export async function persistQuizDrafts(
         });
         compositePartCount += createdPartCount;
       }
-      // YUK-1043（复审裁决：可行写口即刻收敛）—— quiz_gen 新题同事务铸首版
+      // （裁决：可行写口即刻收敛）—— quiz_gen 新题同事务铸首版
       // revision：composite 组已由 createQuestionPart 的逐 part 发布落版（此处
       // 幂等 noop）；单题在此铸 v1。草稿未核验 ⇒ withheld/unverified_rules
       //（quiz_verify 通过后 promote 翻 admitted —— 行 6 已接）。

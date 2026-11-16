@@ -50,7 +50,7 @@ This file is the shared grounding + rules for downstream scanners. Write it with
 - IRON RULE: every finding cites concrete evidence (file:line / PR#+comment-url / YUK-id); no speculation.
 - Active Linear projects: list them by running the Linear list_projects tool for team ${TEAM} (ToolSearch "select:mcp__claude_ai_Linear__list_projects") — name + status + which is the current product direction; mark Completed projects as "do not add to".
 - Linear staleness caveat: updatedAt polluted by reorgs → use createdAt + status + supersession. Point to the graveyard doc ${DOCS}/archive/superpowers/specs/2026-06-18-rethink-abandoned-directions-archive.md (if it exists) for abandoned directions.
-- Stack reality (read CLAUDE.md "Stack note"): Hono API + Vite SPA + pg-boss (Next.js retired YUK-321 M5); PG presence (not Redis); capability manifests in src/capabilities/*/manifest.ts composed in server/app.ts. ADRs predating this may be legitimately superseded.
+- Stack reality (read CLAUDE.md "Stack note"): Hono API + TanStack Start front door (server/start/, served with the API) + pg-boss worker; PG presence (not Redis); capability manifests in src/capabilities/*/manifest.ts composed in server/app.ts. ADRs predating this may be legitimately superseded.
 - Codebase TODO facts: run \`rg -n -e 'TODO|FIXME|HACK|XXX' -g '*.ts' -g '*.tsx' src server web scripts | head -40\` and summarize; note that the real value is ADR drift + non-TODO debt (501/not_implemented stubs, it.todo, FUTURE_* declared-unimplemented, @deprecated).
 - docs map (docs live outside the repo at ${DOCS}): run \`find ${DOCS} -name '*.md' | wc -l\` and \`ls ${DOCS} ${DOCS}/design ${DOCS}/archive/superpowers/specs ${DOCS}/archive/superpowers/plans ${DOCS}/planning\`; note distinguish genuinely-open-and-untracked from historical/shipped/intentional-deferred.
 - Issue body template (read an existing issue's shape, e.g. via Linear get_issue on a recent Bug issue): sections 现象 / 机制 / 代码证据(file:line, mandatory) / 影响 / 修法(give BOTH 轻量 minimal AND 完整 thorough options) / 验收. Labels from existing set; priority 1-4.
@@ -112,7 +112,7 @@ function adrTask(key, adrs) {
 
 YOUR AREA — ADR implementation drift. For each ADR below (${DOCS}/adr/), read it, extract the DECISION, then check whether current code implements it. Report DRIFT ("ADR decided X, code does Y (file:line)") and silently-reversed-without-supersession-marker cases. If an ADR is correctly marked superseded and code matches, do NOT report.
 ADRs: ${adrs.join(',')}
-Stack note (scout): Next.js→Hono+Vite+pg-boss, Redis→PG, routes→capability manifests. ADRs predating that may be legitimately superseded — only report if the supersession is UNDOCUMENTED or code half-migrated.`,
+Stack note (scout): Hono API + TanStack Start front door + pg-boss worker; presence on Postgres; routes via capability manifests. ADRs predating the current stack may be legitimately superseded — only report if the supersession is UNDOCUMENTED or code half-migrated.`,
   }
 }
 

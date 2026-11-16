@@ -101,6 +101,22 @@ function eventShapeForProposal(payload: AiProposalPayloadT): {
           ai_proposal: payload,
         },
       };
+    case 'knowledge_mutation': {
+      // The knowledge fold and accept read the mutation from the action and its
+      // fields from the payload top level; any other shape can never be applied.
+      const { mutation, ...fields } = payload.proposed_change;
+      return {
+        action: `experimental:knowledge_${mutation}`,
+        subject_kind: 'knowledge',
+        subject_id: proposalSubjectId(payload),
+        event_payload: {
+          ...fields,
+          reasoning: payload.reason_md,
+          evidence_refs: payload.evidence_refs,
+          ai_proposal: payload,
+        },
+      };
+    }
     default:
       return {
         action: 'experimental:proposal',

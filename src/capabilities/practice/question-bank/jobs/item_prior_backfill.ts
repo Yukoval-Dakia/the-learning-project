@@ -14,6 +14,7 @@
 
 import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
+import { providerWaitOutput } from '@/server/ai/provider-wait';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import {
@@ -87,11 +88,23 @@ export function buildItemPriorBackfillHandler(
       // candidate set early-returns with considered:0 → level `idle`; a 限流风暴
       // fails every question → calibrated:0 → level `stalled` (loud + job output).
       // Invariant holds: considered === calibrated + skipped_failed.
-      return reportJobYield('item_prior_backfill', {
+      const yieldOutput = reportJobYield('item_prior_backfill', {
         attempted: result.considered,
         succeeded: result.calibrated,
         failed: result.skipped_failed,
       });
+      // Provable transient provider rejection → the DAG waits for route recovery
+      // and redelivers this round (provider-wait contract, YUK-2030).
+      if (result.providerWait) {
+        return {
+          ...yieldOutput,
+          ...providerWaitOutput({
+            retryClass: result.providerWait.retryClass,
+            detail: `skipped_failed=${result.skipped_failed}/${result.considered}, evidence=${result.providerWait.evidenceRef}`,
+          }),
+        };
+      }
+      return yieldOutput;
     } catch (err) {
       console.error('[item_prior_backfill] failed', err);
       throw err;

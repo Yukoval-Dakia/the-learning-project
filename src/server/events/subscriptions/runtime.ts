@@ -105,6 +105,19 @@ function asBigint(value: string | number | bigint): bigint {
   return BigInt(value);
 }
 
+function asTimestamp(value: Date | string): Date {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('event subscription retry_wait row returned an unreadable next_attempt_at');
+  }
+  return date;
+}
+
+export type SubscriptionDeliveryFailure =
+  | { readonly status: 'retry_wait'; readonly nextAttemptAt: Date }
+  | { readonly status: 'dead_letter' }
+  | { readonly status: 'lost_lease' };
+
 type DbTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 type CheckpointFence = {
@@ -633,7 +646,7 @@ export async function failSubscriptionDelivery(
   error: unknown,
   // Configurable so callers can widen the aggressive 1s default without editing SQL.
   options: { maxAttempts: number; retryDelaySeconds?: number },
-): Promise<'retry_wait' | 'dead_letter' | 'lost_lease'> {
+): Promise<SubscriptionDeliveryFailure> {
   // Exported entry: validate numeric options before they reach the dead-letter
   // threshold or the backoff SQL.
   assertPositiveInteger(options.maxAttempts, 'maxAttempts');
@@ -651,7 +664,7 @@ export async function failSubscriptionDelivery(
       claimToken: claim.checkpointClaimToken,
     },
     async (tx) =>
-      tx.execute<{ attempt_count: number }>(sql`
+      tx.execute<{ attempt_count: number; next_attempt_at: Date | string | null }>(sql`
         update event_subscription_delivery
         set status = case when attempt_count + 1 >= ${options.maxAttempts} then 'dead_letter' else 'retry_wait' end,
             attempt_count = attempt_count + 1,
@@ -673,11 +686,17 @@ export async function failSubscriptionDelivery(
           and claim_owner = ${claim.claimOwner}
           and claim_token = ${claim.claimToken}::uuid
           and claim_lease_until >= clock_timestamp()
-        returning attempt_count
+        returning attempt_count, next_attempt_at
       `),
   );
-  if (!rows || rows.length === 0) return 'lost_lease';
-  return rows[0].attempt_count >= options.maxAttempts ? 'dead_letter' : 'retry_wait';
+  if (!rows || rows.length === 0) return { status: 'lost_lease' };
+  if (rows[0].attempt_count >= options.maxAttempts) return { status: 'dead_letter' };
+  if (rows[0].next_attempt_at == null) {
+    throw new Error(
+      `event subscription '${claim.subscriberId}@v${claim.subscriberVersion}' retry_wait row has no next_attempt_at`,
+    );
+  }
+  return { status: 'retry_wait', nextAttemptAt: asTimestamp(rows[0].next_attempt_at) };
 }
 
 export async function redriveSubscriptionDelivery(
@@ -765,6 +784,8 @@ export async function runSubscriptionDispatchCycle(
     maxDeliveriesPerSubscription?: number;
     /** Stop STARTING claims after this budget; never shorten an active handler's timeout. */
     maxDispatchMs?: number;
+    /** Fired after a delivery commits retry_wait. The head stays first until this instant. */
+    onRetryWake?: (nextAttemptAt: Date) => Promise<void>;
   },
 ): Promise<SubscriptionDispatchCycleResult> {
   assertPositiveInteger(options.maxAttempts, 'maxAttempts');
@@ -860,12 +881,27 @@ export async function runSubscriptionDispatchCycle(
               }
             } catch (error) {
               const transition = await failSubscriptionDelivery(db, claim, error, options);
-              if (transition === 'retry_wait') result.retryScheduled += 1;
-              else if (transition === 'dead_letter') result.deadLettered += 1;
-              else result.lostLease += 1;
+              if (transition.status === 'retry_wait') {
+                result.retryScheduled += 1;
+                if (options.onRetryWake) {
+                  try {
+                    await options.onRetryWake(transition.nextAttemptAt);
+                  } catch (wakeError) {
+                    console.warn(
+                      '[event-subscriptions] retry wake failed; cron remains active',
+                      wakeError,
+                    );
+                  }
+                }
+              } else if (transition.status === 'dead_letter') {
+                result.deadLettered += 1;
+              } else {
+                result.lostLease += 1;
+              }
               // End the slice even on terminal failure; a timed-out handler may
-              // still be unwinding.
-              stoppedBecause = transition;
+              // still be unwinding. retry_wait stays at the head until it is due;
+              // the delayed wake resumes it so later deliveries do not wait on cron.
+              stoppedBecause = transition.status;
               break;
             }
           }

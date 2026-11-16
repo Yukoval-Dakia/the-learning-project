@@ -1,6 +1,7 @@
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { SECURITY_HEADERS } from './app';
+import { builtAssetEncoding } from './built-asset-cache';
 import { createStartAdminControlReader } from './start/admin-control-reader';
 import type { FrontdoorContext } from './start/context';
 import { cancelStartCopilotRun } from './start/copilot-cancel-run-operation';
@@ -58,10 +59,14 @@ export function createFrontdoorContext(api: Hono): FrontdoorContext {
   // The first resolution is requested only after the Start auth/epoch gate.
   let controls: ReturnType<FrontdoorContext['adminControls']> | undefined;
   const startAssets = new Hono();
+  // Encoding is chosen before serveStatic, which only recognizes a bare br/gzip
+  // token and will not serve a .br/.gz sibling the client rejected.
+  startAssets.use('/_build/*', builtAssetEncoding());
   startAssets.use(
     '/_build/*',
     serveStatic({
       root: START_CLIENT_ROOT,
+      precompressed: true,
       rewriteRequestPath: (path) => path.replace(/^\/_build/, ''),
     }),
   );

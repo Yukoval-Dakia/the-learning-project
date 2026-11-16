@@ -13,7 +13,6 @@ import {
 } from '@/kernel/records/record-processing';
 import type { RetractAiProposalOpts, RetractAiProposalResult } from './action-types';
 import {
-  ownerInput,
   proposalLifecycleRegistry,
   proposalRuntimeSeams,
   requireProposal,
@@ -92,7 +91,7 @@ export async function retractAiProposal(
             tx,
             {
               proposalId,
-              proposal: ownerInput(proposal),
+              proposal,
               correction_at: correctionAt,
               correction_event_id: correctionEventId,
               reason_md: opts.reason_md,

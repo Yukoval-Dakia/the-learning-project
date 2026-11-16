@@ -9,7 +9,7 @@
 | `boss/` | pg-boss client + handler 注册；`handlers/` 是 job/cron 目录（见 AGENTS.md）|
 | `core/config/server/` | 配置写面/读面事实装配（写面/观测 facts）；运行时水合、执行读面与环境解析同属 `../core/config/server/`；面板真相源宿主在 `src/server/admin/` |
 | `durable/` | DBOS durable 层：判分、孤儿会话回收等 workflow family；付费状态机与后端控制归 `../core/paid-work/server/` |
-| `events/` | 事件因果级联遍历 + 进程级 LISTEN 连接；`events/subscriptions/` 是 capability 事件订阅的注册与派发挂载 |
+| `events/` | 事件因果级联遍历 + 进程级 LISTEN 连接；`events/subscriptions/` 注册订阅并把提交 NOTIFY、retry 到期唤醒转成分发任务，分钟 cron 只做兜底 |
 | `http/` | HTTP 错误与 provider 会话截止时间 helper |
 | `migration/` | 迁移捕获与应用；`migration/contract-epoch/` 是契约 epoch 规则与 pg-boss 生产者 fence |
 | `orchestration/` | 夜间 DAG 编排器（anchor + tick 推进）|
@@ -20,7 +20,7 @@
 | `revert/` | 级联撤销与 state_snapshot 恢复 |
 | `../capabilities/agency/server/memory/` | Agency 的 Mem0 摄取与 per-scope brief 管线（见该目录 AGENTS.md）|
 | `../capabilities/ingestion/server/` | 录入状态操作、OCR / Vision rescue 与 DOCX 文本初始化（见该域 AGENTS.md）|
-| `../capabilities/agency/server/conjecture/` | 预测问责排序、硬确认事实读取与判定、probe 记账及纠错回放；typed ledger 与共享单探针评分归 `@/kernel/records/` |
+| `../capabilities/agency/server/conjecture/` | 预测问责排序、解离事实读取、probe 记账及纠错回放；typed ledger 与共享单探针评分归 `@/kernel/records/` |
 | `../kernel/object-storage.ts` | 共享 R2/S3 对象 I/O 与首次调用时构造的 client；资产引用、锁、恢复及付费策略归业务 owner |
 
 ## CONVENTIONS

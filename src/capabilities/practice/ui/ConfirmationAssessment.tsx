@@ -269,7 +269,12 @@ function AssessmentBody(
                 {m.content_md !== undefined ? (
                   <MathMarkdown notation={a.notation ?? null}>{m.content_md}</MathMarkdown>
                 ) : (
-                  <StimulusFigure assetId={m.asset_id} caption={m.caption} alt={m.alt_text} />
+                  <StimulusFigure
+                    assetId={m.asset_id}
+                    caption={m.caption}
+                    alt={m.alt_text}
+                    containsLearnerHandwriting={m.contains_learner_handwriting}
+                  />
                 )}
               </div>
             ))}

@@ -19,6 +19,7 @@ import type { Db } from '@/db/client';
 import type { SupplyTraceV1T } from '@/kernel/supply-contracts';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import { defaultWebSourcingDeps } from '../../server/web-sourcing-operation';
+import { bandLevelTargetFromPayload } from '../server/band-level';
 import {
   type PlacementWebDelivery,
   runPlacementWebDelivery,
@@ -48,6 +49,13 @@ const SupplyExecuteItem = z.object({
   knowledge_id: z.string().min(1),
   kind: z.string().min(1),
   difficulty_band: z.string().nullable().optional(),
+  difficulty_levels: z
+    .object({
+      min: z.number().int().min(1).max(5),
+      max: z.number().int().min(1).max(5),
+    })
+    .nullable()
+    .optional(),
   count: z.number().int().min(1).max(10),
   route_preference: z.array(z.string().min(1)).min(1),
   placement_claim_id: z.string().min(1).optional(),
@@ -121,6 +129,7 @@ export async function runSupplyExecuteJobData(
     knowledgeId: item.knowledge_id,
     kind: item.kind,
     difficultyBand: item.difficulty_band ?? null,
+    levelTarget: bandLevelTargetFromPayload(item.difficulty_band ?? null, item.difficulty_levels),
     count: item.count,
     // 词表宽于 SupplyRouteName（全 SupplyRoute 词表合法）；executor 的运行时
     // 守卫把不可执行路由记 skipped:'route_not_executable'——此处窄化只对齐类型。

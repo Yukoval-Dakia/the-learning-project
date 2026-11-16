@@ -8,6 +8,7 @@ export const agentWorkspaceCapability = defineCapability({
   copilotTools: {
     tools: [
       { name: 'workspace_exec', load: () => import('./public').then((m) => m.workspaceExec) },
+      { name: 'workspace_files', load: () => import('./public').then((m) => m.workspaceFiles) },
     ],
   },
   jobs: {

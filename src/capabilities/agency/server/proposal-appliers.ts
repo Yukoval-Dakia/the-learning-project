@@ -10,14 +10,15 @@
 // 裁决事务走 @/kernel/proposals/decision-protocol，其余共享 helper 走
 // @/kernel/proposals/applier-helpers。
 
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { artifact, completion_evidence, learning_item } from '@/db/schema';
+import { artifact, completion_evidence, event, learning_item } from '@/db/schema';
 import { nextProjectionEventTime, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
+  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
   requiredString,
@@ -38,9 +39,12 @@ import {
 import {
   type AcceptLearningIntentParams,
   type CreateLearningIntentKnowledgeNodeFn,
+  LearningIntentError,
   type LearningIntentMaterializeResult,
+  LearningIntentStaleError,
   acceptLearningIntent,
 } from './learning-intent';
+import { learningIntentTopic, sealLearningIntentOutlineReceipt } from './learning-intent-request';
 import type { ProposalInboxRow } from './proposal-lifecycle';
 
 export interface AgencyApplierOpts {
@@ -107,6 +111,51 @@ export interface RelearnAcceptResult {
   idempotent?: boolean;
 }
 
+type LearningIntentAcceptCommands = {
+  createKnowledgeNode: CreateLearningIntentKnowledgeNodeFn;
+  createNote: AcceptLearningIntentParams['createNote'];
+};
+
+async function recordLearningIntentStale(db: Db, proposalId: string): Promise<void> {
+  // The accept transaction already rolled back. This marker is what makes a later
+  // read see status stale, under the same decision lock as a knowledge-node stale accept.
+  try {
+    await db.transaction(async (tx) => {
+      await acquireProposalDecisionLock(tx, proposalId);
+      await tx.execute(sql`SELECT id FROM event WHERE id = ${proposalId} FOR UPDATE`);
+      const [rated] = await tx
+        .select({ id: event.id })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'rate'),
+            eq(event.subject_kind, 'event'),
+            eq(event.caused_by_event_id, proposalId),
+          ),
+        )
+        .limit(1);
+      if (rated) return;
+      await writeEvent(tx, {
+        id: newId(),
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: proposalId,
+        outcome: 'success',
+        payload: { rating: 'rollback' },
+        caused_by_event_id: proposalId,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(),
+      });
+    });
+  } catch (err) {
+    console.warn('acceptLearningItemProposal: failed to write stale rate event', err);
+  }
+}
+
 /**
  * learning_item accept materializes the 1-hub + child note hierarchy through the
  * acceptLearningIntent effect inside the kernel decision transaction, which writes the one
@@ -126,72 +175,95 @@ export async function acceptLearningItemProposal(
     );
   }
 
-  const run = await runProposalAccept(db, proposalId, {
-    proposal,
-    userNote: opts.user_note,
-    ...(opts.actor ? { actor: opts.actor } : {}),
-    signal: 'after_commit',
-    replay: async (rate: RecordedProposalRate): Promise<LearningItemAcceptResult> => {
-      const summary = await summarizeLearningItemMaterialization(db, proposalId);
-      const enqueued = await enqueueLearningIntentNotes(
-        db,
-        [...summary.atomic_artifact_ids, ...summary.long_artifact_ids],
-        opts.enqueueLearningIntentNote,
-      );
-      return {
-        kind: 'learning_item',
-        rate_event_id: rate.id,
-        ...summary,
-        enqueued_note_generate_jobs: enqueued,
-        idempotent: true,
-      };
-    },
-    prepare: async () => {
-      const { createLearningIntentKnowledgeNode, createLearningIntentNote } = opts;
-      if (!createLearningIntentKnowledgeNode || !createLearningIntentNote) {
-        throw new ApiError(
-          'inconsistent_state',
-          'learning intent owner commands were not composed',
-          500,
-        );
-      }
-      return {
-        createKnowledgeNode: createLearningIntentKnowledgeNode,
-        createNote: createLearningIntentNote,
-      };
-    },
-    effect: async (
-      { tx, writeRate },
-      commands,
-    ): Promise<ProposalAcceptEffectOutcome<LearningItemAcceptResult>> => {
-      let rateEventId = '';
-      const materialized = await acceptLearningIntent({
-        tx,
-        proposalId,
-        ...commands,
-        writeRate: async (rate) => {
-          rateEventId = await writeRate(rate);
-          return rateEventId;
+  let run: Awaited<
+    ReturnType<typeof runProposalAccept<LearningItemAcceptResult, LearningIntentAcceptCommands>>
+  >;
+  try {
+    run = await runProposalAccept<LearningItemAcceptResult, LearningIntentAcceptCommands>(
+      db,
+      proposalId,
+      {
+        proposal,
+        userNote: opts.user_note,
+        ...(opts.actor ? { actor: opts.actor } : {}),
+        signal: 'after_commit',
+        replay: async (rate: RecordedProposalRate): Promise<LearningItemAcceptResult> => {
+          const summary = await summarizeLearningItemMaterialization(db, proposalId);
+          const enqueued = await enqueueLearningIntentNotes(
+            db,
+            [...summary.atomic_artifact_ids, ...summary.long_artifact_ids],
+            opts.enqueueLearningIntentNote,
+          );
+          return {
+            kind: 'learning_item',
+            rate_event_id: rate.id,
+            ...summary,
+            enqueued_note_generate_jobs: enqueued,
+            idempotent: true,
+          };
         },
-      });
-      return {
-        status: 'accepted',
-        result: {
-          kind: 'learning_item',
-          rate_event_id: rateEventId,
-          hub_learning_item_id: materialized.hub_learning_item_id,
-          atomic_learning_item_ids: materialized.atomic_learning_item_ids,
-          long_learning_item_ids: materialized.long_learning_item_ids,
-          hub_artifact_id: materialized.hub_artifact_id,
-          atomic_artifact_ids: materialized.atomic_artifact_ids,
-          long_artifact_ids: materialized.long_artifact_ids,
-          root_knowledge_id: materialized.root_knowledge_id,
-          created_knowledge_ids: materialized.created_knowledge_ids,
-          enqueued_note_generate_jobs: 0,
+        prepare: async () => {
+          const { createLearningIntentKnowledgeNode, createLearningIntentNote } = opts;
+          if (!createLearningIntentKnowledgeNode || !createLearningIntentNote) {
+            throw new ApiError(
+              'inconsistent_state',
+              'learning intent owner commands were not composed',
+              500,
+            );
+          }
+          return {
+            createKnowledgeNode: createLearningIntentKnowledgeNode,
+            createNote: createLearningIntentNote,
+          };
         },
-      };
-    },
-  });
+        effect: async (
+          { tx, writeRate },
+          commands,
+        ): Promise<ProposalAcceptEffectOutcome<LearningItemAcceptResult>> => {
+          let rateEventId = '';
+          const materialized = await acceptLearningIntent({
+            tx,
+            proposalId,
+            ...commands,
+            writeRate: async (rate) => {
+              rateEventId = await writeRate(rate);
+              return rateEventId;
+            },
+          });
+          return {
+            status: 'accepted',
+            result: {
+              kind: 'learning_item',
+              rate_event_id: rateEventId,
+              hub_learning_item_id: materialized.hub_learning_item_id,
+              atomic_learning_item_ids: materialized.atomic_learning_item_ids,
+              long_learning_item_ids: materialized.long_learning_item_ids,
+              hub_artifact_id: materialized.hub_artifact_id,
+              atomic_artifact_ids: materialized.atomic_artifact_ids,
+              long_artifact_ids: materialized.long_artifact_ids,
+              root_knowledge_id: materialized.root_knowledge_id,
+              created_knowledge_ids: materialized.created_knowledge_ids,
+              enqueued_note_generate_jobs: 0,
+            },
+          };
+        },
+      },
+    );
+  } catch (err) {
+    if (err instanceof LearningIntentStaleError) {
+      await recordLearningIntentStale(db, proposalId);
+      throw err;
+    }
+    if (
+      err instanceof LearningIntentError &&
+      (err.code === 'invalid_atomic_knowledge_id' || err.code === 'llm_parse_failed')
+    ) {
+      throw new ApiError(err.code, err.message, 422);
+    }
+    throw err;
+  }
+  const topic = learningIntentTopic(proposal.payload);
+  if (topic) await sealLearningIntentOutlineReceipt(db, topic, proposalId);
   if (run.outcome !== 'accepted') return run.result;
 
   const enqueued = await enqueueLearningIntentNotes(

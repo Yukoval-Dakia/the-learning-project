@@ -2,11 +2,13 @@
 // registering capability jobs, so both the standalone worker and the in-process
 // RW_WORKER drive the cycle.
 //
-// The registry loads once at boot. Publication commit hints wake dispatch;
-// a recurring pg-boss job recovers missed hints. Checkpoint leases serialize
-// each subscriber across workers, so
-// the cadence is not load-bearing and a double-fire is safe. A tick drains a
-// bounded slice instead of adding a minute of delay per delivery.
+// The registry loads once at boot. A commit of any subscribed action notifies
+// `assessment_publication`; this listener turns that into a dispatch job.
+// retry_wait schedules another job with startAfter = next_attempt_at, so a
+// failure does not pin later deliveries to the minute cron. The cron remains
+// the missed-hint recovery. Checkpoint leases serialize each subscriber across
+// workers, so the cadence is not load-bearing and a double-fire is safe. A tick
+// drains a bounded slice instead of adding a minute of delay per delivery.
 
 import type { PgBoss } from 'pg-boss';
 
@@ -39,6 +41,22 @@ const DEFAULT_DISPATCH_MAX_ATTEMPTS = 5;
 // 30s is not a hard cycle deadline.
 const MAX_DELIVERIES_PER_SUBSCRIPTION = 100;
 const MAX_DISPATCH_MS = 30_000;
+// Dedupe only an identical due instant. A coarser key would let an earlier
+// retry swallow a later one and leave that subscriber on the minute cron.
+const RETRY_WAKE_SINGLETON_SECONDS = 60;
+
+async function sendSubscriptionRetryWake(boss: PgBoss, nextAttemptAt: Date): Promise<void> {
+  await boss.send(
+    EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
+    {},
+    {
+      startAfter: nextAttemptAt,
+      // Millisecond identity: a later due time must not collapse into an earlier job.
+      singletonKey: `retry-wake-${nextAttemptAt.getTime()}`,
+      singletonSeconds: RETRY_WAKE_SINGLETON_SECONDS,
+    },
+  );
+}
 
 // Explicit retry policy: pg-boss defaults would retry a failed cycle immediately
 // three times during a DB outage. Reuse the job-retry convention and backoff.
@@ -132,6 +150,7 @@ export async function mountSubscriptionDispatch(
           maxAttempts,
           maxDeliveriesPerSubscription: MAX_DELIVERIES_PER_SUBSCRIPTION,
           maxDispatchMs: MAX_DISPATCH_MS,
+          onRetryWake: (nextAttemptAt) => sendSubscriptionRetryWake(boss, nextAttemptAt),
         });
         const durationMs = Date.now() - startedAt;
         const log = cycle.deadLettered > 0 ? console.warn : console.info;

@@ -30,9 +30,13 @@ export const QuestionPart = z.object({
    * slot_id 列表）。只服务默认展示、DTO 规范顺序与未指定布局的 capture；
    * 作答身份仍按 slot_id，绝不按序数。缺项/重复/跨 part 由
    * validateResponseSpec 的 structure+response 交叉校验拒绝（发布 barrier）。
-   * 缺省 = 未声明，旧 part 数组序路径不变。
+   * 空数组与缺省同为「未声明」——解析时去掉，与草稿文档同一规范形态，
+   * 旧 part 数组序路径不变。
    */
-  blank_order: z.array(z.string().min(1)).min(1).optional(),
+  blank_order: z.preprocess(
+    (value) => (Array.isArray(value) && value.length === 0 ? undefined : value),
+    z.array(z.string().min(1)).min(1).optional(),
+  ),
 });
 export type QuestionPartT = z.infer<typeof QuestionPart>;
 

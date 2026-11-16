@@ -148,3 +148,16 @@ export function learnerVisibleImageRefs(
   if (pages.size === 0) return refs;
   return refs.filter((ref) => !pages.has(ref));
 }
+
+/**
+ * Whole-page asset ids for one question under the same identity rules, or null when
+ * neither the document nor the ingestion session resolves. Callers that filter
+ * learner-facing evidence (not just `image_refs`) use this to drop whole photographed
+ * pages while keeping verified crops.
+ */
+export function pageAssetIdsForQuestion(
+  q: LearnerImageQuestion,
+  index: LearnerImagePageIndex,
+): Set<string> | null {
+  return resolvePageAssets(q, index);
+}

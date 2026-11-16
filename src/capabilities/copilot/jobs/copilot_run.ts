@@ -448,6 +448,9 @@ async function executeAcceptedCopilotRun(
     onDeltaAccepted: (text) => {
       streamedProse += text;
     },
+    onRetractAccepted: (chars) => {
+      streamedProse = streamedProse.slice(0, Math.max(0, streamedProse.length - chars));
+    },
   });
   // YUK-1909 — display-only thinking lane: coalesced pg_notify frames to this
   // run's authorized SSE clients; nothing is persisted or replayed.
@@ -714,6 +717,18 @@ async function executeAcceptedCopilotRun(
               taskRunId: activity.taskRunId,
               text: activity.text,
             });
+            return;
+          }
+          if (activity.kind === 'request_retry') {
+            // The retracted thinking tail must already be on the live lane.
+            await liveWriter.drain();
+            const payload = projectCopilotActivity(activity);
+            if (payload) {
+              progressWriter.push({
+                kind: 'retract',
+                payload: { ...payload, discard_chars: activity.discardProseChars },
+              });
+            }
             return;
           }
           if (activity.kind === 'thinking_end') {

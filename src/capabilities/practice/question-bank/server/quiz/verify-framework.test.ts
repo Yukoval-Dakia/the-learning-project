@@ -8,8 +8,8 @@ import interventionRegressionFixture from '../../../server/quiz/fixtures/interve
 import { runIndependentSolution } from './verify-framework';
 
 // ---------- solve-check helpers ----------
-// solverOutput / semanticOutput now come from tests/helpers/solve-check-fixtures (YUK-554
-// review R1/R2 — shared with quiz_verify.test.ts).
+// solverOutput / semanticOutput now come from tests/helpers/solve-check-fixtures
+// (shared with quiz_verify.test.ts).
 
 describe('runIndependentSolution — reusable blind validator seam', () => {
   it('solves every production-shaped intervention diagnostic without leaking its package answer or frozen claim', async () => {

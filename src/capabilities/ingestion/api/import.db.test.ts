@@ -4,8 +4,7 @@
  * Strategy:
  * - Use testDb() / resetDb() for actual Postgres integration
  * - Mock @/server/ai/runner
- * - Lane D (YUK-482): the failure→propose-new-KC side-effect was removed from
- *   import; these tests assert only canonical capture facts are written. The
+ * - These tests assert only canonical capture facts are written. The
  *   practice-owned durable subscription derives failure learning afterwards.
  */
 
@@ -318,7 +317,7 @@ describe('POST /api/ingestion/[id]/import', () => {
     }
   });
 
-  // Codex P1-A — concurrent double-submit must not produce partial side effects.
+  //  concurrent double-submit must not produce partial side effects.
   // The status-machine check (commitImport) and the write phase must live inside
   // a single transaction; otherwise both callers may pass per-row checks, both
   // INSERT question/mistake/question_block rows, and only one wins the

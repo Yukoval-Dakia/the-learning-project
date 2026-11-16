@@ -3,7 +3,7 @@
 // A teaching turn inside Copilot lives ENTIRELY on the Copilot session:
 //   - ask_check turns return a pendingQuestion (NOT yet persisted — the caller,
 //     runCopilotChat, wraps the question INSERT + reply event in one transaction
-//     for atomicity; PR #305 review comment #1).
+//     for atomicity).
 //   - the materialized question is stamped with the Copilot session id as provenance.
 //   - NO second learning_session row is created by the skill.
 

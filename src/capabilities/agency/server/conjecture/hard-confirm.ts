@@ -2,11 +2,8 @@
 // Counts, two- or three-value reads, and enums only. No fitted parameter.
 // The thresholds below are owner operating points, not values fitted to a learner.
 // Writes nothing. Does not touch mastery, FSRS, or difficulty. Reading baseline probability is allowed.
-// With the hard-confirm flag off, decideDissociation cannot return HARD_CONFIRM.
 // A probe separates the misconception from the baseline, not from a rival misconception.
-// Without a rival-separating probe the verdict stops at EMERGING.
 // Uses the single-probe skill score. The window mean is deferred and not migrated yet (ADR-0046).
-// A soft-to-hard label still needs a fresh owner confirmation. The nightly pass never infers it.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
@@ -32,19 +29,6 @@ export const DELTA_SEP = 0.2;
  * Below it, the error is a skill gap. A null baseline is unknown, not high. Owner-tunable.
  */
 export const HELD_M_MASTERY_BAND = 0.6;
-
-/**
- * Distinct (question, session, judge run) tuples required before a label can be minted.
- * Reruns of one judging run collapse, so one noisy judge cannot force it.
- * Same floor as recurrence. A count, not a Kish effective sample size. Owner-tunable.
- */
-export const N_DEDUP_FLOOR = 2;
-
-/**
- * Distinct contexts required. One context is a transient bug, not a stable misconception (VanLehn).
- * Owner-tunable.
- */
-export const CONTEXT_SPREAD_FLOOR = 2;
 
 /** Display band only. Not a second forgetting schedule. Owner-tunable. */
 export const RECENCY_ACTIVE_WINDOW_MS = 21 * 24 * 60 * 60 * 1000;
@@ -87,7 +71,7 @@ export interface DissociationRecord {
   judgedAt: Date;
 }
 
-/** Counts and booleans. The only input decideDissociation is allowed to see. */
+/** Counts and booleans folded from dissociation records. */
 export interface DissociationEvidence {
   /** Distinct (question, session, judge run) tuples after reruns collapse. */
   nDedup: number;
@@ -172,45 +156,6 @@ export function summarizeDissociation(records: DissociationRecord[]): Dissociati
     hasDiscriminatingContext,
     lastDiscriminatingActivation,
   };
-}
-
-/**
- * HARD_CONFIRM licenses a soft-to-hard upgrade. The nightly ranker passes a false owner
- * confirmation, so it can observe EMERGING and cannot mint the hard label.
- * EMERGING means the base gates passed and the flag, the rival probe, or a fresh confirmation is missing.
- * INSUFFICIENT means the evidence did not clear the threshold.
- */
-export type DissociationVerdict = 'HARD_CONFIRM' | 'EMERGING' | 'INSUFFICIENT';
-
-export interface DecideDissociationOpts {
-  /** Off makes HARD_CONFIRM unreachable, whatever the evidence says. */
-  hardConfirmEnabled: boolean;
-  /** A probe in the pool separates this misconception from a rival one. */
-  hasRivalProbe: boolean;
-  /** The owner just confirmed the upgrade. Never inferred. */
-  ownerFreshlyConfirmed: boolean;
-}
-
-/**
- * Base gates first. HARD_CONFIRM also needs the flag, a rival-separating probe, and a fresh
- * owner confirmation. Any one missing stops at EMERGING. Flag off cannot return HARD_CONFIRM.
- */
-export function decideDissociation(
-  ev: DissociationEvidence,
-  opts: DecideDissociationOpts,
-): DissociationVerdict {
-  const gatesMet =
-    ev.hasDiscriminatingContext &&
-    ev.crucialConfirmedCount >= 1 &&
-    ev.retiredSinceLastCrucial === 0 &&
-    ev.nDedup >= N_DEDUP_FLOOR &&
-    ev.contextSpread >= CONTEXT_SPREAD_FLOOR;
-  if (!gatesMet) return 'INSUFFICIENT';
-
-  if (opts.hardConfirmEnabled && opts.hasRivalProbe && opts.ownerFreshlyConfirmed) {
-    return 'HARD_CONFIRM';
-  }
-  return 'EMERGING';
 }
 
 /** Display band from the last discriminating activation. Not stored, and not a forgetting schedule. */

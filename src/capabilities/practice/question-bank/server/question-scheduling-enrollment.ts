@@ -1,27 +1,18 @@
 import type { Tx } from '@/db/client';
-import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
+import { testableKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import {
   type FsrsSubjectKind,
   type UpsertFsrsStateInput,
   enrollFsrsStateIfAbsent,
   getFsrsState,
   initialSchedulingState,
+  retireQuestionFsrsState,
   upsertFsrsState,
 } from '@/kernel/records/scheduling-state';
 
 interface SchedulingEnrollmentEvidence {
   evidenceEventId: string;
   now: Date;
-}
-
-async function contentKnowledgeIds(tx: Tx, knowledgeIds: readonly string[]): Promise<string[]> {
-  // Seed roots (id pattern) and YUK-1600 goal/container roles are both non-content:
-  // neither may enroll a knowledge-level FSRS card.
-  return withoutNonKcKnowledgeIds(
-    tx,
-    knowledgeIds.filter((id) => !SYNTHETIC_SUBJECT_ROOT_RE.test(id)),
-  );
 }
 
 function initialEnrollment(
@@ -55,7 +46,7 @@ export async function enrollPromotedQuestionScheduling(
   const subjectKind = rawKnowledgeIds.length > 0 ? 'knowledge' : 'question';
   const subjectIds =
     rawKnowledgeIds.length > 0
-      ? await contentKnowledgeIds(tx, rawKnowledgeIds)
+      ? await testableKnowledgeIds(tx, rawKnowledgeIds)
       : [input.questionId];
   for (const subjectId of subjectIds) {
     // Keep the existing read/parse contract: invalid stored state throws, while
@@ -73,17 +64,24 @@ export async function enrollPromotedQuestionScheduling(
  */
 export async function enrollAddedKnowledgeScheduling(
   tx: Tx,
-  input: SchedulingEnrollmentEvidence & { knowledgeIds: readonly string[] },
+  input: SchedulingEnrollmentEvidence & {
+    questionId: string;
+    knowledgeIds: readonly string[];
+  },
 ): Promise<string[]> {
   const enrolledKnowledgeIds: string[] = [];
-  // Preserve input order and CAS insertion: do not read/parse existing cards or
-  // turn a concurrent review's schedule into an enrollment upsert.
-  for (const knowledgeId of await contentKnowledgeIds(tx, input.knowledgeIds)) {
+  // Preserve input order and CAS insertion: do not read/parse existing knowledge
+  // cards or turn a concurrent review's schedule into an enrollment upsert.
+  const testableIds = await testableKnowledgeIds(tx, input.knowledgeIds);
+  for (const knowledgeId of testableIds) {
     const enrolled = await enrollFsrsStateIfAbsent(
       tx,
       initialEnrollment('knowledge', knowledgeId, input),
     );
     if (enrolled) enrolledKnowledgeIds.push(knowledgeId);
   }
+  // Only a testable KC moves the schedule off the question card. A goal,
+  // container, or seed root leaves the question card in place, matching settlement.
+  if (testableIds.length > 0) await retireQuestionFsrsState(tx, input.questionId);
   return enrolledKnowledgeIds;
 }

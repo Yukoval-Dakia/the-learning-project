@@ -1,0 +1,1 @@
+ALTER TABLE "dag_orchestration_node" ADD COLUMN "provider_waits" integer DEFAULT 0 NOT NULL;

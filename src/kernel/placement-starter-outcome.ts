@@ -97,7 +97,7 @@ export function placementSchemaFailure(issues: z.ZodIssue[]): PlacementStarterFa
 
 export const PlacementAdmissionWait = z.object({
   question_id: z.string(),
-  reason: z.enum(['quota', 'login', 'not_sent']),
+  reason: z.enum(['quota', 'login', 'not_sent', 'provider']),
   retry_at: z.string().datetime().nullable(),
   recovery_action: z.enum(['wait_for_retry', 'reauthenticate', 'confirm_recovery']),
 });

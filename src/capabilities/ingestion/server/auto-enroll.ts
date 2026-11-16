@@ -30,11 +30,13 @@ import { learning_session, question_block } from '@/db/schema';
  */
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { type NameKcFn, tagKnowledge } from '@/kernel/records/knowledge-tag';
+import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { getKnownSubjects } from '@/subjects/profile';
 import { readRevertedBlockIds } from './block-revert-state';
 import { detectStudentWork, pageScopedQuestionImageRefs } from './capture/block-answer-evidence';
 import { capturedQuestionShape } from './capture/captured-question';
 import { blockHasPrompt, blockQuestionMarkdown } from './capture/question-text';
+import { recordExtractCostIdentities } from './extract-cost-identity';
 import { enrollBlockIntoItemBank } from './item-bank-enrollment';
 import { redactIngestionText } from './privacy-guard';
 
@@ -67,7 +69,9 @@ export interface RunAutoEnrollResult {
 /** Facts recorded on the question for a block auto-enrolled below the line. */
 export interface AutoEnrollmentMarkers {
   enrolled_by: 'workflow_judge';
-  knowledge: 'attributed' | 'missing';
+  /** 'restricted' = the document's derivation policy suppressed attribution —
+   *  distinct from 'missing' (attribution ran/failed and found nothing). */
+  knowledge: 'attributed' | 'missing' | 'restricted';
   /** Combined extraction/tagging confidence; a signal, never a gate. */
   confidence: number;
   figures_attached: number;
@@ -147,6 +151,31 @@ export async function runAutoEnrollForSession(
   };
   const sourceDocumentId = session.source_document_id ?? '';
 
+  // Every paid run in this lane reports its task_run_id so the session's cost
+  // evidence can attribute it. Defaults mirror the callees' own (the production
+  // runner bound to the same db), so injected test fns are tracked identically.
+  const extractRunIds = new Set<string>();
+  const trackRunId = <T extends { task_run_id?: string }>(result: T): T => {
+    if (result.task_run_id) extractRunIds.add(result.task_run_id);
+    return result;
+  };
+  const bridgeRunTaskFn: ColdStartBridgeRunTaskFn = async (kind, input, ctx) =>
+    trackRunId(
+      await (params.runColdStartBridgeFn ?? makeRunTaskTextFn(params.db))(
+        kind,
+        input,
+        ctx as RunTaskCallCtx,
+      ),
+    );
+  const assemblyRunTaskFn: BlockAssemblyRunTaskFn = async (kind, input, ctx) =>
+    trackRunId(
+      await (params.runBlockAssemblyFn ?? makeRunTaskTextFn(params.db))(
+        kind,
+        input,
+        ctx as RunTaskCallCtx,
+      ),
+    );
+
   // Bound the paid fan-out per delivery. The caller re-enqueues with
   // `next_after_block` when a batch fills, so a long page still completes. The cursor is
   // `(ordinal, id)` — the same total order used for reading adjacency — so no block is
@@ -202,7 +231,7 @@ export async function runAutoEnrollForSession(
           sourceDocumentId: sessionDocUsage.sourceDocumentId,
           derivationPolicy: sessionDocUsage.policy,
         },
-        runTaskFn: params.runBlockAssemblyFn,
+        runTaskFn: assemblyRunTaskFn,
         ctx: params.ctx ?? { db: params.db },
       });
     } catch (err) {
@@ -243,7 +272,7 @@ export async function runAutoEnrollForSession(
     // still enters the bank and the background knowledge backfill repairs the label.
     // A restricted usage policy forbids every model send of this document's content
     // — bridge, naming call and tag embedder alike — so the block enrolls with
-    // `knowledge: 'missing'`.
+    // `knowledge: 'restricted'` (not 'missing': the gap is policy, not attribution).
     let tagging: TaggingOutputT;
     if (sessionDocUsage.policy !== 'allow') {
       tagging = synthesizeTaggingOutput([]);
@@ -265,7 +294,7 @@ export async function runAutoEnrollForSession(
             existingReferenceMd: '(reference answer not needed for tagging)',
             knowledgeHint: block.knowledge_hint,
             knownSubjects: getKnownSubjects(),
-            runTaskFn: params.runColdStartBridgeFn,
+            runTaskFn: bridgeRunTaskFn,
             ctx: params.ctx ?? { db: params.db },
           });
           subjectRootId = `seed:${bridge.subject_id}:root`;
@@ -285,7 +314,7 @@ export async function runAutoEnrollForSession(
               bridgeNameKc ??
               createKnowledgeNamer({
                 db: params.db,
-                runTaskFn: params.runColdStartBridgeFn,
+                runTaskFn: bridgeRunTaskFn,
                 ctx: params.ctx ?? { db: params.db },
               }),
             batchCache: tagBatchCache,
@@ -325,7 +354,12 @@ export async function runAutoEnrollForSession(
     const knowledgeIds = verdict.prefilled.knowledge_ids;
     const markers: AutoEnrollmentMarkers = {
       enrolled_by: 'workflow_judge',
-      knowledge: knowledgeIds.length > 0 ? 'attributed' : 'missing',
+      knowledge:
+        sessionDocUsage.policy !== 'allow'
+          ? 'restricted'
+          : knowledgeIds.length > 0
+            ? 'attributed'
+            : 'missing',
       confidence: verdict.confidence,
       figures_attached: block.figures.length,
       student_work: detectStudentWork(block),
@@ -367,8 +401,6 @@ export async function runAutoEnrollForSession(
       routedToReview += 1;
       continue;
     }
-    if (result === null) continue;
-
     // A concurrent runner already enrolled this block.
     if (result === null) continue;
 
@@ -376,6 +408,16 @@ export async function runAutoEnrollForSession(
 
     // Failure-learning follows from the committed attempt event via the practice-owned
     // durable subscription, so this producer has no queue dependency.
+  }
+
+  // Persist the paid identities this run incurred — best effort like the other
+  // audit writes; a crash mid-run under-reports (recorded as a gap, not a zero).
+  try {
+    await recordExtractCostIdentities(params.db, params.sessionId, {
+      taskRunIds: [...extractRunIds],
+    });
+  } catch (err) {
+    console.error(`[auto_enroll] recordExtractCostIdentities failed`, err);
   }
 
   // Cursor progress is measured on the selected page, not the filtered set: a batch

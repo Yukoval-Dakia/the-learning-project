@@ -122,10 +122,10 @@ export async function generateReferenceSolution(
   const updateWhere = params.regenerate
     ? eq(question.id, questionId)
     : and(eq(question.id, questionId), isNull(question.reference_md));
-  // YUK-1043 (review P1-6, reference backfill row) — an AI reference changes the
+  // (, reference backfill row) — an AI reference changes the
   // scoring basis, so the UPDATE and the unified publish share one transaction;
   // writing a published column without minting a new version is not allowed. A new
-  // scoring basis invalidates prior admission evidence (P1-5) and folds
+  // scoring basis invalidates prior admission evidence and folds
   // withheld/unverified_rules to pending re-verification.
   //
   // ADR-0072 LIGHT — reference_md feeds the question's embedding source text, so
@@ -134,7 +134,7 @@ export async function generateReferenceSolution(
   // same UPDATE. The nightly embed_backfill (embedding IS NULL or stale version)
   // then re-embeds; otherwise stale vectors keep matching pre-backfill semantics.
   const written = await db.transaction(async (tx) => {
-    // P1-1 (second review) — lock order is root→child: for a child part, lock the
+    //   lock order is root→child: for a child part, lock the
     // group root before touching the row. A single question is its own root, so
     // the UPDATE's own row lock already orders root-first.
     if (row.parent_question_id != null) {

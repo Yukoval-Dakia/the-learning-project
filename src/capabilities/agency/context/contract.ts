@@ -1,7 +1,7 @@
 // 契约段（代码产出，全部来自已有读模型，不重复计算）：
-//   - Steering：listActiveGoalsWithResolvedScope——steering goal 按 YUK-1770
-//     渲染学习者原话（learner_words）+ 时间窗 + 未对应范围，普通 goal 渲染
-//     「当前目标：title」（未开始的 steering goal 不占当前目标位）
+//   - Steering：listActiveGoalsWithResolvedScope——steering goal 渲染今日页标题
+//     （instruction_md）+ goal_id + 学习者原话（与标题不同时）+ 时间窗 + 未对应范围，
+//     普通 goal 渲染「当前目标：title」（未开始的 steering goal 不占当前目标位）
 //   - 掌握度：readLearnerJudgments 的白话档，含不确定度，uncalibrated 照实标注
 //   - 错因：readCauseJudgment 的最近失败窗口，与单知识点工具同一排序
 //   - 信号：判断批次的不确定备注；昨夜交班句
@@ -138,15 +138,16 @@ function summarizeJudgment(batch: LearnerJudgmentBatch): {
   };
 }
 
-// steering goal 的一行：学习者原话 + 时间窗（开始/截止/倒计时）+ 未对应范围。
-// learner_words 上限 500 字，启动段按 120 字截断防占满预算。
+// steering goal 的一行：标题 + goal_id + 原话 + 时间窗（开始/截止/倒计时）+ 未对应范围。
+// goal_id 让学伴在学习者说的是另一条（不是焦点那条）时能传对 id，不凭空猜。
+// learner_words 上限 500 字、标题 280 字，启动段各按 120 字截断防占满预算。
 function steeringLineForGoal(g: ActiveGoal, today: string): string {
   const steering = g.steering;
   if (steering === null) return `当前安排：${g.title}`;
+  const clip = (text: string) => (text.length > 120 ? `${text.slice(0, 120)}…` : text);
+  const title = clip(steering.instruction_md);
   const words =
-    steering.learner_words.length > 120
-      ? `${steering.learner_words.slice(0, 120)}…`
-      : steering.learner_words;
+    steering.learner_words === steering.instruction_md ? null : clip(steering.learner_words);
   const parts: string[] = [];
   if (g.effective_from !== null) {
     const startsIn = steeringStartsInDays(g.effective_from, today);
@@ -166,7 +167,8 @@ function steeringLineForGoal(g: ActiveGoal, today: string): string {
   const unresolved =
     steering.scope_unresolved.length > 0 ? `；未对应：${steering.scope_unresolved.join('、')}` : '';
   const tail = parts.length > 0 ? `（${parts.join('，')}）` : '';
-  return `当前安排：「${words}」${tail}${unresolved}`;
+  const said = words === null ? '' : `；原话「${words}」`;
+  return `当前安排「${title}」[goal_id=${g.id}]${tail}${said}${unresolved}`;
 }
 
 export async function readContractSection(

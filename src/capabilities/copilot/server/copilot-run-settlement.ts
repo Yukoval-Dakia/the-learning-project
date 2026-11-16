@@ -415,6 +415,8 @@ type CopilotExecutionSettlement<T> =
  *  `block_draft` is a writer-internal latest-wins slot — flushed as `step`. */
 export type CopilotRunProgressEvent =
   | { kind: 'delta'; text: string }
+  /** A `request_retry` step: retracts `discard_chars` of already-published prose. */
+  | { kind: 'retract'; payload: Record<string, unknown> & { discard_chars: number } }
   | { kind: 'step'; payload: Record<string, unknown> }
   | { kind: 'block_draft'; payload: Record<string, unknown> };
 
@@ -430,7 +432,7 @@ export async function publishCopilotRunProgressEvent(
   runId: string,
   progress: CopilotRunProgressEvent,
   onDeltaAccepted?: (text: string) => void,
-): Promise<void> {
+): Promise<boolean> {
   // Same settlement lock as outcome/cancel commits, but a bounded blocking-row
   // probe instead of a full replay: a progress frame is only ever blocked by a
   // cancel request, a terminal frame, or a committed outcome marker. Streaming
@@ -463,6 +465,7 @@ export async function publishCopilotRunProgressEvent(
     return true;
   });
   if (published && progress.kind === 'delta') onDeltaAccepted?.(progress.text);
+  return published;
 }
 
 /**

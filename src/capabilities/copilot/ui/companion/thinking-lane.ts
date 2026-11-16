@@ -1,7 +1,7 @@
 // What the companion is thinking, for this visit only: live frames are never replayed and never
 // stored. A retried attempt replaces the one it names; a gap in seq starts a new paragraph.
 import type { CopilotRunThinkingFrame, CopilotRunView } from '../subtask-events';
-import { COPILOT_RUN_STEP_EVENT } from '../subtask-events';
+import { COPILOT_RUN_STEP_EVENT, parseRequestRetry } from '../subtask-events';
 
 export interface ThinkingSegment {
   taskRunId: string;
@@ -56,4 +56,36 @@ export function visibleThinking(
     .filter((segment) => !replaced.has(segment.taskRunId))
     .map((segment) => segment.text)
     .join('\n\n');
+}
+
+/**
+ * A retried request takes back the thinking its broken attempt streamed. Each retry trims once,
+ * when it first arrives: a replay after reconnecting finds that thinking already gone (live frames
+ * are never replayed), and `applied` keeps it from cutting what came after.
+ */
+export function trimThinkingForRetries(
+  segments: readonly ThinkingSegment[],
+  view: CopilotRunView,
+  applied: Set<number>,
+): readonly ThinkingSegment[] {
+  let next = segments;
+  for (const frame of view.frames) {
+    if (frame.event_type !== COPILOT_RUN_STEP_EVENT || applied.has(frame.event_id)) continue;
+    const retry = parseRequestRetry(frame.payload);
+    if (!retry) continue;
+    applied.add(frame.event_id);
+    if (retry.discard_thinking_chars === 0) continue;
+    next = next.map((segment) =>
+      segment.taskRunId === retry.task_run_id
+        ? {
+            ...segment,
+            text: segment.text.slice(
+              0,
+              Math.max(0, segment.text.length - retry.discard_thinking_chars),
+            ),
+          }
+        : segment,
+    );
+  }
+  return next;
 }

@@ -9,7 +9,14 @@ import type { Db } from '@/db/client';
 import { KNOWLEDGE_EXCERPT_MAX } from '@/kernel/tools/budgets'; // I-3 — payload excerpt cap
 import { parseBriefDraftOutput } from '../../tasks/memory-brief';
 import { type RunTaskCallCtx, type TaskTextRunFn, makeRunTaskFn } from '../ai-runtime';
-import type { BriefDraft, BriefEvent, BriefFact, GenerateBrief } from './brief';
+import {
+  type BriefDraft,
+  type BriefEvent,
+  type BriefFact,
+  type BriefWindowKey,
+  type GenerateBrief,
+  briefWindowForAge,
+} from './brief';
 
 // Writer output schema: the three prose fields only. Evidence ids are server-owned
 // and never parsed from model output. All keys are required: a dropped section must
@@ -27,8 +34,8 @@ function makeEmptyDraft(): BriefDraft {
 }
 
 // Project each event's unbounded payload to the fields a glanceable brief needs,
-// truncating free text. 50 raw payloads would blow the input token budget and the
-// timeout for no brief benefit. `outcome` is a top-level column, not read here.
+// truncating free text. Raw payloads blow the input token budget for no brief
+// benefit. `outcome` is a top-level column, not read here.
 function projectEventPayload(payload: unknown): { excerpt?: string } {
   if (typeof payload !== 'object' || payload === null) return {};
   const p = payload as Record<string, unknown>;
@@ -49,13 +56,6 @@ function projectEventPayload(payload: unknown): { excerpt?: string } {
   return out;
 }
 
-const RECENT_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const RECENT_MONTHS_MS = 90 * 24 * 60 * 60 * 1000;
-
-type BriefWindowKey = 'recent_week' | 'recent_months' | 'long_term';
-
-// Fixed windows keep replay deterministic across time zones and calendar months.
-// Future timestamps (clock skew) stay in the week bucket.
 function bucketEventsByAge(events: BriefEvent[], now: Date): Record<BriefWindowKey, BriefEvent[]> {
   const buckets: Record<BriefWindowKey, BriefEvent[]> = {
     recent_week: [],
@@ -63,10 +63,7 @@ function bucketEventsByAge(events: BriefEvent[], now: Date): Record<BriefWindowK
     long_term: [],
   };
   for (const event of events) {
-    const age = now.getTime() - event.created_at.getTime();
-    if (age <= RECENT_WEEK_MS) buckets.recent_week.push(event);
-    else if (age <= RECENT_MONTHS_MS) buckets.recent_months.push(event);
-    else buckets.long_term.push(event);
+    buckets[briefWindowForAge(now.getTime() - event.created_at.getTime())].push(event);
   }
   return buckets;
 }

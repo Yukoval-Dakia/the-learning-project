@@ -34,7 +34,7 @@ import {
 } from '@/capabilities/practice/question-bank/server/reference-solution';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
-import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
+import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 
 export interface ReferenceAnswerBackfillResult {
   /** rows whose reference_md IS NULL that the SELECT returned this run. */
@@ -92,6 +92,10 @@ export async function runReferenceAnswerBackfill(
         // containment, not a function call / "non-empty" test. That is fine here — the nightly
         // batch is bounded (LIMIT) and the question table is single-user scale.
         sql`jsonb_array_length(${question.knowledge_ids}) > 0`,
+        // Same consent boundary as the subject gate: restricted source lineage is
+        // filtered by the shared derivation-policy predicate before the LIMIT, so
+        // those rows neither consume the budget nor reach the solver.
+        sourceAllowsDerivationSql({ kind: 'question', id: question.id }),
       ),
     )
     // Oldest-first: an LLM-per-row job at batch 50 needs fairness — without a stable order a

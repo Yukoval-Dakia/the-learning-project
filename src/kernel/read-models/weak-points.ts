@@ -13,6 +13,7 @@
 //   失败 attempt ──无 active 归因──────────────→ unknown(no_active_attribution)
 //             └─meta 解析失败（实例缺失且无 prior）→ unknown(meta_cause_unresolved)
 //             └─meta = execution_slip───────────→ unknown(slip_only_failures)（处方是提示自查，不是训练）
+//             └─agent 错因低于置信门槛──────────→ unknown(low_confidence_attribution)（用户归因仍计满）
 //             └─meta 可行动 ──有 KC 引用────────→ 落点格(meta × cause × KC)
 //                           └─无任何 KC 引用────→ 落点格(meta × cause × null KC)（knowledge_id=null 仅此路径）
 //   落点格 → ActionableWeakPoint（kind/destination 取 WEAK_POINT_LANDING_RULES）
@@ -29,6 +30,7 @@ import {
   type CauseProfileLike,
   type CauseSchemaT,
   type MetaCauseT,
+  type MetacogFlagT,
   getCauseLabel,
   getMetaCausePrior,
 } from '@/core/schema/cause';
@@ -45,6 +47,7 @@ import {
 } from '@/core/schema/weak-point';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, misconception, misconception_edge } from '@/db/schema';
+import { agentCauseCountsAsObservation } from '@/kernel/read-models/cause-confidence';
 import {
   type FailureAttempt,
   getFailureAttemptsForDerivation,
@@ -78,6 +81,7 @@ interface CellAccumulator {
   refs: Map<string, WeakPointEvidenceRefT>;
   firstSeenAt: Date;
   lastSeenAt: Date;
+  metacogFlags: MetacogFlagT[];
 }
 
 /** user_cause 优先于 judge（用户对归因有最后发言权）；与 conjecture 证据面的读法一致。 */
@@ -99,6 +103,15 @@ function effectiveCause(
     return { category: failure.judge.cause.primary_category, judgeCause: failure.judge.cause };
   }
   return null;
+}
+
+/** User attribution counts in full. An agent cause below the shared floor does not. */
+function countsAsObservation(
+  failure: FailureAttempt,
+  cause: { judgeCause: CauseSchemaT | null },
+): boolean {
+  if (failure.user_cause) return true;
+  return agentCauseCountsAsObservation(cause.judgeCause?.confidence);
 }
 
 function resolveMetaCause(
@@ -175,8 +188,14 @@ export async function deriveActionableWeakPoints(
     cause: effectiveCause(failure),
   }));
   for (const entry of effectiveCauses) {
-    if (entry.cause === null)
+    if (entry.cause === null) {
       recordUnknown('no_active_attribution', entry.failure.attempt_event_id);
+      continue;
+    }
+    if (!countsAsObservation(entry.failure, entry.cause)) {
+      recordUnknown('low_confidence_attribution', entry.failure.attempt_event_id);
+      continue;
+    }
     for (const id of entry.knowledgeIds) pendingKnowledgeIds.add(id);
   }
 
@@ -210,7 +229,7 @@ export async function deriveActionableWeakPoints(
 
   // 第二遍：解析 meta，折叠格。
   for (const { failure, knowledgeIds: failureKnowledgeIds, cause } of effectiveCauses) {
-    if (cause === null) continue; // 已在第一遍记 unknown
+    if (cause === null || !countsAsObservation(failure, cause)) continue;
     const profile = profileFor(failureKnowledgeIds[0] ?? null);
     const meta = resolveMetaCause(cause, profile);
     if (meta === null) {
@@ -235,8 +254,13 @@ export async function deriveActionableWeakPoints(
           refs: new Map<string, WeakPointEvidenceRefT>(),
           firstSeenAt: failure.created_at,
           lastSeenAt: failure.created_at,
+          metacogFlags: [],
         } satisfies CellAccumulator);
       cell.attemptIds.set(failure.attempt_event_id, true);
+      const metacogFlag = cause.judgeCause?.metacog_flag;
+      if (metacogFlag && !cell.metacogFlags.includes(metacogFlag)) {
+        cell.metacogFlags.push(metacogFlag);
+      }
       appendRef(cell.refs, { event_id: failure.attempt_event_id, role: 'failed_attempt' });
       if (failure.judge) {
         appendRef(cell.refs, {
@@ -332,6 +356,7 @@ export async function deriveActionableWeakPoints(
       evidence_refs: refs,
       failure_count: failureCount,
       evidence_strength: strength,
+      metacog_flags: cell.metacogFlags,
       first_seen_at: cell.firstSeenAt,
       last_seen_at: cell.lastSeenAt,
     });

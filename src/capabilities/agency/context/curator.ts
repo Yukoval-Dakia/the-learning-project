@@ -6,6 +6,7 @@ import type { Db } from '@/db/client';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import { writeEvent } from '@/kernel/events';
 import { advisoryLockRegistry } from '@/kernel/locks/registry';
+import { agentNoteInputs, readAgentNotes } from '@/kernel/read-models/agent-note-hints';
 import { readOvernightHandoffSentence } from '@/kernel/read-models/overnight-digest';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
@@ -52,9 +53,14 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
     ingest_at: now,
     created_at: now,
   });
+<<<<<<< HEAD
   const [context, overnight] = await Promise.all([
+=======
+  const [context, evidence, topics, overnight, dreamingNotes] = await Promise.all([
+>>>>>>> origin/main
     loadLearnerContext(db, { view: 'curator', now }),
     readOvernightHandoffSentence(db),
+    readAgentNotes(db, { for_agent: 'dreaming', now }),
   ]);
   const legacyScopes: CuratorLegacyScope[] = await readCuratorLegacyScopes(db);
   const { payload, blocks, evidence } = await buildCuratorPayload(db, {
@@ -72,9 +78,34 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity', runTimeout
   let writeFailed = false;
   let repeated = false;
   const seen = new Set<string>();
+<<<<<<< HEAD
   let result: Awaited<ReturnType<typeof runAgentTask>>;
   try {
     result = await runAgentTask('DreamingTask', payload, {
+=======
+  const result = await runAgentTask(
+    'DreamingTask',
+    {
+      context: context.markdown,
+      evidence,
+      legacy_scopes: legacyScopes,
+      topic_freshness: (await topicBoard(db, now)).topics.map((t) => ({
+        key: t.key,
+        evidence_at: t.evidence_at,
+        memory_weight: t.memory_weight,
+        freshness: t.freshness,
+        stale: t.stale,
+      })),
+      legacy_facts: (await readLegacyFacts(db)).filter(
+        (f) => !f.evidence_ids.some((id) => withdrawnTopicEvidence(topics.digest).has(id)),
+      ),
+      ...topics,
+      agent_notes: agentNoteInputs(dreamingNotes),
+      instruction:
+        '整理和压缩上下文，不决定做什么。接管 legacy_scopes 中所有 scope 的整理；即使没有新事件也检查陈旧程度，主题保留 scope_key，陈旧不等于错误。legacy-global 是旧摘要原文：第一次整理时把主题名、说明和正文改成学习者能懂的白话，不提迁移、升级或内部系统名；逐条保留所有经历事实及成功/失败、先后和不确定性，不能以清理建议为由丢掉事实。逐条 supersede 原事实，不合并 event/weakness；原文仍保留在旧 scope 和版本日志。只重写内容有变化的主题；没变化就停止。学习者 correction 最高优先。agent_notes 是学伴留给夜间整理的便签：只提示该留意什么，不是学习者事实，不能当作证据写入记忆；没有便签就与以往一样。',
+    },
+    {
+>>>>>>> origin/main
       db,
       taskRunId: id,
       allowedTools: toolNames.map((name) => piToolWireName(DOMAIN_TOOL_MCP_SERVER_NAME, name)),

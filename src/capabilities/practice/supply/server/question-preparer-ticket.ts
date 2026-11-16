@@ -4,12 +4,14 @@
 // `submit_question:*` as a pipeline publisher because the preparer may have read learner
 // mistakes into the question. The ticket also carries the filing session and its caused-by
 // edge, so the purpose closure can reach the session's source document; the demand's free
-// text itself is caller-written and is not filtered here (YUK-1938).
+// text itself is caller-written and is not filtered here.
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { writeEvent } from '@/kernel/events';
 import { lockSupplyTargetFingerprint } from '@/kernel/locks/question-supply';
+import { CAUSE_JUDGMENT_SOURCE, readCauseJudgment } from '@/kernel/read-models/cause-judgment';
+import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import { EvidenceDemandV1, type EvidenceDemandV1T } from '@/kernel/supply-contracts';
 import { getStartedBoss } from '@/server/boss/client';
 import { JOB_RETRY_DELAY_SECONDS, JOB_RETRY_LIMIT } from '@/server/boss/queue-config';
@@ -39,6 +41,62 @@ export interface QuestionPreparerTicketScope {
 }
 
 /**
+ * The preparer gets the learner's ability and ranked failure causes as ticket fields, read
+ * once here, so it does not have to recover them from free text. Caller-supplied values for
+ * these fields are replaced: the learner state is a server reading, never a caller claim.
+ */
+export async function withTicketLearnerState(
+  db: Db,
+  demand: EvidenceDemandV1T,
+  now: Date,
+): Promise<EvidenceDemandV1T> {
+  const ids = demand.claim.knowledge_ids;
+  const { judgments, causes } = await db.transaction(
+    async (tx) => ({
+      judgments: await readLearnerJudgments(tx, { knowledge_ids: ids, context: 'any', as_of: now }),
+      causes: await readCauseJudgment(tx, { knowledge_ids: ids, as_of: now }),
+    }),
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
+  const thetaHat = judgments.items.flatMap((item) =>
+    item.ability.kind === 'available'
+      ? [
+          {
+            knowledge_id: item.knowledge_id,
+            value: item.ability.reading.theta_hat,
+            evidence_count: item.ability.reading.evidence_count,
+            provenance: item.ability.reading.provenance,
+            as_of: now.toISOString(),
+          },
+        ]
+      : [],
+  );
+  const observed = causes.items.flatMap((item) =>
+    item.top_causes.known && item.top_causes.value
+      ? item.top_causes.value.map((cause) => ({
+          kind: 'observed_error' as const,
+          ref: `cause_judgment:${item.knowledge_id}:${cause.category}`,
+          observed: {
+            knowledge_id: item.knowledge_id,
+            category: cause.category,
+            label: cause.label,
+            count: cause.count,
+            last_at: cause.last_at,
+            source: CAUSE_JUDGMENT_SOURCE,
+          },
+        }))
+      : [],
+  );
+  const stated = demand.causes.filter((cause) => cause.kind !== 'observed_error');
+  const { theta_hat: _callerTheta, ...difficulty } = demand.difficulty;
+  return EvidenceDemandV1.parse({
+    ...demand,
+    difficulty: thetaHat.length > 0 ? { ...difficulty, theta_hat: thetaHat } : difficulty,
+    causes: [...(stated.length > 0 ? stated : [{ kind: 'coverage_gap' }]), ...observed],
+  });
+}
+
+/**
  * Enqueue one durable gap ticket under the same 7-day fingerprint cooldown as the old
  * dispatcher (same query, same days). The cooldown check, ticket/job write and the
  * dispatcher-compatible ledger share one transaction, so two same-gap filings (different
@@ -51,7 +109,7 @@ export async function enqueueQuestionPreparerTicket(
   scope: QuestionPreparerTicketScope = {},
   now = new Date(),
 ): Promise<QuestionPreparerEnqueueResult> {
-  const parsed = EvidenceDemandV1.parse(ticket);
+  const parsed = await withTicketLearnerState(db, EvidenceDemandV1.parse(ticket), now);
   const eventId = newId();
   const boss = await getStartedBoss();
   return db.transaction(async (tx) => {

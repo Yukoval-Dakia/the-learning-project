@@ -1,13 +1,19 @@
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 const launcher = '/usr/local/libexec/workspace-launch';
 const outputLimit = 100 * 1024;
 // This ceiling only stops loops/errors; no model task is admitted by this slice.
 const timeoutMs = 30 * 60 * 1000;
-type StopReason = 'timeout' | 'cancelled' | 'output_limit' | null;
+type StopReason = 'timeout' | 'cancelled' | 'output_limit' | 'quota_exceeded' | null;
 
-export function invokeWorkspace(action: string, id: string, code: string, signal?: AbortSignal) {
+export function invokeWorkspace(
+  action: string,
+  id: string,
+  code: string,
+  signal?: AbortSignal,
+  extraArgs: string[] = [],
+) {
   return new Promise<{
     exitCode: number | null;
     output: string;
@@ -16,7 +22,7 @@ export function invokeWorkspace(action: string, id: string, code: string, signal
   }>((resolve, reject) => {
     if (!/^[a-f0-9]{64}$/.test(id)) throw new Error('invalid_workspace');
     signal?.throwIfAborted();
-    const child = spawn(launcher, [action, id], {
+    const child = spawn(launcher, [action, id, ...extraArgs], {
       cwd: '/',
       env: {},
       detached: true,
@@ -97,6 +103,10 @@ export async function executeWorkspace(
   let failure: unknown;
   try {
     result = await invokeWorkspace(runtime, id, code, signal);
+    if (result.exitCode === WORKSPACE_QUOTA_EXIT && (await workspaceQuotaExceeded(id))) {
+      result.stopReason = 'quota_exceeded';
+      result.stopped = true;
+    }
   } catch (error) {
     failure = error;
   }
@@ -109,4 +119,79 @@ export async function executeWorkspace(
   }
   if (!result) throw failure;
   return result;
+}
+
+export function sha256Hex(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+/** Dedicated wrapper exit for quota kill — never emitted by user scripts. */
+export const WORKSPACE_QUOTA_EXIT = 98;
+
+/**
+ * Ground-truth check behind the exit signal: a script could exit 98 itself, so
+ * the classification only sticks when measured usage actually crossed the cap.
+ */
+export async function workspaceQuotaExceeded(id: string): Promise<boolean> {
+  const res = await invokeWorkspace('usage', id, '');
+  if (res.exitCode !== 0) return false;
+  try {
+    const parsed = JSON.parse(res.output) as { bytes?: unknown; cap?: unknown };
+    return (
+      typeof parsed.bytes === 'number' &&
+      typeof parsed.cap === 'number' &&
+      parsed.bytes > parsed.cap
+    );
+  } catch {
+    return false;
+  }
+}
+
+export type WorkspaceRuntimeVersion = {
+  python: string;
+  bash: string;
+  sympy: string;
+  numpy: string;
+};
+
+// The sandbox runtime image is fixed per container, so one probe per process
+// is enough; the probe itself runs under the sandbox identity on the claim's
+// directory so the reported versions are exactly what scripts execute.
+let cachedRuntime: Promise<WorkspaceRuntimeVersion> | undefined;
+export function workspaceRuntimeVersion(id: string): Promise<WorkspaceRuntimeVersion> {
+  // The probe imports sympy and numpy, so it must not respawn per call once cached.
+  if (cachedRuntime) return cachedRuntime;
+  // Only a successful probe is cached — a transiently unavailable launcher must
+  // not pin 'unknown' into evidence for the process lifetime.
+  const probe = invokeWorkspace('version', id, '').then((result) => {
+    if (result.exitCode !== 0) throw new Error('workspace_version_probe_failed');
+    const parsed = JSON.parse(result.output) as Partial<WorkspaceRuntimeVersion>;
+    return {
+      python: String(parsed.python ?? 'unknown'),
+      bash: String(parsed.bash ?? 'unknown'),
+      sympy: String(parsed.sympy ?? 'unknown'),
+      numpy: String(parsed.numpy ?? 'unknown'),
+    };
+  });
+  const failed = probe.catch(() => {
+    if (cachedRuntime === failed) cachedRuntime = undefined;
+    return { python: 'unknown', bash: 'unknown', sympy: 'unknown', numpy: 'unknown' };
+  });
+  cachedRuntime = failed;
+  return failed;
+}
+
+export type WorkspaceFileOp = 'read' | 'write' | 'list' | 'delete';
+
+export function invokeWorkspaceFiles(
+  id: string,
+  op: WorkspaceFileOp,
+  path: string,
+  content: string | undefined,
+  signal?: AbortSignal,
+) {
+  if (Buffer.byteLength(path, 'utf8') > 1024) throw new Error('workspace_path_too_long');
+  if (content !== undefined && Buffer.byteLength(content, 'utf8') > 100 * 1024)
+    throw new Error('workspace_content_too_large');
+  return invokeWorkspace('files', id, content ?? '', signal, [op, path]);
 }

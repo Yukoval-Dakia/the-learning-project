@@ -151,6 +151,8 @@ export async function registerCapabilityJobs(
   // registry writer is bound here as well.
   const { installPracticeWorker } = await import('@/capabilities/practice/public');
   await installPracticeWorker();
+  const { installNotesHostOperations } = await import('@/capabilities/notes/public');
+  installNotesHostOperations();
   const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
   await installAgencyHostOperations();
   const { installObservabilityHostOperations } = await import(

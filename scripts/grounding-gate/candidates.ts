@@ -30,7 +30,8 @@ export interface GroundingGateExclusion {
     | 'non_reproducible_evidence'
     | 'invalid_evidence_packet'
     | 'lifecycle_gate_after_enrichment'
-    | 'evidence_image_unavailable';
+    | 'evidence_image_unavailable'
+    | 'abstained_without_new_evidence';
   detail?: string;
 }
 
@@ -133,6 +134,7 @@ export async function collectGroundingGateCandidates(
     reasoningTraceByAttemptId,
     masteryByKnowledgeId,
     now,
+    since,
     limit: null,
     imageFetchFn,
   });

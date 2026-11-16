@@ -465,6 +465,19 @@ export function assertProposalKindsOwned(capabilities: CapabilityManifest[]): vo
   }
 }
 
+/** Sorted union of actions declared on subscription handlers. */
+export function subscribedEventActions(
+  capabilities: readonly CapabilityManifest[],
+): readonly string[] {
+  const actions = new Set<string>();
+  for (const capability of capabilities) {
+    for (const subscription of capability.subscriptions?.handlers ?? []) {
+      for (const action of subscription.actions) actions.add(action);
+    }
+  }
+  return [...actions].sort();
+}
+
 /**
  * 组合期校验：包名及各类声明（含 UI page）全局唯一，冲突即抛错；声明的 proposal kind
  * 在词表内、至多一个 owner，且声明了 accept ⟺ 强度不是 C。完整性见 assertProposalKindsOwned。

@@ -4,29 +4,17 @@
 import type { Db } from '@/db/client';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { type ProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
-import { checkRateLimit } from '@/kernel/request-rate-limit';
 import { makeRunTaskFn } from '../server/ai-runtime';
-import { LearningIntentError, type RunTaskFn, planLearningIntent } from '../server/learning-intent';
-import { CreateLearningIntentBodySchema, LearningIntentProposalResponseSchema } from './contracts';
+import { LearningIntentError, type RunTaskFn } from '../server/learning-intent';
+import { runLearningIntentRequest } from '../server/learning-intent-request';
+import { CreateLearningIntentBodySchema } from './contracts';
 
 export interface CreateLearningIntentHandlerDeps {
   database?: Db;
   runTaskFn?: RunTaskFn;
 }
 
-/**
- * The stored topic of a pending learning-intent proposal — the learner's original
- * words at propose time — is the ONLY sameness basis. A pending whose topic cannot
- * be read yields null and counts as a different topic: fail open, never gate.
- */
-function storedIntentTopic(payload: ProposalInboxRow['payload']): string | null {
-  if (payload.kind !== 'learning_item') return null;
-  const topic = payload.proposed_change.topic;
-  return typeof topic === 'string' && topic.length > 0 ? topic : null;
-}
-
-/** Own the complete learning-intent request: validation, same-topic replay, paid planning. */
+/** Own the complete learning-intent request: validation, then one in-flight dispatch. */
 export async function requestLearningIntent(
   database: Db,
   loadBody: () => Promise<unknown>,
@@ -47,30 +35,11 @@ export async function requestLearningIntent(
     );
   }
 
-  const pending = await listProposalInboxRows(database, {
-    status: 'pending',
-    kind: 'learning_item',
-  });
-  for (const candidate of pending) {
-    // Same-topic reuse only: an exact pending for the learner's original
-    // words replays free after reload/retry; every other pending (different
-    // or unreadable topic) falls through to a fresh proposal, untouched.
-    if (storedIntentTopic(candidate.payload) !== parsed.data.topic) continue;
-    const restored = LearningIntentProposalResponseSchema.safeParse({
-      proposal_id: candidate.id,
-      ...candidate.payload.proposed_change,
-    });
-    if (restored.success) return restored.data;
-  }
-
-  // Charge the global AI-funnel budget only when this request is actually about to
-  // dispatch a paid outline run; same-topic replays above stay free.
-  checkRateLimit();
-  return planLearningIntent({
-    db: database,
-    topic: parsed.data.topic,
-    runTaskFn: runTaskFn ?? makeRunTaskFn(database),
-  });
+  return runLearningIntentRequest(
+    database,
+    parsed.data.topic,
+    runTaskFn ?? makeRunTaskFn(database),
+  );
 }
 
 export function learningIntentErrorResponse(err: unknown): Response {

@@ -250,11 +250,6 @@ BEGIN READ ONLY; SET LOCAL statement_timeout='15s';
 select * from hub_sync_reconciliation limit 150;
 COMMIT;
 
--- edge_reconciliation_log 2026-10-10T04:13:42.388061+00:00
-BEGIN READ ONLY; SET LOCAL statement_timeout='15s';
-select * from edge_reconciliation_log limit 150;
-COMMIT;
-
 -- tool_operation 2026-10-10T04:13:42.440259+00:00
 BEGIN READ ONLY; SET LOCAL statement_timeout='15s';
 select * from tool_operation limit 150;

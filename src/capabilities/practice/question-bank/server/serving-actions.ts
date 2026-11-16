@@ -62,7 +62,7 @@ function servingActionEventId(
 
 /**
  * Deterministic pg-boss job id (UUID) from a seed. A second `send` with the
- * same id collides on the PK and adds nothing — crash-safe re-send (P1-B).
+ * same id collides on the PK and adds nothing — crash-safe re-send.
  */
 function deterministicJobId(seed: string): string {
   const h = createHash('sha256').update(seed).digest('hex');
@@ -182,7 +182,7 @@ interface CommandResult {
   /**
    * Post-commit side effect (queue send / enqueue). Runs AFTER the command
    * event commits — a crash or failed send here is healed by a same-key
-   * replay re-sending the deterministic job id (P1-B).
+   * replay re-sending the deterministic job id.
    */
   afterCommit?: () => Promise<void>;
 }
@@ -373,7 +373,7 @@ async function executeReverify(
         repended: withheldReason !== 'unverified_rules',
         publish_status: publishStatusFinal,
       },
-      // Post-commit (P1-B): the enqueue runs outside the command tx. The job id
+      // Post-commit: the enqueue runs outside the command tx. The job id
       // is deterministic from the command event id — a crash between commit and
       // send, or a failed send, is healed by any same-key replay re-sending the
       // same job id (a PK-collision re-send adds nothing).
@@ -434,7 +434,7 @@ async function dispatchReverifyAdmission(
  * recheck_source — re-dispatch source_verify. The outbox intent ledger cannot
  * express a second dispatch for the same (verifier, question), so the command
  * sends straight onto the queue the outbox drains to. The command event is
- * written BEFORE the job and the job id is deterministic from it (P1-B):
+ * written BEFORE the job and the job id is deterministic from it:
  * runSourceVerify's terminal-event guard bypasses ONLY for this command, its
  * paid-effect claim (keyed by command_event_id) admits at most one paid
  * attempt, and a same-key replay re-sends this exact job id when it is absent.
@@ -628,7 +628,7 @@ const UNKNOWN_SERVING: QuestionServing = {
 };
 
 /**
- * Replay heal (P1-B): an accepted command's send lives outside its tx, so a
+ * Replay heal: an accepted command's send lives outside its tx, so a
  * crash between the commit and the send would lose the job forever. A same-key
  * replay re-sends the deterministic job id when the job row is absent; for
  * reverify it only heals a group still in a pending cycle (an applied verdict
@@ -699,8 +699,8 @@ async function ensureCommandDispatched(
 /**
  * Command entry. Idempotent per Idempotency-Key under an advisory lock keyed
  * by the deterministic event id: a concurrent same-key POST waits for the
- * winner's commit and replays — it never sends a second job (P1-A). ApiError
- * rejections are persisted in their own tx (P1-C) so any replay of the key
+ * winner's commit and replays — it never sends a second job. ApiError
+ * rejections are persisted in their own tx so any replay of the key
  * returns the original status and code forever.
  */
 export async function runServingAction(
@@ -828,7 +828,7 @@ export async function runServingAction(
       await outcome.afterCommit();
     } catch (err) {
       // The command event committed — a failed send is healed by any same-key
-      // replay (deterministic job id, P1-B). Report the recorded outcome; the
+      // replay (deterministic job id). Report the recorded outcome; the
       // hold remains visible until healed.
       console.error('[serving-actions] post-commit dispatch failed', input.command, eventId, err);
     }
@@ -1099,7 +1099,7 @@ export async function runSystemServingRecheck(
       if (consumed === true) {
         // Accepted earlier but its dispatch never landed: the same-key replay
         // re-enters ensureCommandDispatched and heals — never a second paid
-        // attempt and never a new key (P1-B).
+        // attempt and never a new key.
         report.replayed.push({ groupId, command });
       } else if (outcome.accepted) {
         report.attempted.push({ groupId, command });

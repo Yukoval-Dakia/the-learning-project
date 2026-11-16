@@ -11,7 +11,7 @@
   color: var(--un-md-sys-color-on-surface);
 }
 
-/* ── Autonomy rail: six stops H0…H5, position only (never clickable) ── */
+/* ── The rail: six stops H0…H5, each one picks that hint ── */
 [data-ui-next] .un-hl-rail {
   margin-bottom: 16px;
 }
@@ -54,6 +54,19 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
+  padding: 0;
+  cursor: pointer;
+}
+[data-ui-next] .un-hl-stop:is(:disabled, [aria-disabled="true"]) {
+  cursor: default;
+}
+[data-ui-next] .un-hl-stop.is-full:disabled:not(.reached) {
+  opacity: 0.6;
+}
+[data-ui-next] .un-hl-stop:focus-visible {
+  border-radius: var(--un-r-1);
+  outline: 2px solid var(--un-md-sys-color-primary);
+  outline-offset: 2px;
 }
 [data-ui-next] .un-hl-stop::before {
   content: "";
@@ -100,6 +113,9 @@
   border-color: var(--un-caution);
   background: var(--un-caution);
   box-shadow: 0 0 0 4px var(--un-caution-soft);
+}
+[data-ui-next] .un-hl-stop:hover:not(:disabled, [aria-disabled="true"]) .un-hl-dot {
+  border-color: var(--un-md-sys-color-primary);
 }
 [data-ui-next] .un-hl-stop-l {
   color: var(--un-md-sys-color-on-surface-variant);
@@ -177,8 +193,8 @@
   line-height: var(--un-md-sys-typescale-body-medium-line-height);
 }
 
-/* ── Status boxes: no help available, fetching, failed, confirm gate, handed back ── */
-[data-ui-next] :is(.un-hl-unavail, .un-hl-loading, .un-hl-fail, .un-hl-confirm, .un-hl-returned) {
+/* ── Status boxes: no help available, fetching, failed, handed back ── */
+[data-ui-next] :is(.un-hl-unavail, .un-hl-loading, .un-hl-fail, .un-hl-returned) {
   margin-bottom: 8px;
   padding: 12px 16px;
   border-radius: var(--un-md-sys-shape-large);
@@ -213,25 +229,14 @@
   background: var(--un-md-sys-color-error-container);
   color: var(--un-md-sys-color-on-error-container);
 }
-[data-ui-next] .un-hl-confirm {
-  background: var(--un-caution-soft);
-  color: var(--un-md-sys-color-on-surface);
-}
-[data-ui-next] :is(.un-hl-fail-msg, .un-hl-confirm-msg) {
+[data-ui-next] .un-hl-fail-msg {
   display: flex;
   align-items: flex-start;
   gap: 8px;
 }
-[data-ui-next] :is(.un-hl-fail-msg, .un-hl-confirm-msg) svg {
+[data-ui-next] .un-hl-fail-msg svg {
   flex: none;
   margin-top: 2px;
-}
-[data-ui-next] .un-hl-confirm-msg svg,
-[data-ui-next] .un-hl-confirm-msg b {
-  color: var(--un-caution);
-}
-[data-ui-next] .un-hl-confirm-msg b {
-  font-weight: 600;
 }
 [data-ui-next] .un-hl-returned {
   display: flex;
@@ -261,13 +266,13 @@
   font-size: var(--un-md-sys-typescale-body-medium-size);
   line-height: var(--un-md-sys-typescale-body-medium-line-height);
 }
-[data-ui-next] :is(.un-hl-acts, .un-hl-fail-acts, .un-hl-confirm-acts) {
+[data-ui-next] :is(.un-hl-acts, .un-hl-fail-acts) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
-[data-ui-next] :is(.un-hl-fail-acts, .un-hl-confirm-acts) {
+[data-ui-next] .un-hl-fail-acts {
   margin-top: 12px;
 }
 [data-ui-next] button:is(.un-hl-advance, .un-hl-jump, .un-hl-escape) {
@@ -357,7 +362,7 @@
 
 /* Wrapping button rows keep tappable targets apart on touch screens (A2). */
 @media (pointer: coarse) {
-  [data-ui-next] :is(.un-hl-acts, .un-hl-fail-acts, .un-hl-confirm-acts) {
+  [data-ui-next] :is(.un-hl-acts, .un-hl-fail-acts) {
     gap: 12px;
   }
 }

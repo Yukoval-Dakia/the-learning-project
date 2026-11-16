@@ -25,6 +25,17 @@ export type RubricGate =
 
 export type RubricVerdict = { ok: true } | { ok: false; gate: RubricGate; reason: string };
 
+/** The standard each gate enforces, worded so a caller can tell what to change. */
+export const RUBRIC_GATE_CRITERIA: Record<RubricGate, string> = {
+  self_edge: 'an edge must join two different knowledge points',
+  unknown_node: 'both endpoints must be existing, unarchived knowledge points',
+  cross_subject: 'both endpoints must belong to the same subject',
+  parent_semantic_duplicate:
+    'related_to / derived_from must add something beyond the tree parent/child link; use prerequisite for a prerequisite',
+  duplicate_live_edge: 'the same edge must not already be live',
+  duplicate_pending: 'the same edge must not already be pending review',
+};
+
 type EdgePayload = Extract<AiProposalPayloadT, { kind: 'knowledge_edge' }>;
 
 function isEdgePayload(payload: AiProposalPayloadT): payload is EdgePayload {

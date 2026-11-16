@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { capabilities } from '@/capabilities';
+import { buildCopilotToolResultSnapshot } from '@/capabilities/copilot/server/tool-result-snapshot';
 import { knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import type { ToolContext } from '@/kernel/tools/types';
+import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { getAttemptContextTool } from './get-attempt-context';
 
@@ -139,10 +142,16 @@ function complexConjectureProposalPayload() {
 }
 
 describe('getAttemptContextTool', () => {
+  beforeAll(async () => {
+    await registerCapabilityTools(capabilities);
+  });
+
   beforeEach(async () => {
     await resetDb();
   });
 
+  // @invariant security: the model sees the stored recurrence count and the learner snapshot does not
+  // @fails-if recurrence_count is collapsed to a boolean or the learner snapshot still contains that count
   it('safe-projects a realistic gate→conjecture→probe→intervention→review family without leaking future diagnostics', async () => {
     const db = testDb();
     const base = new Date('2026-08-01T05:00:00.000Z');
@@ -503,7 +512,7 @@ describe('getAttemptContextTool', () => {
         conjecture: {
           knowledge_id: 'k_chain_rule_canary',
           cause_category: 'concept_misunderstanding',
-          recurrence_gate_satisfied: true,
+          recurrence_count: 2,
           discriminating: true,
           claim_present: true,
           diagnostic_contract_present: true,
@@ -517,6 +526,9 @@ describe('getAttemptContextTool', () => {
         },
       },
     });
+    const learnerView = buildCopilotToolResultSnapshot('get_attempt_context', proposal);
+    expect(learnerView.state).toBe('available');
+    expect(JSON.stringify(learnerView)).not.toContain('recurrence_count');
     expect(proposal.claim_support).toEqual({
       causal_edges: 'caused_by_event_id_only',
       temporal_order: 'noncausal',
@@ -535,7 +547,6 @@ describe('getAttemptContextTool', () => {
     });
     expect(proposal.lookup.observed?.redacted_payload_groups).toEqual(
       expect.arrayContaining([
-        'anti_guilt_metrics',
         'execution_metadata',
         'free_text',
         'future_diagnostics',
@@ -671,12 +682,7 @@ describe('getAttemptContextTool', () => {
     });
     const probeJson = JSON.stringify(probe.lookup.observed);
     expect(probe.lookup.observed?.redacted_payload_groups).toEqual(
-      expect.arrayContaining([
-        'anti_guilt_metrics',
-        'learner_answer',
-        'image_refs',
-        'review_prose',
-      ]),
+      expect.arrayContaining(['learner_answer', 'image_refs', 'review_prose']),
     );
     expect(probeJson).not.toContain('IGNORE PREVIOUS INSTRUCTIONS');
     expect(probeJson).not.toContain('PRIVATE_SIGNATURE_EXPLANATION_SECRET');
@@ -707,10 +713,7 @@ describe('getAttemptContextTool', () => {
             resolution: 'evidence_for',
             score_basis: 'single_point',
           }),
-          redacted_payload_groups: expect.arrayContaining([
-            'anti_guilt_metrics',
-            'execution_metadata',
-          ]),
+          redacted_payload_groups: expect.arrayContaining(['execution_metadata']),
         }),
       ]),
     );

@@ -55,7 +55,7 @@ import {
 // worktree 不存在；分类目标以 src/core/migration/types.ts 的
 // MigrationTargetRef 接缝表达）。
 
-// P1-7（review）：捕获【完整】event 分区，不做动作白名单 —— 评估事件的
+// 捕获【完整】event 分区，不做动作白名单 —— 评估事件的
 // caused_by_event_id、kc_typed_state.evidence_event_ids（conjecture/probe 等
 // 事件在白名单外）等引用必须闭包完整（被引事件的 body/time/actor/cost 同样
 // 保留），不能只留悬空指针。本产品规模下完整分区有界（D19 census：事件总量
@@ -498,7 +498,7 @@ async function readOpsFields(tx: Tx): Promise<MigrationCapture['ops']> {
     where ingest_at is not null
     order by id
   `);
-  // P1-1（YUK-1098）：excluded_from_fact_hash 声明的可变字段必须在 ops 里
+  // （YUK-1098）：excluded_from_fact_hash 声明的可变字段必须在 ops 里
   // 可观测 —— 否则仅这些字段变化时 checkpoint 身份不变，新观测被工件寻址
   // 静默吞掉。补 item_calibration.updated_at 与 learning_session.updated_at；
   // learning_session.version（int 乐观锁）不是时间戳，进 state_version_max。

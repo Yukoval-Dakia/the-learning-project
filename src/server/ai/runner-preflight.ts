@@ -8,10 +8,10 @@ import { createRunLifecycle } from './run-lifecycle';
 import {
   type RunTaskCtx,
   assertChatExecutionKind,
-  buildQueryOptions,
   compiledPromptProvenance,
   isKnownTask,
 } from './runner';
+import { buildQueryOptions } from './runner-startup';
 import { currentTaskSpendScope } from './task-spend-scope';
 
 /**

@@ -17,11 +17,11 @@ import {
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { captureMigrationCheckpoint } from './capture';
 
-// YUK-1048 — capture reader DB 测试（review P1-3/P1-4/P1-7 修订）。
+// capture reader DB 测试。
 // 真表 seed 代表性历史形状（含真实 durable 冻结输入与 answer-bearing review）
 // → REPEATABLE READ READ ONLY 捕获 → native 分类各归其位；观测级幂等
 // （同观测重跑 hash 稳定）；可变运维字段（event.ingest_at）不进事实哈希但
-// 【进】checkpoint 身份（P1-1）。
+// 【进】checkpoint 身份。
 
 const NOW = new Date('2026-09-20T00:00:00.000Z');
 
@@ -307,7 +307,7 @@ async function seedRepresentativeShapes() {
     outcome: 'failure',
   });
 
-  // (5) correction cycle：correct 触及 judge，且（P1-4）传播到 attempt 与同锚 judge。
+  // (5) correction cycle：correct 触及 judge，且传播到 attempt 与同锚 judge。
   await seedAttempt({
     id: 'att-corrected',
     questionId: 'q-main',
@@ -398,7 +398,7 @@ async function seedRepresentativeShapes() {
     autosaved_at: NOW,
   });
 
-  // (8) 闭包引用：非评估事件被 judge 的 caused_by 指向（P1-7）。
+  // (8) 闭包引用：非评估事件被 judge 的 caused_by 指向。
   await testDb()
     .insert(event)
     .values({
@@ -423,7 +423,7 @@ async function seedRepresentativeShapes() {
     'knode-1',
   );
   // 注意：jud-closure 是 att-complete 的第二个 verdict（created_at 相同 ⇒ 并列
-  // ambiguous held —— 故意保留该形态验证 P1-4 held 路径？不 —— att-complete 需要
+  // ambiguous held —— 故意保留该形态验证 held 路径？不 —— att-complete 需要
   // 干净的 complete。给 jud-closure 更晚的 created_at，成为 newest head。
   await testDb()
     .update(event)
@@ -498,7 +498,7 @@ describe('captureMigrationCheckpoint + classifyMigrationCapture（真表）', ()
     const classification = classifyMigrationCapture(capture);
 
     // (1) 完整 attempt —— jud-complete 与 jud-closure 两个 verdict、不同时刻 ⇒
-    // newest（jud-closure）为 head，jud-complete 为 not_selected（P1-4）。
+    // newest（jud-closure）为 head，jud-complete 为 not_selected。
     expect(categoryOf(classification, 'att-complete')).toBe('complete_attempt');
     const headRecord = classification.records.find(
       (r) =>
@@ -515,7 +515,7 @@ describe('captureMigrationCheckpoint + classifyMigrationCapture（真表）', ()
     // (2) embedded tutor grade。
     expect(categoryOf(classification, 'att-solve')).toBe('embedded_tutor_grade');
 
-    // (3) durable 完整链：answer-bearing review → complete；pending → 世系（P1-3）。
+    // (3) durable 完整链：answer-bearing review → complete；pending → 世系。
     expect(categoryOf(classification, 'run-backfilled')).toBe('complete_attempt');
     expect(categoryOf(classification, 'pen-ok')).toBe('pending_resolved_lineage');
     // (3b) 未 backfill → pending blocked（真实 submit 冻结输入保留在 capture）。
@@ -526,7 +526,7 @@ describe('captureMigrationCheckpoint + classifyMigrationCapture（真表）', ()
     // (4) 缺 issued snapshot → historical_unresolved。
     expect(categoryOf(classification, 'att-no-snapshot')).toBe('historical_unresolved');
 
-    // (5) correction cycle 全链保持 unresolved（P1-4：传播含 sibling judge）。
+    // (5) correction cycle 全链保持 unresolved（传播含 sibling judge）。
     expect(categoryOf(classification, 'att-corrected')).toBe('correction_cycle_unresolved');
     expect(categoryOf(classification, 'jud-corrected')).toBe('correction_cycle_unresolved');
     expect(categoryOf(classification, 'jud-sibling')).toBe('correction_cycle_unresolved');
@@ -537,7 +537,7 @@ describe('captureMigrationCheckpoint + classifyMigrationCapture（真表）', ()
     expect(categoryOf(classification, 'att-manual')).toBe('human_import_assertion');
     // (7) live draft 精确保存。
     expect(categoryOf(classification, 'ans-draft')).toBe('live_draft');
-    // (8) 闭包引用的非评估事件 → causal_closure_lineage（P1-7）。
+    // (8) 闭包引用的非评估事件 → causal_closure_lineage。
     expect(categoryOf(classification, 'knode-1')).toBe('causal_closure_lineage');
 
     // deferred replay：correction cycle 入清单。

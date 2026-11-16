@@ -31,13 +31,6 @@ export interface ProposalLifecycleResult {
   readonly [key: string]: unknown;
 }
 
-export function toProposalLifecycleResult(result: {
-  readonly kind: string;
-  readonly idempotent?: boolean;
-}): ProposalLifecycleResult {
-  return { ...result };
-}
-
 type ProposalAcceptDecision =
   | {
       decision?: 'accept';

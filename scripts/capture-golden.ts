@@ -68,9 +68,8 @@ const CROSS_REF_ACTIONS = [
   'experimental:edit_question_block_structured',
 ] as const;
 
-// Capture every live row → its imperative structural snapshot. YUK-549 (K10/K13): the per-kind typed
-// switch that used to live here is gone — the ONE registry read pass (gatherWithContext.liveSnapshots)
-// now owns the per-kind concrete-table read + the shared parity mapper, so the O8 compile-time
+// Capture every live row → its imperative structural snapshot. The ONE registry read pass
+// (gatherWithContext.liveSnapshots) owns the per-kind concrete-table read + the shared parity mapper, so the O8 compile-time
 // schema-safety (a renamed column fails at the typed read) lives in entity-registry.ts, and the golden
 // row shape can never drift from what the value/symmetric audit reproduces. `foldOne` from the same
 // read is unused here (a golden is imperative rows only) — the small prefetch it primes is negligible

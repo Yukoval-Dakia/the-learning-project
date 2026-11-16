@@ -34,11 +34,20 @@ const logMock = vi.hoisted(() => ({ retried: vi.fn(async () => true) }));
 vi.mock('@/server/ai/log', () => ({
   logMissingToolMountsWarning: vi.fn(),
   writeAiTaskRunStarted: vi.fn(async () => {}),
-  writeAiTaskRunFinished: vi.fn(async () => {}),
   writeAiTaskRunRetried: logMock.retried,
   writeCostLedger: vi.fn(async () => {}),
-  writeAiTaskAttemptFinished: vi.fn(async () => true),
 }));
+
+vi.mock('@/kernel/records/ai-attempt-facts', async () => {
+  const actual = await vi.importActual<typeof import('@/kernel/records/ai-attempt-facts')>(
+    '@/kernel/records/ai-attempt-facts',
+  );
+  return {
+    ...actual,
+    writeAiTaskRunFinished: vi.fn(async () => {}),
+    writeAiTaskAttemptFinished: vi.fn(async () => true),
+  };
+});
 
 vi.mock('@/kernel/tools/call-evidence', () => ({
   writeToolCallLog: vi.fn(async () => 'tool-log-id'),
@@ -105,7 +114,7 @@ function resetAll() {
   __setPiAdapterForTests(fakePiAdapter());
 }
 
-describe('runTask — YUK-576 transient retry loop', () => {
+describe('runTask transient retry loop', () => {
   beforeEach(resetAll);
   afterEach(() => {
     __setPiAdapterForTests(undefined);

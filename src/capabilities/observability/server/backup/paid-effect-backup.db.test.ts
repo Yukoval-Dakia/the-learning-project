@@ -144,7 +144,7 @@ describe('paid-effect durable backup contract', () => {
     const manifest = z
       .object({ schema_version: z.string() })
       .parse(JSON.parse(new TextDecoder().decode(entries['manifest.json'])));
-    expect(manifest.schema_version).toBe('4.37');
+    expect(manifest.schema_version).toBe('4.38');
     expect(FK_ORDER.slice(-5)).toEqual([
       'paid_effect_control',
       'paid_effect',

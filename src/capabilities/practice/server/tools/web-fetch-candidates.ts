@@ -23,6 +23,7 @@ import {
   type ParseLooseFn,
   type RunWebFetchCandidatesResult,
   type RunWebSourcingAgentFn,
+  resolveBandLevelTarget,
   runWebFetchCandidates,
 } from '../../supply/public';
 import { defaultWebSourcingDeps, runWebSourcingOperation } from '../web-sourcing-operation';
@@ -45,6 +46,16 @@ const inputSchema = z.object({
   kind: z.string().trim().min(1).optional(),
   objective_only: z.boolean().optional(),
   kind_required: z.boolean().optional(),
+  /** 相对难度带。与 difficulty_levels 一起传；不要把 near 当成固定的 3 档。 */
+  difficulty_band: z.enum(['below', 'near', 'above', 'stretch']).optional(),
+  /** 已反算的 1–5 闭区间。null 表示 1–5 里没有落在该带的档。 */
+  difficulty_levels: z
+    .object({
+      min: z.number().int().min(1).max(5),
+      max: z.number().int().min(1).max(5),
+    })
+    .nullable()
+    .optional(),
 });
 
 const candidateSchema = z.object({
@@ -142,6 +153,14 @@ export async function executeWebFetchCandidates(
       ...(input.kind ? { kind: input.kind } : {}),
       ...(input.objective_only ? { objectiveOnly: true } : {}),
       ...(input.kind_required ? { kindRequired: true } : {}),
+      ...(input.difficulty_band
+        ? {
+            levelTarget:
+              input.difficulty_levels === undefined
+                ? resolveBandLevelTarget(input.difficulty_band, 0)
+                : { band: input.difficulty_band, levels: input.difficulty_levels },
+          }
+        : {}),
       subjectProfile,
     },
     // Canary 由核单写（见模块头）——本层透传归因 ctx，保证 agent 调用与 executor 直调核

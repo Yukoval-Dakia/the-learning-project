@@ -21,6 +21,13 @@ import { readMemoryBriefNote } from './memory-brief';
 import { Topic } from './topic-contract';
 
 const DEFAULT_FACTS_TOP_K = 10;
+const GLOBAL_DIGEST_SCOPE = 'global:digest';
+
+/** `global:digest` is the brief scope, not a fact scope. Filtering on it matches nothing. */
+function factScopeFilters(scopeKey: string): { scope_key: string } | undefined {
+  if (scopeKey === GLOBAL_DIGEST_SCOPE) return undefined;
+  return { scope_key: scopeKey };
+}
 
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
@@ -31,7 +38,7 @@ const QueryContextInputSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Optional scope filter (global, subject:*, topic:*, mistake_cluster:*, meta:orchestrator_self). Defaults to global. WARNING: attempt/review facts carry only global + topic:* scopes, never subject:* — a subject:* filter drops most learning facts.',
+      'Optional scope. Defaults to global:digest: the global brief, and fact search is not filtered by scope. Pass global, subject:*, topic:*, mistake_cluster:*, or meta:orchestrator_self to filter. WARNING: attempt/review facts carry only global and topic:* scopes, never subject:* — a subject:* filter drops most learning facts.',
     ),
   depth: z
     .enum(['summary', 'deep'])
@@ -132,6 +139,7 @@ export function buildQueryContextTool(
   const readDeps = opts.memoryFactory ? { createClient: opts.memoryFactory } : undefined;
 
   async function execute(ctx: ToolContext, input: QueryContextInput): Promise<QueryContextOutput> {
+<<<<<<< HEAD
     const explicitScope = input.scopeKey !== undefined;
     // A topic/legacy page read asks for one slice; it must not drag the whole
     // default global brief (prose digest) back into the prompt.
@@ -143,6 +151,11 @@ export function buildQueryContextTool(
       : null;
     const digestRead = await readTopics(ctx.db);
     const { digest } = digestRead;
+=======
+    const scopeKey = input.scopeKey ?? GLOBAL_DIGEST_SCOPE;
+    let read = await readMemoryBriefNote(ctx.db, scopeKey);
+    const { digest } = await readTopics(ctx.db);
+>>>>>>> origin/main
     const withheld = withdrawnTopicEvidence(digest);
     if (
       read?.note &&
@@ -154,8 +167,9 @@ export function buildQueryContextTool(
     )
       read = { note: null, freshness: { ...read.freshness, state: 'missing' } };
     const scoped = digest.topics.filter(
-      (t) => scopeKey === 'global:digest' || scopeKey === 'global' || t.scope_key === scopeKey,
+      (t) => scopeKey === GLOBAL_DIGEST_SCOPE || scopeKey === 'global' || t.scope_key === scopeKey,
     );
+<<<<<<< HEAD
     const scopedText = includeBrief
       ? scoped.map((t) => `${t.name}：${t.facts.map((f) => f.body).join('；')}`).join('\n')
       : '';
@@ -192,6 +206,23 @@ export function buildQueryContextTool(
                 }
               : null,
             freshness: read.freshness,
+=======
+    const scopedText = scoped
+      .map((t) => `${t.name}：${t.facts.map((f) => f.body).join('；')}`)
+      .join('\n');
+    if (scopedText && !read.note) read = await readMemoryBriefNote(ctx.db, GLOBAL_DIGEST_SCOPE);
+    const brief = {
+      note: read.note
+        ? {
+            scope_key: read.note.scope_key,
+            recent_week_md: scopedText || read.note.recent_week_md,
+            recent_months_md: scopedText ? '' : read.note.recent_months_md,
+            long_term_md:
+              scopedText || (scopeKey === GLOBAL_DIGEST_SCOPE ? '' : read.note.long_term_md),
+            long_term_freshness_score: read.note.long_term_freshness_score,
+            refreshed_at: iso(read.note.refreshed_at),
+            version: read.note.version,
+>>>>>>> origin/main
           }
         : null;
 
@@ -208,14 +239,21 @@ export function buildQueryContextTool(
       if (Date.now() >= ctx.providerSessionDeadlineAt) {
         throw new Error('hard_deadline_exceeded');
       }
+      const factFilters = factScopeFilters(scopeKey);
       const inputDigest = createHash('sha256')
-        .update(JSON.stringify({ query, topK: DEFAULT_FACTS_TOP_K, scopeKey }))
+        .update(
+          JSON.stringify({
+            query,
+            topK: DEFAULT_FACTS_TOP_K,
+            scopeKey: factFilters?.scope_key ?? null,
+          }),
+        )
         .digest('hex');
       const result = await readMemoryFacts(
         query,
         {
           topK: DEFAULT_FACTS_TOP_K,
-          filters: scopeKey ? { scope_key: scopeKey } : undefined,
+          filters: factFilters,
         },
         createMem0OpaqueOperationContext({
           db: ctx.db,
@@ -277,7 +315,11 @@ export function buildQueryContextTool(
   return {
     name: 'query_context',
     description:
+<<<<<<< HEAD
       "Read the learner Context warm layer: topic facts (topicKeys), the Dreaming-maintained memory brief at a scope plus, at depth='deep', Mem0 facts matched by `query`, and the pre-digest legacy facts page. Topic-only or legacy-only reads skip the default brief. Read-only attention prior (ADR-0017) — never mutates scheduling or mastery. The startup segment already carries the global brief; use this to drill into a scope or read a topic's full facts.",
+=======
+      "Read the learner Context warm layer: the Dreaming-maintained memory brief at a scope plus, at depth='deep', Mem0 facts matched by `query`. Read-only attention prior (ADR-0017) — never mutates scheduling or mastery. A failed fact search is a tool error, not zero facts. The startup segment already carries the global brief; use this to drill into a scope.",
+>>>>>>> origin/main
     effect: 'read',
     inputSchema: QueryContextInputSchema,
     outputSchema: QueryContextOutputSchema,
@@ -290,6 +332,7 @@ export function buildQueryContextTool(
         ? `brief v${output.brief.note.version} ${output.brief.freshness.state}`
         : `brief ${output.brief?.freshness.state ?? 'missing'}`;
       const facts = output.facts ? ` · ${output.facts.count} facts` : '';
+<<<<<<< HEAD
       const topics = input.topicKeys?.length
         ? ` · ${output.topics?.topics.length ?? 0}/${input.topicKeys.length} topics`
         : '';
@@ -297,6 +340,9 @@ export function buildQueryContextTool(
         ? ` · legacy ${output.legacy_facts?.facts.length ?? 0}/${output.legacy_facts?.total ?? 0}`
         : '';
       return `context · ${input.scopeKey ?? 'global'} · ${brief}${facts}${topics}${legacy}`;
+=======
+      return `context · ${input.scopeKey ?? GLOBAL_DIGEST_SCOPE} · ${brief}${facts}`;
+>>>>>>> origin/main
     },
     // Same policy the brief read always had: a user-facing copilot lookup shows
     // up as a step; coach/dreaming callers stay invisible either way.

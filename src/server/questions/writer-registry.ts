@@ -6,10 +6,10 @@
 // 强制：
 //   - 每个 content writer 有登记（status + tickets + note）；
 //   - publisher-converged 文件必须【逐写点】在结构邻域内调用 publisher seam
-//     （per-site 验证 —— 注册文件内新增绕过写口会被抓，复审 P1-7）；
+//     （per-site 验证 —— 注册文件内新增绕过写口会被抓）；
 //   - converged 登记必须对应真实 content 写入（防过期条目）；
 //   - working-copy-pending 必须带 pendingClass（cutover / blocked-by:ticket）
-//     —— 显式分类，不许笼统 pending（复审 P1-6）。
+//     显式分类，不许笼统 pending。
 //
 // 生命周期/投影列（draft_status / embedding / answer_class /
 // canonical_content_hash / metadata / knowledge_ids / difficulty）的写入方
@@ -29,7 +29,7 @@ export interface QuestionContentWriterEntry {
   /** 收敛/跟踪 ticket。 */
   tickets: string[];
   note: string;
-  /** pending 条目必填（P1-6；复审裁决补 'deferred'）：'blocked-by:YUK-NNNN'
+  /** pending 条目必填：'blocked-by:YUK-NNNN'
    *（真前置 —— 需要别的 lane 的契约）| 'deferred'（可做但选择不做，注明理由）
    * | 'cutover'（YUK-1059 统一切换时收敛）。 */
   pendingClass?: string;
@@ -62,16 +62,12 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: 'legacy dreaming 接受 INSERT ⇒ 同事务首版 admitted（manual+human）—— 可达接受路径不再是无契约写口（§2 矩阵行 13）。',
   },
-  // store-sourced-question.ts 已降为 shim（YUK-1468），content 写迁往
-  // submit-question.ts（同收敛纪律）。
   'src/capabilities/practice/supply/tools/submit-question.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043', 'YUK-1468'],
     note: 'INSERT 走 sourced-draft-insert（converged）；图题事后富集 UPDATE（structured/figures/judge_override/multimodal —— 改变判分输入）之后同事务重发组 revision（复审 P1-6 补齐；纯 metadata 富集 digest 不变 ⇒ 幂等 noop）。',
   },
-  // submit-question.ts 自 YUK-1568 S3 起降为 facade（委托 shared-submit.ts
-  // 内核 + re-export），自身无 content 写点 —— 原登记按真实闭包迁移到
-  // shared-submit（同收敛纪律）。
+  // submit-question.ts 委托 shared-submit.ts，自身无 content 写点；登记在 shared-submit。
   'src/server/questions/shared-submit.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1468', 'YUK-1568'],

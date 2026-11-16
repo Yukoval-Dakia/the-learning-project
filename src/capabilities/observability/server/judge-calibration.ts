@@ -203,7 +203,7 @@ export async function loadJudgeCalibrationStats(db: Db): Promise<JudgeCalibratio
     recent_runs: recentRuns,
     notes: [
       'agreement ≠ accuracy：第二 judge 不是 ground truth，本面只测两 lane 判定一致性（S4）。',
-      'same_lane_suspected 推断基于采样时点 env 快照 —— owner 在选样窗内翻过 lane 时推断失准；逐样本行携 rejudge_provider 与双 env 快照，可事后重算（复核吸收 2；根治=原判 event 记 provider，§8 follow-up）。',
+      'same_lane_suspected 按采样时点快照推断，进程 pin 压过视觉 lane。owner 在选样窗内翻过 lane 时推断失准；逐样本行留 rejudge_provider 与两条 lane 快照，原始快照不改写。',
     ],
   };
 }

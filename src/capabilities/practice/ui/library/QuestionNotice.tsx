@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { CircleDashed, Trash2, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
+import { admissionSentence } from '@/ui/lib/admission-words';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { showToast } from '@/ui-next/feedback/toast-store';
 import { Button, Expand } from '@/ui-next/public';
@@ -169,7 +170,11 @@ function AdmissionNotice({
         <Icon size={15} aria-hidden="true" />
         {words.title}
       </p>
-      <p className="qd-notice-text">{admission.reason ?? words.why}</p>
+      <p className="qd-notice-text">
+        {serving.admission?.wait || serving.admission?.cause
+          ? admissionSentence(serving.admission)
+          : (admission.reason ?? words.why)}
+      </p>
       {serving.next_action ? (
         <div className="qd-notice-actions">
           <ServingButton serving={serving} variant="primary" />
@@ -189,13 +194,19 @@ export function QuestionNotice({ detail }: { detail: QuestionFullDetail }) {
   if (admission) return <AdmissionNotice admission={admission} serving={detail.serving} />;
   if (detail.serving.servable) return null;
   const words = holdWords(holdKey(detail.serving));
+  // An undecided check says why (unknown result, or a purpose that bars checking) and, while it
+  // waits, when it tries again.
+  const checkWords =
+    detail.serving.admission && detail.serving.admission.status !== 'admitted'
+      ? admissionSentence(detail.serving.admission)
+      : null;
   return (
     <section className="qd-notice" data-tone="caution" aria-label="暂不出题">
       <p className="qd-notice-title">
         <TriangleAlert size={15} aria-hidden="true" />
         暂不出题 · {words.title}
       </p>
-      <p className="qd-notice-text">{words.why}</p>
+      <p className="qd-notice-text">{checkWords ?? words.why}</p>
       <div className="qd-notice-actions">
         <ServingButton serving={detail.serving} variant="primary" />
       </div>

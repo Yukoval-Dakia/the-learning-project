@@ -192,6 +192,13 @@ export interface QuestionServingActionRef {
   path: string;
 }
 
+/** Provider/quota/login wait facts for the UI line — the durable retry clock. */
+export interface QuestionAdmissionWaitRead {
+  reason: 'quota' | 'login' | 'not_sent' | 'provider';
+  retry_at: string | null;
+  recovery_action: 'wait_for_retry' | 'reauthenticate' | 'confirm_recovery';
+}
+
 export interface QuestionServing {
   servable: boolean;
   hold_reason: ServingHoldReason | null;
@@ -202,6 +209,12 @@ export interface QuestionServing {
   admission?: {
     status: 'pending' | 'admitted' | 'failed' | 'undecided';
     reason: string | null;
+    /** Present while a provider/quota/login wait owns the pending check. */
+    wait?: QuestionAdmissionWaitRead | null;
+    /** Why the admission is undecided: the paid outcome is unconfirmed
+     * (never resent — a resent uncertain call can double-bill) or the
+     * publication's source purpose was denied. */
+    cause?: 'outcome_unconfirmed' | 'purpose_denied' | null;
   } | null;
 }
 
@@ -290,6 +303,7 @@ function servingFactsQuery(filters: SQL[]): SQL {
       coalesce(admission.result_json->'result'->'transient' = 'true'::jsonb, false)
         as admission_result_transient,
       stage_wait.retry_at as admission_wait_retry_at,
+      stage_wait.wait_reason as admission_wait_reason,
       (select unit->>'reason'
         from jsonb_array_elements(coalesce(admission.result_json->'result'->'per_unit', '[]'::jsonb)) unit
         where unit->>'status' = 'withheld' limit 1) as admission_failure_reason,
@@ -349,7 +363,8 @@ function servingFactsQuery(filters: SQL[]): SQL {
       order by p.created_at desc limit 1
     ) admission on true
     left join lateral (
-      select s.result_json->'recovery'->>'retry_at' as retry_at
+      select s.result_json->'recovery'->>'retry_at' as retry_at,
+        s.result_json->'recovery'->>'reason' as wait_reason
       from ${paid_effect} s
       where s.entity_id = l.group_id and s.entity_revision = r.integrity_digest
         and s.family = 'question_admission_stage'
@@ -443,9 +458,26 @@ interface AdmissionReadFacts extends Record<string, unknown> {
   admission_failure_verdict: 'failed' | 'undecided' | null;
   admission_result_transient: boolean;
   admission_wait_retry_at: string | null;
+  admission_wait_reason: string | null;
   admission_failure_reason: string | null;
   admission_unknown_stage: boolean;
   admission_auto_blocked: boolean;
+}
+
+function admissionWaitRead(fact: AdmissionReadFacts): QuestionAdmissionWaitRead | null {
+  const reason = fact.admission_wait_reason;
+  if (reason !== 'quota' && reason !== 'login' && reason !== 'not_sent' && reason !== 'provider')
+    return null;
+  return {
+    reason,
+    retry_at: fact.admission_wait_retry_at,
+    recovery_action:
+      reason === 'login'
+        ? 'reauthenticate'
+        : fact.admission_wait_retry_at != null
+          ? 'wait_for_retry'
+          : 'confirm_recovery',
+  };
 }
 
 function admissionRead(
@@ -466,14 +498,19 @@ function admissionRead(
     (fact.admission_withheld_reason === 'verification_failed' &&
       fact.verification_policy === 'question_admission_unknown_close@1')
   ) {
-    return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
+    return {
+      status: 'undecided',
+      reason: '暂时没查成：上次检查的结果没能确认，题目暂不能作答。',
+      cause: 'outcome_unconfirmed',
+    };
   }
   // A queued admission that could not prove its source purpose never spends. It is a
   // terminal fact for this publication, not an in-flight check.
   if (fact.admission_auto_blocked) {
     return {
       status: 'undecided',
-      reason: '自动检查没能完成，题目暂不能作答。',
+      reason: '暂时没查成：这次录入的来源未被允许自动检查，题目暂不能作答。',
+      cause: 'purpose_denied',
     };
   }
   // A recorded provider wait is only credible while its durable wake-up is still
@@ -482,8 +519,16 @@ function admissionRead(
     const retryAt = fact.admission_wait_retry_at;
     const retryAtMs = retryAt == null ? Number.NaN : Date.parse(retryAt);
     if (Number.isFinite(retryAtMs) && now.getTime() <= retryAtMs + ADMISSION_WAIT_RETRY_GRACE_MS)
-      return { status: 'pending', reason: '还在检查，系统会自动再试。' };
-    return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
+      return {
+        status: 'pending',
+        reason: '还在检查，系统会自动再试。',
+        wait: admissionWaitRead(fact),
+      };
+    return {
+      status: 'undecided',
+      reason: '暂时没查成：上次检查的结果没能确认，题目暂不能作答。',
+      cause: 'outcome_unconfirmed',
+    };
   }
   const reason =
     fact.admission_failure_reason ?? fact.admission_result_reason ?? fact.admission_withheld_reason;
@@ -508,7 +553,11 @@ function admissionRead(
     // The SQL verdict owns the unit-first / aggregate-last priority. JS must not
     // reclassify the same facts with a second reason list.
     if (fact.admission_failure_verdict !== 'failed')
-      return { status: 'undecided', reason: '自动检查的结果尚未确认，题目暂不能作答。' };
+      return {
+        status: 'undecided',
+        reason: '暂时没查成：上次检查的结果没能确认，题目暂不能作答。',
+        cause: 'outcome_unconfirmed',
+      };
     // Provider exceptions can contain internal request details; only expose fixed learner copy.
     const message =
       reason == null

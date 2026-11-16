@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
+import { readLearnerCurriculum } from '@/kernel/read-models/learner-curriculum';
 import { noteBodyText } from '@/kernel/read-models/note-body-text';
 import { bodyBlocksToNoteSections } from '@/kernel/read-models/note-sections';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -116,6 +117,7 @@ export async function loadTeachingContext(db: Db, learningItemId: string) {
     parent_hub_summary: parentHubSummary,
     atomic_sections: atomicSections,
     atomic_body_text: atomicBodyText,
+    curriculum: await readLearnerCurriculum(db),
     subjectProfile: resolveSubjectProfile(knowledgeNode?.domain),
   };
 }
@@ -148,6 +150,7 @@ export async function planTeachingTurn(
     parent_hub_summary: context.parent_hub_summary,
     atomic_sections: context.atomic_sections,
     atomic_body_text: context.atomic_body_text,
+    curriculum: context.curriculum,
     messages,
   };
   const result = await runTaskFn('TeachingTurnTask', input, {

@@ -12,7 +12,7 @@
 // store_sourced_question 提交。未提交候选的 staged 资产由 jyeoo_staged_asset_reap 回收。
 // - dedup 分层：fetch 侧做 in-batch near-dup + 全局 canonical-hash 存在性判定
 // （advisory，terminal-rejected 旧 draft 也保守判重——重复内容本就会被 verify 再拒）；
-// KC-scoped pool near-dup + cross-KC merge 全部在 commit（store-sourced-question.ts），
+// KC-scoped pool near-dup + cross-KC merge 全部在 commit（submit-question.ts），
 // 因为只有那时才有 knowledge_ids。
 // 确定性保证（继承旧 handler 语义）：
 // - 任何非零 exit / 超时 / stdout 截断 ⇒ 整批丢弃，绝不入库半截数据（producer 契约）。
@@ -45,6 +45,7 @@ import {
 
 import { answerClassCompatible } from '@/subjects/question-kind';
 import { canonicalQuestionContentHash } from '../../question-bank/public';
+import { type BandLevelTarget, difficultyInBand, resolveBandLevelTarget } from './band-level';
 import {
   JYEOO_FETCH_CANARY_ACTION,
   jyeooBudgetRemaining,
@@ -78,26 +79,6 @@ export const JYEOO_NEAR_DUP_THRESHOLD = DEDUP_OVERLAP_THRESHOLD;
 export const JYEOO_GRADES = [10, 11, 12] as const;
 export type JyeooGrade = (typeof JYEOO_GRADES)[number];
 
-/**
- * band → 1-5 difficulty 集合的 post-filter（grade 路线无 --dg，过滤从 producer 侧移到
- * loom 侧；映射沿用旧 jyeooDgTokenForBand 的语义：easy≈1-2 / medium≈3 / hard≈4 /
- * difficult≈5）。标定到 logit-b 仍是 design 声明的后续工作。
- */
-export function difficultyInBand(difficulty: number, band: DifficultyBand): boolean {
-  switch (band) {
-    case 'below':
-      return difficulty <= 2;
-    case 'near':
-      return difficulty === 3;
-    case 'above':
-      return difficulty === 4;
-    case 'stretch':
-      return difficulty >= 5;
-  }
-  const _exhaustive: never = band;
-  return _exhaustive;
-}
-
 export interface JyeooFetchCandidatesInput {
   grade: JyeooGrade;
   /** producer 学科 id（如 math2）。调用方决定——本模块不再查 subject profile。 */
@@ -110,8 +91,10 @@ export interface JyeooFetchCandidatesInput {
   sessionMax: number;
   /** 可选 kind pin（诊断/格式多样性目标）：不匹配的题过滤丢弃。 */
   kind?: string;
-  /** 可选难度带 post-filter。 */
+  /** 可选难度带。没有 levelTarget 时按 θ̂ = 0 反算（冷启动，near → 3）。 */
   difficultyBand?: DifficultyBand;
+  /** 已反算的 band + 1–5 区间。有则按它过滤，不再把 near 当成固定 3 档。 */
+  levelTarget?: BandLevelTarget;
 }
 
 export interface JyeooCandidate {
@@ -492,7 +475,14 @@ export async function runJyeooFetchCandidates(
         max_papers: params.input.maxPapers,
         session_max: params.input.sessionMax,
         ...(params.input.kind ? { kind: params.input.kind } : {}),
-        ...(params.input.difficultyBand ? { difficulty_band: params.input.difficultyBand } : {}),
+        ...(params.input.levelTarget
+          ? {
+              difficulty_band: params.input.levelTarget.band,
+              difficulty_levels: params.input.levelTarget.levels,
+            }
+          : params.input.difficultyBand
+            ? { difficulty_band: params.input.difficultyBand }
+            : {}),
         tool: 'jyeoo_fetch_candidates',
         task_run_id: params.ctx?.taskRunId ?? null,
         ...(result.status === 'ok'
@@ -640,6 +630,9 @@ async function runJyeooFetchCandidatesCore(
     }
 
     // ── pre-persist filters（foreign host / kind pin / band post-filter） ─────
+    const levelTarget =
+      input.levelTarget ??
+      (input.difficultyBand ? resolveBandLevelTarget(input.difficultyBand, 0) : null);
     const preFiltered: typeof validQuestions = [];
     for (const item of validQuestions) {
       if (isForeignSourceHost(item.q.source_url, JYEOO_SOURCE_HOST)) {
@@ -660,7 +653,7 @@ async function runJyeooFetchCandidatesCore(
         });
         continue;
       }
-      if (input.difficultyBand && !difficultyInBand(item.q.difficulty, input.difficultyBand)) {
+      if (levelTarget && !difficultyInBand(item.q.difficulty, levelTarget)) {
         counts.filtered_band += 1;
         dropped.push({
           sourceUrl: item.q.source_url,

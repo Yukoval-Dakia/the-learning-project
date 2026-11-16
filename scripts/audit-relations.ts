@@ -218,7 +218,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   // NOTE: applied_in 故意**无** specialized 条目——这是预期的死边候选。grounding：
   //   src/capabilities/notes/server/hub-curation.ts:35 EXCLUDED_RELATIONS 显式排除 applied_in；topology-gate 仅
   //   prerequisite；knowledge-readers paths 反向邻接仅 related_to/contrasts_with。
-  //   applied_in 只被 generic-read 一把捞，零特化学习消费（per-relation 创建期校验也已删除）。
+  //   applied_in 只被 generic-read 一把捞，零特化学习消费。
 ];
 
 // ── MISCONCEPTION_CONSUMER_REGISTRY — same declarative file:marker shape for misconception_edge ──

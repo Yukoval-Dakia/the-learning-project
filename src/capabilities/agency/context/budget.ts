@@ -1,22 +1,14 @@
-// 启动段预算与裁剪（YUK-1794 B1）。token 数用确定性估计器（不是真实 tokenizer）：
-// CJK 按 ~1.6 token/字、其余按 ~1 token/3.5 字符 —— 与 budgets.ts 的既有口径同向
-// （CJK 1.5–2.5 token/char），取偏保守中位，验收以真实运行的实测为准。
+// 启动段预算与裁剪（YUK-1794 B1）。token 数用 kernel 的确定性估计器（不是真实
+// tokenizer）。概况头有自己的预算，不计入对话历史。
+
+import { estimateContextTokens } from '@/kernel/tools/budgets';
 
 export const LEARNER_CONTEXT_STARTUP_BUDGET = {
   /** 启动段估计 token 上限（设计 §3.2：学伴 view ≤1000）。 */
   maxEstimatedTokens: 1000,
-  /** 兜底字符硬顶：即使估计器失灵，启动段也不会顶穿 conversation_history 的 4000 字符总预算。 */
+  /** 启动段自己的字符硬顶，与对话历史预算分开。 */
   maxChars: 2400,
 } as const;
-
-const CJK_RE = /[　-鿿豈-﫿＀-￯]/;
-
-/** Deterministic token estimate; intentionally conservative for CJK-heavy text. */
-export function estimateTokens(text: string): number {
-  let units = 0;
-  for (const ch of text) units += CJK_RE.test(ch) ? 1.6 : 1 / 3.5;
-  return Math.ceil(units);
-}
 
 export interface TrimUnit {
   /** Render order AND default drop priority: 0 = rendered first, kept longest. */
@@ -42,64 +34,133 @@ export interface TrimResult {
   readonly tokensBeforeTrim: number;
 }
 
+type KeptUnit = TrimUnit & { markdown: string };
+
 /**
  * Trim ordered units to the token budget by dropping the lowest-priority present
- * units first（明细 → 昨夜 → 信号 → 稳态画像 → 掌握和错因 → Δ；Steering 永不整段丢）。
+ * units first（明细 → 昨夜 → 信号 → 稳态画像 → 掌握和错因 → Δ；Steering 整段最后丢）。
  * Only when the remainder still overflows does it get a sentence-boundary
  * truncation marked with … — never a mid-sentence cut, and rank 0 (Steering)
  * keeps every complete sentence that fits.
+ *
+ * Protected units are bounded upstream but cannot be shown to fit every explicit
+ * budget: the curator view runs at 800 tokens while the learner-written communication
+ * brief may use its full 400 characters. So they degrade too — shortened at a
+ * sentence boundary first, dropped last — and the result is finally clamped. Every
+ * step strictly shrinks the render, so no learner input makes this throw or spin.
  */
 export function trimUnitsToBudget(
   units: readonly TrimUnit[],
   budget: { maxEstimatedTokens: number; maxChars: number } = LEARNER_CONTEXT_STARTUP_BUDGET,
 ): TrimResult {
-  const kept = units
-    .filter((u): u is TrimUnit & { markdown: string } => !!u.markdown && u.markdown.length > 0)
+  const kept: KeptUnit[] = units
+    .filter((u): u is KeptUnit => !!u.markdown && u.markdown.length > 0)
     .sort((a, b) => a.rank - b.rank);
-  const render = () => kept.map((u) => u.markdown).join('\n');
-  const tokensBeforeTrim = estimateTokens(render());
+  const over = (text: string) =>
+    estimateContextTokens(text) > budget.maxEstimatedTokens || text.length > budget.maxChars;
+  const render = (override?: { unit: KeptUnit; text: string }) =>
+    kept
+      .map((u) => (u === override?.unit ? override.text : u.markdown))
+      .filter((text) => text.length > 0)
+      .join('\n');
+  const tokensBeforeTrim = estimateContextTokens(render());
   const droppedUnits: string[] = [];
+  const lowestPriority = (filter: (unit: KeptUnit) => boolean) =>
+    kept.filter(filter).sort((a, b) => (b.dropRank ?? b.rank) - (a.dropRank ?? a.rank))[0];
+  const drop = (unit: KeptUnit) => {
+    droppedUnits.push(unit.name);
+    kept.splice(kept.indexOf(unit), 1);
+  };
+  /**
+   * Longest whole-sentence prefix (plus …) that still fits in place, or null when no
+   * strict shortening exists. Returning null keeps the caller's loop progressing: it
+   * drops the unit instead of retrying the same text.
+   */
+  const shorten = (unit: KeptUnit): string | null => {
+    const full = unit.markdown;
+    const fits = (length: number) => !over(render({ unit, text: `${full.slice(0, length)}…` }));
+    let low = 0;
+    let high = full.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (fits(mid)) low = mid;
+      else high = mid - 1;
+    }
+    let cut = full.slice(0, low);
+    const boundary = Math.max(cut.lastIndexOf('。'), cut.lastIndexOf('\n'), cut.lastIndexOf('；'));
+    if (boundary > 0) cut = cut.slice(0, boundary + 1);
+    if (cut.length === 0 || cut.length >= full.length) return null;
+    return `${cut}…`;
+  };
 
-  // Drop the highest-dropRank (lowest-priority) unit until the estimate fits;
+  // 1. Drop the highest-dropRank (lowest-priority) unit until the estimate fits;
   // rank 0 (Steering) is never dropped whole — it takes the boundary truncation instead.
-  while (
-    estimateTokens(render()) > budget.maxEstimatedTokens ||
-    render().length > budget.maxChars
-  ) {
-    const candidates = kept.filter((u) => u.rank !== 0 && !u.protected);
-    const drop = candidates.sort((a, b) => (b.dropRank ?? b.rank) - (a.dropRank ?? a.rank))[0];
-    if (!drop) break;
-    droppedUnits.push(drop.name);
-    kept.splice(kept.indexOf(drop), 1);
+  while (over(render())) {
+    const next = lowestPriority((u) => u.rank !== 0 && !u.protected);
+    if (!next) break;
+    drop(next);
+  }
+
+  // 2. Steering keeps every complete sentence that fits beside the resident units.
+  // When not even an ellipsis fits, its text is parked and the line waits empty while
+  // step 3 frees room from resident content.
+  const parked = { text: null as string | null };
+  const fitSteering = () => {
+    const steering = kept.find((u) => u.rank === 0);
+    if (!steering || !over(render())) return;
+    const text = shorten(steering);
+    if (text) {
+      steering.markdown = text;
+      return;
+    }
+    parked.text = steering.markdown;
+    steering.markdown = '';
+  };
+  fitSteering();
+
+  // 3. Resident content still cannot coexist with even an emptied steering line (a
+  // 400-char communication brief plus the stage line against the curator's 800):
+  // shorten it lowest-priority first, dropping a unit only when it cannot shorten.
+  while (over(render())) {
+    const next = lowestPriority((u) => u.protected === true && u.rank !== 0);
+    if (!next) break;
+    const text = shorten(next);
+    if (text) next.markdown = text;
+    else drop(next);
+  }
+  // Room freed by step 3 goes back to steering.
+  const parkedSteering = kept.find((u) => u.rank === 0);
+  if (parkedSteering && parked.text !== null) {
+    parkedSteering.markdown = parked.text;
+    parked.text = null;
+    fitSteering();
+  }
+
+  // 4. A budget below even that: drop residents one by one, then steering, then clamp.
+  // The caller still gets a header instead of an exception.
+  while (over(render())) {
+    const next = lowestPriority((u) => u.rank !== 0);
+    if (!next) break;
+    drop(next);
+  }
+  if (over(render())) {
+    const steering = kept.find((u) => u.rank === 0);
+    if (steering) drop(steering);
   }
   let md = render();
-  if (estimateTokens(md) > budget.maxEstimatedTokens || md.length > budget.maxChars) {
-    const steering = kept.find((u) => u.rank === 0);
-    if (steering) {
-      const protectedText = kept
-        .filter((u) => u !== steering)
-        .map((u) => u.markdown)
-        .join('\n');
-      let text = steering.markdown;
-      const fits = () =>
-        estimateTokens(`${text}…\n${protectedText}`) <= budget.maxEstimatedTokens &&
-        text.length + protectedText.length + 2 <= budget.maxChars;
-      while (text.length && !fits()) text = text.slice(0, -1);
-      const boundary = Math.max(
-        text.lastIndexOf('。'),
-        text.lastIndexOf('\n'),
-        text.lastIndexOf('；'),
-      );
-      if (boundary > 0) text = text.slice(0, boundary + 1);
-      steering.markdown = `${text}…`;
-      md = render();
+  if (over(md)) {
+    let low = 0;
+    let high = md.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (over(`${md.slice(0, mid)}…`)) high = mid - 1;
+      else low = mid;
     }
-    if (estimateTokens(md) > budget.maxEstimatedTokens || md.length > budget.maxChars)
-      throw new Error('communication brief exceeds its compact storage contract');
+    md = low > 0 ? `${md.slice(0, low)}…` : '';
   }
   return {
     markdown: md,
-    estimatedTokens: estimateTokens(md),
+    estimatedTokens: estimateContextTokens(md),
     droppedUnits,
     tokensBeforeTrim,
   };

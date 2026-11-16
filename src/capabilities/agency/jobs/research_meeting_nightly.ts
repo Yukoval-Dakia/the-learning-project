@@ -416,6 +416,7 @@ async function runResearchMeetingNightlyClaimed(
     limit: RESEARCH_MEETING_MAX_CONJECTURES,
     imageFetchFn: defaultImageFetch,
     loadKnownConjectureKeysFn: deps.loadKnownConjectureKeysFn,
+    since,
   });
   for (const exclusion of selection.exclusions) {
     if (exclusion.reason === 'evidence_image_unavailable') {
@@ -467,6 +468,9 @@ async function runResearchMeetingNightlyClaimed(
         cell,
         evidenceImages,
         priorClaimMd,
+        priorAbstention,
+        contrastCorrectSamples,
+        agentNotes,
       }): Promise<{
         cell: EnrichedEvidenceCell;
         induced: InduceConjectureResult | null;
@@ -485,6 +489,9 @@ async function runResearchMeetingNightlyClaimed(
             samples: RESEARCH_MEETING_SAMPLES,
             runTaskFn,
             ...(priorClaimMd ? { priorClaimMd } : {}),
+            ...(priorAbstention ? { priorAbstention } : {}),
+            contrastCorrectSamples,
+            agentNotes,
             // Render the prompt in the cell's OWN subject voice. An untagged KC
             // (subject_id null) stays on the neutral `general` profile; inheriting a
             // concrete subject would steer the claim toward the wrong subject.
@@ -623,6 +630,8 @@ async function runResearchMeetingNightlyClaimed(
           payload: {
             reason_code: induced.draft.reason_code,
             explanation_md: induced.draft.explanation_md ?? null,
+            cell_key: cell.key,
+            cause_category: cell.cause_category,
             evidence_event_ids: induced.draft.evidence_event_ids,
             input_evidence_event_ids: cell.evidence_event_ids,
             induction_task_run_ids: induced.task_run_ids,

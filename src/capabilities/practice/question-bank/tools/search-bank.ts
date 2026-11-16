@@ -5,6 +5,7 @@ import type { Db } from '@/db/client';
 import { item_calibration, question } from '@/db/schema';
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import { getAttemptedQuestionIds } from '@/kernel/read-models/question-activity';
+import { allowedQuestionIds, sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { EMBED_MODEL, embedText } from '@/server/ai/embed';
 import { resolveBankRefs } from './bank-ref';
@@ -25,7 +26,7 @@ import {
   resumeBankSearchSnapshot,
   saveBankReceipt,
 } from './bank-search-snapshot';
-import { bankReadRoleForActor } from './read-bank';
+import { bankReadRoleForActor, callerIsDerivationSurface } from './read-bank';
 
 const queryVectors = new WeakMap<Db, Map<string, { value: number[]; expires: number }>>();
 /** Benchmark cold cohorts clear only query reuse, never change retrieval or provider routing. */
@@ -107,6 +108,13 @@ export async function collectBankSearchReceipt(
   const predicates: SQL[] = (terms ?? []).map(
     (term) => sql`position(lower(${term}) in lower(${question.prompt_md})) > 0`,
   );
+  // Derivation surfaces (question_preparer) read the bank to author OTHER questions;
+  // restricted lineage is excluded inside the scope WHERE so it never enters the
+  // candidate pool, the frozen snapshot, or a page — submit-side dedup stays
+  // authoritative for rows hidden this way.
+  if (callerIsDerivationSurface(ctx.callerActor)) {
+    predicates.push(sourceAllowsDerivationSql({ kind: 'question', id: question.id }));
+  }
   if (history && history !== 'any') {
     if (ctx.ticketEventId) throw new Error('Ticket-bound preparation cannot query learner history');
     const memberIds =
@@ -319,8 +327,20 @@ export async function runBankSearchV3(
   ablation?: { vectors: 'off' | 'content' | 'prior' },
 ) {
   const input = SearchBankInputSchema.parse(raw);
-  if (input.cursor) return resumeBankSearchSnapshot(ctx, input.cursor);
-  return saveBankReceipt(ctx, await collectBankSearchReceipt(ctx, input, ablation));
+  const output = input.cursor
+    ? await resumeBankSearchSnapshot(ctx, input.cursor)
+    : await saveBankReceipt(ctx, await collectBankSearchReceipt(ctx, input, ablation));
+  // Resume-path guard: snapshots frozen before the scope predicate took effect (or
+  // any pool assembled outside collectBankSearchReceipt) still cannot leak restricted
+  // hits to derivation surfaces.
+  if (callerIsDerivationSurface(ctx.callerActor) && output.hits.length > 0) {
+    const allowed = await allowedQuestionIds(
+      ctx.db,
+      output.hits.map((hit) => hit.id),
+    );
+    output.hits = output.hits.filter((hit) => allowed.has(hit.id));
+  }
+  return output;
 }
 export const searchBankTool: DomainTool<SearchBankInput, BankSearchOutputV3> = {
   name: 'search_bank',

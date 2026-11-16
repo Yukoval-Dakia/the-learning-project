@@ -695,6 +695,14 @@ export function validateResponseSpec(
     const slotById = new Map(spec.slots.map((slot) => [slot.slot_id, slot] as const));
     for (const part of structure.parts) {
       if (part.blank_order == null) continue;
+      const partBlanks = blankSlotIdsByPart.get(part.part_id) ?? [];
+      if (partBlanks.length === 0) {
+        issues.push({
+          code: 'blank_order_unresolved_slot',
+          detail: `part '${part.part_id}' declares blank_order but has no blank slots (e.g. a choice part) — remove blank_order; only parts with blank slots declare it`,
+        });
+        continue;
+      }
       const seen = new Set<string>();
       for (const slotId of part.blank_order) {
         if (seen.has(slotId)) {
@@ -727,7 +735,6 @@ export function validateResponseSpec(
           });
         }
       }
-      const partBlanks = blankSlotIdsByPart.get(part.part_id) ?? [];
       const missing = partBlanks.filter((id) => !seen.has(id));
       if (missing.length > 0) {
         issues.push({

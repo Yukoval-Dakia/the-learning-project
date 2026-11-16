@@ -8,7 +8,6 @@ import type {
   ProposalDismissApplier,
   ProposalDismissResult,
 } from '@/kernel/proposals/index';
-import { toProposalLifecycleResult } from '@/kernel/proposals/index';
 import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
@@ -57,7 +56,7 @@ function wrap(result: {
   readonly kind: string;
   readonly idempotent?: boolean;
 }): ProposalAcceptResult {
-  return { kind: result.kind, result: toProposalLifecycleResult(result) };
+  return { kind: result.kind, result: { ...result } };
 }
 
 export const variantQuestionProposalAcceptApplier: ProposalAcceptApplier = async (
@@ -101,7 +100,7 @@ export const questionDraftProposalDismissApplier: ProposalDismissApplier = async
   );
   return {
     kind: input.proposal.payload.kind,
-    result: toProposalLifecycleResult(result),
+    result: { ...result },
   } satisfies ProposalDismissResult;
 };
 

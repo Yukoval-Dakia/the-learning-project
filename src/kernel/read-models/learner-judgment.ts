@@ -543,7 +543,7 @@ export async function readLearnerJudgments(
       }
     }
     const retention = retentionRead(scheduling);
-    // the any-event activity clock rides the same snapshot in its
+    // the learner activity clock rides the same snapshot in its
     // own savepoint; a failed derivation degrades to per-item null (display
     // clock, fail-soft) instead of aborting the ability/retention readings.
     let activity: ReadonlyMap<string, Date> = new Map();

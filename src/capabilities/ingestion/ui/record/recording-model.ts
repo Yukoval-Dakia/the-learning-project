@@ -23,6 +23,7 @@ export type RunState = 'in_progress' | 'waiting' | 'done' | 'failed' | 'lost';
 export interface Now {
   servable: boolean;
   holdReason: string | null;
+  admission: NonNullable<HistoryItem['current']>['admission'];
 }
 
 export interface AgentItem {
@@ -107,7 +108,7 @@ const WORKING = new Set(['queued', 'extracting']);
 const FINISHED = new Set(['extracted', 'partial', 'reviewed', 'imported']);
 
 function nowOf(c: HistoryItem['current']): Now | null {
-  return c ? { servable: c.servable, holdReason: c.hold_reason } : null;
+  return c ? { servable: c.servable, holdReason: c.hold_reason, admission: c.admission } : null;
 }
 
 function historyAsk(a: HistoryAsk): Ask {

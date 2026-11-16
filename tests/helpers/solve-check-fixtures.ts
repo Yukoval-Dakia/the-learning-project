@@ -1,4 +1,4 @@
-// YUK-554 (review R1/R2) — shared solve-check mock fixtures.
+// shared solve-check mock fixtures.
 //
 // Single source of truth for the two LLM-output shapes solve-check consumes, used by
 // BOTH partitions: verify-framework.test.ts (unit) and quiz_verify.test.ts (db). This

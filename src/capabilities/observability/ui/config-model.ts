@@ -232,17 +232,26 @@ export function bindingThinking(binding: ConfigBinding | null): string | null {
     ? `思考 ${applied}（选的是${thinkingWord(reasoning.requested)}，这个模型取到${applied}）`
     : `思考 ${applied}`;
 }
+/**
+ * How much the model takes and gives. The input limit leads: it is what refuses a long request,
+ * and a context window three times larger read first looks like room that isn't there.
+ */
+export function modelLimitsLine(model: ConfigModel): string {
+  const size = (n: number | null) => (n === null ? '未知' : `${Math.round(n / 1000)}k`);
+  return [
+    `输入上限 ${size(model.max_input_tokens)}`,
+    `上下文 ${size(model.context_window_tokens)}`,
+    `输出上限 ${size(model.max_output_tokens)}`,
+  ].join(' · ');
+}
 /** The model's own facts, in the words the picker shows. */
 export function modelFactsLine(model: ConfigModel): string {
-  const size = (n: number | null) => (n === null ? '未知' : `${Math.round(n / 1000)}k`);
   const yes = (v: boolean | 'unknown') => (v === 'unknown' ? '未知' : v ? '能' : '不能');
   const price = model.cost
     ? `每百万 token 输入 $${model.cost.input} / 输出 $${model.cost.output}`
     : '单价未知';
   return [
-    `上下文 ${size(model.context_window_tokens)}`,
-    `输入上限 ${size(model.max_input_tokens)}`,
-    `输出上限 ${size(model.max_output_tokens)}`,
+    modelLimitsLine(model),
     `用工具：${yes(model.tool_call)}`,
     `看图：${yes(model.vision)}`,
     price,

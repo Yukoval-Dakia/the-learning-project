@@ -4,7 +4,7 @@
 // ②「改关系」从即点即换改为 inline 展开 5 关系再选（真 decide 不可反复试）；
 // ③evidence 渲多枚——真 evidence_refs 是数组，设计稿演示单枚。
 // 裁决在卡内 async（busy per-card），错误经 onError 上抛页级 toast；
-// resolved 留痕 map 由 InboxPage 持有（设计稿同构）。
+// Which cards are decided (and leaving) is held by InboxPage.
 // M3E 呈现（YUK-1473）：ui-next Card / Button / ChipButton + lucide，样式在 inbox-m3e.css；
 // 设计记录 docs/design/2026-11-03-inbox-agent-notes-events-m3e.md。裁决逻辑未动。
 
@@ -26,7 +26,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 // Type-only (erased at compile time — does NOT pull react-markdown into the main bundle,
 // the deferred loader still owns the runtime import).
 import type { Components } from 'react-markdown';
@@ -35,6 +35,7 @@ import { ApiError } from '@/ui/lib/api';
 import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { invalidateAfterProposalDecision } from '@/ui/lib/write-invalidation';
+import { prefersReducedMotion } from '@/ui-next/motion/reduced-motion';
 import { Card } from '@/ui-next/primitives/Card';
 import { ChipButton } from '@/ui-next/primitives/Chip';
 import { Button } from '@/ui-next/public';
@@ -347,10 +348,12 @@ function confidenceOf(
 export interface ProposalCardProps {
   p: ProposalInboxRow;
   index: number;
-  /** 裁决留痕文案（如「已接受」）；null = 未裁决。 */
-  resolved: string | null;
+  /** Decided here: the card fades and folds away, then onGone takes it out of the list. */
+  leaving: boolean;
   navigate: (to: string) => void;
-  onResolve: (id: string, label: string) => void;
+  /** A decision went through; `what` names the card for the confirming toast. */
+  onResolve: (id: string, label: string, what: string) => void;
+  onGone: (id: string) => void;
   onError: (msg: string) => void;
 }
 
@@ -364,7 +367,14 @@ const MERGE_BLOCKED_WORDS: Readonly<Record<string, string>> = {
   missing_continuity: '读不出这些题块是不是连在一起的。',
 };
 
-export function ProposalCard({ p, resolved, navigate, onResolve, onError }: ProposalCardProps) {
+export function ProposalCard({
+  p,
+  leaving,
+  navigate,
+  onResolve,
+  onGone,
+  onError,
+}: ProposalCardProps) {
   const meta = kindMeta(p.kind);
   const client = useWorkbenchClient();
   const qc = useQueryClient();
@@ -372,9 +382,36 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
   const [pickingRel, setPickingRel] = useState(false);
   // Block merges are irreversible: accept first asks for an explicit confirmation.
   const [confirmingMerge, setConfirmingMerge] = useState(false);
-  // codex 验证轮 P3：裁决留痕后按钮组整体锁定——卡片留在列表里，再点会
-  // 重复请求 / 反向操作直接 409。
-  const locked = busy || resolved !== null;
+  // A decided card is on its way out: nothing on it can be pressed again.
+  const locked = busy || leaving;
+  const slotRef = useRef<HTMLDivElement>(null);
+  // The fade is this change's own motion: the card fades while its height folds, so the cards
+  // under it move up with it. Reduced motion takes it out at once.
+  useEffect(() => {
+    if (!leaving) return;
+    const el = slotRef.current;
+    if (!el || prefersReducedMotion() || typeof el.animate !== 'function') {
+      onGone(p.id);
+      return;
+    }
+    const style = getComputedStyle(el);
+    const gap = Number.parseFloat(getComputedStyle(el.parentElement ?? el).rowGap) || 0;
+    const height = el.getBoundingClientRect().height;
+    el.style.overflow = 'hidden';
+    const fold = el.animate(
+      [
+        { opacity: 1, height: `${height}px`, marginBottom: '0px' },
+        { opacity: 0, height: '0px', marginBottom: `${-gap}px` },
+      ],
+      {
+        duration: Number.parseFloat(style.getPropertyValue('--un-t-ui')) || 280,
+        easing: style.getPropertyValue('--un-ease-glide').trim() || 'ease-out',
+        fill: 'forwards',
+      },
+    );
+    fold.onfinish = () => onGone(p.id);
+    return () => fold.cancel();
+  }, [leaving, onGone, p.id]);
 
   const decide = async (
     decision: ProposalDecision,
@@ -392,8 +429,8 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
         return;
       }
       setConfirmingMerge(false);
-      onResolve(p.id, label);
-      // The decided card stays put; refresh what the decision changed elsewhere (sidebar count,
+      onResolve(p.id, label, p.presentation?.title ?? meta.label);
+      // The decided card leaves; refresh what the decision changed elsewhere (sidebar count,
       // 待你试做, digest, and the proposal kind's own reads) without waiting on it here.
       void invalidateAfterProposalDecision(qc, { kind: p.kind });
     } catch (err) {
@@ -418,7 +455,12 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
     : null;
   const knowledgeChange = p.presentation?.knowledge_mutation;
   const changeBlockedWords = knowledgeChange ? mutationBlockedWords(knowledgeChange) : null;
-  const blockedWords = mergeBlockedWords ?? changeBlockedWords;
+  // Replacing a relation is no longer supported: the suggestion can only be dismissed.
+  const isRetiredEdge = isEdge && change?.edge_op === 'supersede';
+  const blockedWords =
+    mergeBlockedWords ??
+    changeBlockedWords ??
+    (isRetiredEdge ? '替换知识关系已经不再支持，这条只能忽略。' : null);
   // Merging knowledge cannot be undone either, so it asks first, like merging question blocks.
   const mergesKnowledge = knowledgeChange?.mutation === 'merge';
   // ADR-0032 D4-E1 / YUK-332 — legacy proposals have no discriminator and are creates.
@@ -441,6 +483,9 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
     acceptButtonLabel = '确认归档';
     acceptedLabel = '已归档';
     edgeOperationLabel = archiveTargetMissing ? '归档目标缺失' : '将归档';
+  } else if (isRetiredEdge) {
+    cardLabel = '替换知识关系';
+    edgeOperationLabel = '已不再支持';
   } else if (isEdge) {
     cardLabel = '新增知识关系';
     acceptButtonLabel = '建立关系';
@@ -514,295 +559,299 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
     );
 
   return (
-    <Card as="article" className="ib-prop" data-resolved={resolved ? '' : undefined}>
-      <div className="ib-prop-head">
-        <span className="ib-tag" data-tone={inboxTone(cardTone)}>
-          <CardIcon size={13} aria-hidden="true" />
-          {cardLabel}
-        </span>
-        <span className="ib-tag ib-tag-ai">
-          <Sparkles size={12} aria-hidden="true" />
-          AI 建议
-        </span>
-        {/* YUK-617 mode-1 — 修正类建议标签（suggestion_kind=corrective 不计接受率）；
+    <div ref={slotRef} className="ib-prop-slot" inert={leaving || undefined}>
+      <Card as="article" className="ib-prop">
+        <div className="ib-prop-head">
+          <span className="ib-tag" data-tone={inboxTone(cardTone)}>
+            <CardIcon size={13} aria-hidden="true" />
+            {cardLabel}
+          </span>
+          <span className="ib-tag ib-tag-ai">
+            <Sparkles size={12} aria-hidden="true" />
+            AI 建议
+          </span>
+          {/* YUK-617 mode-1 — 修正类建议标签（suggestion_kind=corrective 不计接受率）；
             proactive / 缺失不渲染。字段已在 wire（BaseProposal 顶层）。 */}
-        {p.payload.suggestion_kind === 'corrective' && (
-          <span className="ib-tag ib-tag-dashed" title="修正类建议不计入接受率">
-            修正
-          </span>
-        )}
-        {p.presentation?.title && <span className="ib-prop-title">{p.presentation.title}</span>}
-        {resolved && (
-          <span className="ib-tag ib-stamp" data-tone="positive">
-            <Check size={13} aria-hidden="true" />
-            {resolved}
-          </span>
-        )}
-      </div>
-
-      {ownSummary ? <p className="ib-prop-reason">{reasonText(ownSummary, true)}</p> : null}
-      {reasonInView ? (
-        <div
-          className="ib-prop-reason"
-          data-clamp={legacyBody.length > LEGACY_BODY_MAX ? '' : undefined}
-        >
-          {legacyBody || '理由都是技术引用，在下面的依据里。'}
-        </div>
-      ) : null}
-
-      {knowledgeChange ? <MutationPreview mutation={knowledgeChange} /> : null}
-
-      {!knowledgeChange && p.presentation && p.presentation.change_summary.length > 0 && (
-        <dl className="ib-prop-summary">
-          {p.presentation.change_summary.map((item) => (
-            <div key={`${item.label}:${item.value}`}>
-              <dt>{item.label}</dt>
-              <dd>{item.value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-
-      {learningPlan && (
-        <div className="ib-plan">
-          <div className="ib-plan-hub">
-            <span className="ib-kicker">学习主线</span>
-            <b className="ib-plan-title">{learningPlan.hubTitle}</b>
-            {learningPlan.summary && <span className="ib-plan-sum">{learningPlan.summary}</span>}
-          </div>
-          {learningPlan.steps.length > 0 && (
-            <ol className="ib-plan-steps">
-              {learningPlan.steps.map((step) => (
-                <li key={`${step.kind}:${step.title}:${step.intent ?? ''}`}>
-                  <span className="ib-plan-dot" data-kind={step.kind} aria-hidden="true" />
-                  <span>
-                    <b>{step.title}</b>
-                    {step.intent && <small>{step.intent}</small>}
-                  </span>
-                </li>
-              ))}
-            </ol>
+          {p.payload.suggestion_kind === 'corrective' && (
+            <span className="ib-tag ib-tag-dashed" title="修正类建议不计入接受率">
+              修正
+            </span>
           )}
+          {p.presentation?.title && <span className="ib-prop-title">{p.presentation.title}</span>}
         </div>
-      )}
 
-      {imageCandidate && <ImageCandidateCard view={imageCandidate} />}
+        {ownSummary ? <p className="ib-prop-reason">{reasonText(ownSummary, true)}</p> : null}
+        {reasonInView ? (
+          <div
+            className="ib-prop-reason"
+            data-clamp={legacyBody.length > LEGACY_BODY_MAX ? '' : undefined}
+          >
+            {legacyBody || '理由都是技术引用，在下面的依据里。'}
+          </div>
+        ) : null}
 
-      {mergePreview?.primary && mergePreview.merged.length > 0 && (
-        <div className="ib-merge">
-          <div className="ib-merge-block">
-            <p className="ib-kicker">保留这道 · {mergePreview.primary.label}</p>
-            <div className="ib-merge-text">
-              <MergeText text={mergePreview.primary.excerpt} notation={mergePreview.notation} />
-            </div>
-            <BlockStructure block={mergePreview.primary} notation={mergePreview.notation} />
-          </div>
-          <div className="ib-merge-join" aria-hidden="true">
-            <ArrowRight size={16} />
-          </div>
-          <div className="ib-merge-block ib-merge-into">
-            <p className="ib-kicker">并进来的 {mergePreview.merged.length} 道</p>
-            {mergePreview.merged.map((block) => (
-              <div className="ib-merge-text ib-merge-part" key={block.id}>
-                <b>{block.label}</b>
-                <div>
-                  <MergeText text={block.excerpt} notation={mergePreview.notation} />
-                </div>
-                <BlockStructure block={block} notation={mergePreview.notation} />
+        {knowledgeChange ? <MutationPreview mutation={knowledgeChange} /> : null}
+
+        {!knowledgeChange && p.presentation && p.presentation.change_summary.length > 0 && (
+          <dl className="ib-prop-summary">
+            {p.presentation.change_summary.map((item) => (
+              <div key={`${item.label}:${item.value}`}>
+                <dt>{item.label}</dt>
+                <dd>{item.value}</dd>
               </div>
             ))}
-          </div>
-          {mergePreview.continuity_label && (
-            <div className="ib-merge-reason">
-              <Sparkles size={12} aria-hidden="true" />
-              连续依据：{mergePreview.continuity_label}
+          </dl>
+        )}
+
+        {learningPlan && (
+          <div className="ib-plan">
+            <div className="ib-plan-hub">
+              <span className="ib-kicker">学习主线</span>
+              <b className="ib-plan-title">{learningPlan.hubTitle}</b>
+              {learningPlan.summary && <span className="ib-plan-sum">{learningPlan.summary}</span>}
             </div>
-          )}
-        </div>
-      )}
-
-      {isEdge && edgeFrom && edgeTo && (
-        <div className="ib-edge">
-          <span className="ib-tag" data-tone={isArchiveEdge ? 'critical' : 'accent'}>
-            {isArchiveEdge ? (
-              <Archive size={12} aria-hidden="true" />
-            ) : (
-              <Link2 size={12} aria-hidden="true" />
+            {learningPlan.steps.length > 0 && (
+              <ol className="ib-plan-steps">
+                {learningPlan.steps.map((step) => (
+                  <li key={`${step.kind}:${step.title}:${step.intent ?? ''}`}>
+                    <span className="ib-plan-dot" data-kind={step.kind} aria-hidden="true" />
+                    <span>
+                      <b>{step.title}</b>
+                      {step.intent && <small>{step.intent}</small>}
+                    </span>
+                  </li>
+                ))}
+              </ol>
             )}
-            {edgeOperationLabel}
-          </span>
-          <span className="ib-tag ib-tag-outline">{(rel && REL_LABEL[rel]) || rel || '关系'}</span>
-          <span className="ib-edge-node">
-            {p.presentation?.knowledge_edge?.from_label ?? edgeFrom.slice(0, 8)}
-          </span>
-          <ArrowRight size={14} aria-hidden="true" className="ib-edge-arrow" />
-          <span className="ib-edge-node">
-            {p.presentation?.knowledge_edge?.to_label ?? edgeTo.slice(0, 8)}
-          </span>
-        </div>
-      )}
+          </div>
+        )}
 
-      {confirmingMerge && !resolved && !blockedWords && (
-        <div className="ib-confirm" role="alert">
-          <b>合并后无法撤销</b>
-          <span>
-            {knowledgeChange?.mutation === 'merge'
-              ? `被并走的知识点不再单独存在，只保留「${knowledgeChange.into.label}」。`
-              : '并进来的题会成为保留那道题的一部分，之后不能再拆开。'}
-          </span>
-          <div className="ib-acts">
-            <Button
-              ref={focusWhenShown}
-              size="sm"
-              className="ib-btn-critical"
-              disabled={locked}
-              onClick={() =>
-                void decide('accept', acceptedLabel, mergesKnowledge ? {} : { confirmLossy: true })
-              }
-            >
-              <Check size={14} aria-hidden="true" />
-              确认合并
-            </Button>
+        {imageCandidate && <ImageCandidateCard view={imageCandidate} />}
+
+        {mergePreview?.primary && mergePreview.merged.length > 0 && (
+          <div className="ib-merge">
+            <div className="ib-merge-block">
+              <p className="ib-kicker">保留这道 · {mergePreview.primary.label}</p>
+              <div className="ib-merge-text">
+                <MergeText text={mergePreview.primary.excerpt} notation={mergePreview.notation} />
+              </div>
+              <BlockStructure block={mergePreview.primary} notation={mergePreview.notation} />
+            </div>
+            <div className="ib-merge-join" aria-hidden="true">
+              <ArrowRight size={16} />
+            </div>
+            <div className="ib-merge-block ib-merge-into">
+              <p className="ib-kicker">并进来的 {mergePreview.merged.length} 道</p>
+              {mergePreview.merged.map((block) => (
+                <div className="ib-merge-text ib-merge-part" key={block.id}>
+                  <b>{block.label}</b>
+                  <div>
+                    <MergeText text={block.excerpt} notation={mergePreview.notation} />
+                  </div>
+                  <BlockStructure block={block} notation={mergePreview.notation} />
+                </div>
+              ))}
+            </div>
+            {mergePreview.continuity_label && (
+              <div className="ib-merge-reason">
+                <Sparkles size={12} aria-hidden="true" />
+                连续依据：{mergePreview.continuity_label}
+              </div>
+            )}
+          </div>
+        )}
+
+        {isEdge && edgeFrom && edgeTo && (
+          <div className="ib-edge">
+            <span className="ib-tag" data-tone={isArchiveEdge ? 'critical' : 'accent'}>
+              {isArchiveEdge ? (
+                <Archive size={12} aria-hidden="true" />
+              ) : (
+                <Link2 size={12} aria-hidden="true" />
+              )}
+              {edgeOperationLabel}
+            </span>
+            <span className="ib-tag ib-tag-outline">
+              {(rel && REL_LABEL[rel]) || rel || '关系'}
+            </span>
+            <span className="ib-edge-node">
+              {p.presentation?.knowledge_edge?.from_label ?? edgeFrom.slice(0, 8)}
+            </span>
+            <ArrowRight size={14} aria-hidden="true" className="ib-edge-arrow" />
+            <span className="ib-edge-node">
+              {p.presentation?.knowledge_edge?.to_label ?? edgeTo.slice(0, 8)}
+            </span>
+          </div>
+        )}
+
+        {confirmingMerge && !leaving && !blockedWords && (
+          <div className="ib-confirm" role="alert">
+            <b>合并后无法撤销</b>
+            <span>
+              {knowledgeChange?.mutation === 'merge'
+                ? `被并走的知识点不再单独存在，只保留「${knowledgeChange.into.label}」。`
+                : '并进来的题会成为保留那道题的一部分，之后不能再拆开。'}
+            </span>
+            <div className="ib-acts">
+              <Button
+                ref={focusWhenShown}
+                size="sm"
+                className="ib-btn-critical"
+                disabled={locked}
+                onClick={() =>
+                  void decide(
+                    'accept',
+                    acceptedLabel,
+                    mergesKnowledge ? {} : { confirmLossy: true },
+                  )
+                }
+              >
+                <Check size={14} aria-hidden="true" />
+                确认合并
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={locked}
+                onClick={() => setConfirmingMerge(false)}
+              >
+                先不合并
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {blockedWords && !leaving && (
+          <div className="ib-prop-blocked">
+            <b>
+              <TriangleAlert size={14} aria-hidden="true" />
+              {mergeBlockedWords ? '不能合并' : '现在接受不了'}
+            </b>
+            <span>{blockedWords}</span>
+          </div>
+        )}
+
+        {reasonFolded || p.payload.evidence_refs.length > 0 ? (
+          <details className="ib-why">
+            <summary className="ib-why-toggle un-hit">
+              查看依据
+              <ChevronDown size={14} aria-hidden="true" />
+            </summary>
+            <div className="ib-why-body">
+              {reasonFolded ? (
+                <div className="ib-prop-reason ib-why-reason">
+                  {reasonText(p.payload.reason_md)}
+                </div>
+              ) : null}
+              {p.payload.evidence_refs.length > 0 ? (
+                <div className="ib-evidence">
+                  {/* S7 (YUK-335)：同 readable 文案去重 + 计数，避免 N 枚一模一样的灰 chip。 */}
+                  {dedupeEvidence(p.payload.evidence_refs, p.presentation?.evidence_labels).map(
+                    ({ ref, count }) => (
+                      <EvidenceChip
+                        key={`${ref.kind}:${ref.id}`}
+                        er={ref}
+                        count={count}
+                        label={p.presentation?.evidence_labels[`${ref.kind}:${ref.id}`]}
+                        navigate={navigate}
+                      />
+                    ),
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </details>
+        ) : null}
+
+        <div className="ib-prop-foot">
+          <div className="ib-acts ib-prop-acts">
+            {/* M4 review fix (codex P2)：defer/archive/judge_retraction 的 accept
+              在 dispatchAccept 是 400（unsupported_proposal_kind），不渲 CTA。 */}
+            {isAcceptSupported(p.kind) && !confirmingMerge && !blockedWords && (
+              <Button
+                size="sm"
+                className={isArchiveEdge ? 'ib-btn-critical' : undefined}
+                disabled={locked || archiveTargetMissing}
+                onClick={() =>
+                  p.kind === 'block_merge' || mergesKnowledge
+                    ? setConfirmingMerge(true)
+                    : void decide('accept', acceptedLabel)
+                }
+              >
+                {isArchiveEdge ? (
+                  <Archive size={14} aria-hidden="true" />
+                ) : (
+                  <Check size={14} aria-hidden="true" />
+                )}
+                {acceptButtonLabel}
+              </Button>
+            )}
+            {isEdge && !isArchiveEdge && !isRetiredEdge && (
+              <>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={locked}
+                  onClick={() => void decide('reverse', '已改方向')}
+                >
+                  <ArrowLeftRight size={14} aria-hidden="true" />
+                  改方向
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={locked}
+                  aria-expanded={pickingRel}
+                  onClick={() => setPickingRel((v) => !v)}
+                >
+                  <RefreshCw size={14} aria-hidden="true" />
+                  改关系
+                </Button>
+              </>
+            )}
             <Button
               size="sm"
               variant="ghost"
               disabled={locked}
-              onClick={() => setConfirmingMerge(false)}
+              onClick={() => void decide('dismiss', isArchiveEdge ? '已保留' : '已忽略')}
             >
-              先不合并
+              <X size={14} aria-hidden="true" />
+              {isArchiveEdge ? '保留关系' : '忽略'}
             </Button>
           </div>
-        </div>
-      )}
-
-      {blockedWords && !resolved && (
-        <div className="ib-prop-blocked">
-          <b>
-            <TriangleAlert size={14} aria-hidden="true" />
-            {mergeBlockedWords ? '不能合并' : '现在接受不了'}
-          </b>
-          <span>{blockedWords}</span>
-        </div>
-      )}
-
-      {reasonFolded || p.payload.evidence_refs.length > 0 ? (
-        <details className="ib-why">
-          <summary className="ib-why-toggle un-hit">
-            查看依据
-            <ChevronDown size={14} aria-hidden="true" />
-          </summary>
-          <div className="ib-why-body">
-            {reasonFolded ? (
-              <div className="ib-prop-reason ib-why-reason">{reasonText(p.payload.reason_md)}</div>
-            ) : null}
-            {p.payload.evidence_refs.length > 0 ? (
-              <div className="ib-evidence">
-                {/* S7 (YUK-335)：同 readable 文案去重 + 计数，避免 N 枚一模一样的灰 chip。 */}
-                {dedupeEvidence(p.payload.evidence_refs, p.presentation?.evidence_labels).map(
-                  ({ ref, count }) => (
-                    <EvidenceChip
-                      key={`${ref.kind}:${ref.id}`}
-                      er={ref}
-                      count={count}
-                      label={p.presentation?.evidence_labels[`${ref.kind}:${ref.id}`]}
-                      navigate={navigate}
-                    />
-                  ),
-                )}
-              </div>
-            ) : null}
-          </div>
-        </details>
-      ) : null}
-
-      <div className="ib-prop-foot">
-        <div className="ib-acts ib-prop-acts">
-          {/* M4 review fix (codex P2)：defer/archive/judge_retraction 的 accept
-              在 dispatchAccept 是 400（unsupported_proposal_kind），不渲 CTA。 */}
-          {isAcceptSupported(p.kind) && !confirmingMerge && !blockedWords && (
-            <Button
-              size="sm"
-              className={isArchiveEdge ? 'ib-btn-critical' : undefined}
-              disabled={locked || archiveTargetMissing}
-              onClick={() =>
-                p.kind === 'block_merge' || mergesKnowledge
-                  ? setConfirmingMerge(true)
-                  : void decide('accept', acceptedLabel)
-              }
-            >
-              {isArchiveEdge ? (
-                <Archive size={14} aria-hidden="true" />
-              ) : (
-                <Check size={14} aria-hidden="true" />
-              )}
-              {acceptButtonLabel}
-            </Button>
-          )}
-          {isEdge && !isArchiveEdge && (
-            <>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={locked}
-                onClick={() => void decide('reverse', '已改方向')}
-              >
-                <ArrowLeftRight size={14} aria-hidden="true" />
-                改方向
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={locked}
-                aria-expanded={pickingRel}
-                onClick={() => setPickingRel((v) => !v)}
-              >
-                <RefreshCw size={14} aria-hidden="true" />
-                改关系
-              </Button>
-            </>
-          )}
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={locked}
-            onClick={() => void decide('dismiss', isArchiveEdge ? '已保留' : '已忽略')}
-          >
-            <X size={14} aria-hidden="true" />
-            {isArchiveEdge ? '保留关系' : '忽略'}
-          </Button>
-        </div>
-        <div className="ib-prop-meta">
-          {confidence !== null && (
-            <span className="ib-conf">
-              <span>置信</span>
-              <span className="ib-conf-track" aria-hidden="true">
-                <span style={{ width: `${Math.round(confidence * 100)}%` }} />
+          <div className="ib-prop-meta">
+            {confidence !== null && (
+              <span className="ib-conf">
+                <span>置信</span>
+                <span className="ib-conf-track" aria-hidden="true">
+                  <span style={{ width: `${Math.round(confidence * 100)}%` }} />
+                </span>
+                <span className="un-num">{Math.round(confidence * 100)}%</span>
               </span>
-              <span className="un-num">{Math.round(confidence * 100)}%</span>
-            </span>
-          )}
-          {p.cost_micro_usd != null && (
-            <span className="un-num">${(p.cost_micro_usd / 1e6).toFixed(4)}</span>
-          )}
+            )}
+            {p.cost_micro_usd != null && (
+              <span className="un-num">${(p.cost_micro_usd / 1e6).toFixed(4)}</span>
+            )}
+          </div>
         </div>
-      </div>
 
-      {pickingRel && !resolved && !isArchiveEdge && (
-        <fieldset className="ib-rel-pick">
-          <legend className="ib-rel-legend">改为关系类型</legend>
-          {Object.entries(REL_LABEL).map(([k, label]) => (
-            <ChipButton
-              key={k}
-              tone={rel === k ? 'accent' : 'neutral'}
-              aria-current={rel === k ? 'true' : undefined}
-              disabled={locked}
-              onClick={() => void decide('change_type', '已改关系', { newRelationType: k })}
-            >
-              {label.split(' ')[0]}
-            </ChipButton>
-          ))}
-        </fieldset>
-      )}
-    </Card>
+        {pickingRel && !leaving && !isArchiveEdge && !isRetiredEdge && (
+          <fieldset className="ib-rel-pick">
+            <legend className="ib-rel-legend">改为关系类型</legend>
+            {Object.entries(REL_LABEL).map(([k, label]) => (
+              <ChipButton
+                key={k}
+                tone={rel === k ? 'accent' : 'neutral'}
+                aria-current={rel === k ? 'true' : undefined}
+                disabled={locked}
+                onClick={() => void decide('change_type', '已改关系', { newRelationType: k })}
+              >
+                {label.split(' ')[0]}
+              </ChipButton>
+            ))}
+          </fieldset>
+        )}
+      </Card>
+    </div>
   );
 }

@@ -142,27 +142,6 @@ export async function enqueueNoteRefineTrigger(input: {
   }
 }
 
-export const enqueueMarkWrongNoteRefine = (input: {
-  db?: Db;
-  artifactId: string;
-  blockId?: string;
-  reasonMd?: string;
-  triggerEventId?: string;
-  bossSend?: NoteRefineBossSend;
-}) =>
-  enqueueNoteRefineTrigger({
-    ...input,
-    kind: 'mark_wrong',
-    contextMd: [
-      'User marked an artifact block as wrong.',
-      input.blockId ? `block_id=${input.blockId}` : null,
-      input.reasonMd ? `reason=${input.reasonMd}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n'),
-    evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
-  });
-
 // Fires on a successful attempt during the instrumentation window; gating on a
 // p(L) cross-threshold is deferred until telemetry chooses that threshold. Do not
 // hardcode one here or change the condition.
@@ -179,18 +158,5 @@ export const enqueueMasteryNoteRefine = (input: {
     contextMd: input.questionId
       ? `Mastery signal raised for question ${input.questionId} (attempt succeeded).`
       : 'Mastery signal raised (attempt succeeded).',
-    evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
-  });
-
-export const enqueueDreamingNoteRefine = (input: {
-  db?: Db;
-  artifactId: string;
-  triggerEventId?: string;
-  bossSend?: NoteRefineBossSend;
-}) =>
-  enqueueNoteRefineTrigger({
-    ...input,
-    kind: 'dreaming',
-    contextMd: 'Dreaming scan found this artifact as a Living Note refresh candidate.',
     evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
   });

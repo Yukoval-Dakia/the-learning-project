@@ -87,17 +87,32 @@ export function parsePublicProse(value: unknown): PublicProse | undefined {
   };
 }
 
-/** Snapshot replaces its covered prefix; only later unique, same-run deltas remain. */
+/** Text the run withdrew: a retried request takes back what its broken attempt had written. */
+export interface ProseDiscard {
+  discard: number;
+}
+
+/**
+ * Snapshot replaces its covered prefix; only later unique, same-run deltas remain, applied in
+ * event order. A discard trims what came before it; a snapshot past it already left that out.
+ */
 export function mergePublicProse(
   snapshot: PublicProse,
-  deltas: ReadonlyMap<number, string>,
+  deltas: ReadonlyMap<number, string | ProseDiscard>,
 ): PublicProse {
   const suffix = [...deltas]
     .filter(([id]) => id > snapshot.last_event_id)
     .sort(([a], [b]) => a - b);
+  let text = snapshot.text;
+  for (const [, edit] of suffix) {
+    text =
+      typeof edit === 'string'
+        ? text + edit
+        : text.slice(0, Math.max(0, text.length - edit.discard));
+  }
   return {
     ...snapshot,
-    text: snapshot.text + suffix.map(([, text]) => text).join(''),
+    text,
     last_event_id: suffix.at(-1)?.[0] ?? snapshot.last_event_id,
   };
 }

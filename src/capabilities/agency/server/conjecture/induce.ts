@@ -32,9 +32,12 @@ import {
   type ConjectureProbeQualityAttemptT,
   type ConjectureProposalDraftT,
 } from '@/core/schema/business';
+import type { AgentNoteInput } from '@/kernel/read-models/agent-note-hints';
 import { type TaskTextRunFn, sumAllKnownCostUsd } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 import { ConjectureGroupingOutputSchema } from '../../tasks/conjecture-induction';
+import type { ReopenedAbstention } from './abstention';
+import type { ContrastCorrectSample } from './contrast-correct';
 import type { EnrichedEvidenceCell, LoadedConjectureEvidenceImage } from './evidence';
 import {
   ConjectureProbeQualityOperationalError,
@@ -62,6 +65,15 @@ export interface InduceConjectureInput {
   runTaskFn: TaskTextRunFn;
   /** Prior conjecture claim being updated, if any (owner-correction anchor feed). */
   priorClaimMd?: string;
+  /**
+   * Last semantic abstention for this call's cell, present only when tonight's
+   * failure ids include some the abstention had not seen. One cell per call.
+   */
+  priorAbstention?: ReopenedAbstention;
+  /** Correct answers on the same knowledge point. One cell per call. */
+  contrastCorrectSamples?: readonly ContrastCorrectSample[];
+  /** Notes addressed to the research meeting. Hints, attached to this call. */
+  agentNotes?: readonly AgentNoteInput[];
   /**
    * Subject context for the prompt render, resolved by the job from the cell's KC
    * domain. Omitted ⇒ neutral `general` profile: an untagged KC must not inherit a
@@ -395,7 +407,9 @@ async function deduplicateHypotheses(
 export async function induceConjecture(
   input: InduceConjectureInput,
 ): Promise<InduceConjectureResult> {
-  const { cells, samples, runTaskFn, priorClaimMd, subjectProfile } = input;
+  const { cells, samples, runTaskFn, priorClaimMd, priorAbstention, subjectProfile } = input;
+  const contrastCorrectSamples = input.contrastCorrectSamples ?? [];
+  const agentNotes = input.agentNotes ?? [];
   const evidenceImages = input.evidenceImages ?? [];
   if (samples < 1) throw new Error('induceConjecture: samples must be >= 1');
   if (cells.length === 0) throw new Error('induceConjecture: cells must be non-empty');
@@ -418,6 +432,7 @@ export async function induceConjecture(
       // they thought, and the attribution. Free text arrives already truncated and
       // `<untrusted_learner_text>`-delimited — DATA for analysis, never instruction.
       evidence_samples: c.samples,
+      contrast_correct_samples: contrastCorrectSamples,
     })),
     image_manifest: evidenceImages.map((image, index) => ({
       image_index: index + 1,
@@ -425,6 +440,17 @@ export async function induceConjecture(
       occurrences: image.occurrences,
     })),
     ...(priorClaimMd ? { prior_claim_md: priorClaimMd } : {}),
+    ...(priorAbstention
+      ? {
+          prior_abstention: {
+            reason_code: priorAbstention.reason_code,
+            explanation_md: priorAbstention.explanation_md,
+            seen_failure_attempt_ids: priorAbstention.seen_failure_attempt_ids,
+            new_failure_attempt_ids: priorAbstention.new_failure_attempt_ids,
+          },
+        }
+      : {}),
+    agent_notes: agentNotes,
   };
   const taskInput = {
     text: JSON.stringify(taskPayload),

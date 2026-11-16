@@ -54,8 +54,8 @@ export async function resolveLeaningPreferenceKcs(
  * rotation-classifiable label or undefined. Same fail-closed idiom as
  * stream-store.ts:resolveRotatableKind / the softmax side — kind only affects family-key
  * + recall routing in the signal layer, so an unrecognized label degrades to undefined,
- * never throws. : the boundary moved from enum membership to
- * rotationClassForKind classifiability — same KNOWN-label table, same behaviour. */
+ * never throws. Unrecognized labels fail closed on rotationClassForKind
+ * classifiability — same KNOWN-label table, same behaviour. */
 function toEnumKind(kind: string | null | undefined): CandidateInput['kind'] {
   return kind != null && rotationClassForKind(kind) !== undefined ? kind : undefined;
 }

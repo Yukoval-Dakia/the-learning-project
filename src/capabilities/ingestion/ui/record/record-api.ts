@@ -100,7 +100,8 @@ export interface Block {
     state: 'in_library' | 'not_enrolled' | 'ignored';
     /** pending is still on its way in; only publish_failed is a failure. */
     reason: 'needs_text' | 'pending' | 'publish_failed' | 'reverted' | null;
-    knowledge: 'attributed' | 'missing' | null;
+    /** restricted: the material is only for answering, so no knowledge point is attached on purpose. */
+    knowledge: 'attributed' | 'missing' | 'restricted' | null;
     library_visible: boolean | null;
   };
 }

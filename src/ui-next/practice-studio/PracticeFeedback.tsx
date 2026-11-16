@@ -1,5 +1,5 @@
 import { Check, CircleHelp, RotateCcw, Sparkles, X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useCallback, useRef } from 'react';
 import type { PracticeIntents, PracticeRenderers, Revelation } from './contracts';
 import { IntentButton, NoticeBlock } from './controls';
 import { PracticeField } from './PracticeFields';
@@ -24,6 +24,22 @@ export function PracticeFeedback({
   /** The way forward closes the card, as it closes the question card before an answer. */
   actions?: ReactNode;
 }) {
+  const verdict = r.kind === 'concealed' ? undefined : r.result?.verdict;
+  const previousVerdict = useRef(verdict);
+  const focusVerdictOnAttach = useRef(false);
+  // Only a live concealed-to-revealed transition may take focus; restored results keep DOM order.
+  if (previousVerdict.current !== verdict) {
+    focusVerdictOnAttach.current = previousVerdict.current === undefined && verdict !== undefined;
+    previousVerdict.current = verdict;
+  }
+  const verdictHeadingRef = useCallback((heading: HTMLHeadingElement | null) => {
+    if (!heading || !focusVerdictOnAttach.current) return;
+    focusVerdictOnAttach.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body || active.classList.contains('un-st-skip')) {
+      heading.focus({ preventScroll: true });
+    }
+  }, []);
   if (r.kind === 'concealed')
     return r.reason ? <p className="un-st-secondary">{r.reason}</p> : null;
   const result = r.result;
@@ -38,7 +54,9 @@ export function PracticeFeedback({
               <VerdictIcon size={22} aria-hidden="true" />
             </span>
             <div>
-              <h2>{verdicts[result.verdict]}</h2>
+              <h2 ref={verdictHeadingRef} tabIndex={-1}>
+                {verdicts[result.verdict]}
+              </h2>
               {result.summary && <p>{result.summary}</p>}
               {result.aiGraded && (
                 <p className="un-st-ai-graded">
@@ -49,6 +67,16 @@ export function PracticeFeedback({
             </div>
           </header>
           {result.uncertainty && <p role="status">{result.uncertainty}</p>}
+          {result.facts && result.facts.length > 0 && (
+            <dl className="un-st-facts">
+              {result.facts.map((fact) => (
+                <div key={fact.label}>
+                  <dt>{fact.label}</dt>
+                  <dd>{fact.value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
         </>
       )}
       {result && (

@@ -1,3 +1,13 @@
+/** The watchdog's own failure — identity, not message text, marks an idle stream. */
+export class ProviderStreamIdleError extends Error {
+  constructor(idleMs: number) {
+    super(
+      `provider_stream_idle: no SSE data bytes for ${idleMs}ms; request outcome/charge may be unknown`,
+    );
+    this.name = 'ProviderStreamIdleError';
+  }
+}
+
 /** SSE comments do not prove generation progress. Observe bytes without
  * buffering events: a long data line must keep a legitimate slow stream alive. */
 export function watchProviderStream(
@@ -24,9 +34,7 @@ export function watchProviderStream(
         timer = setTimeout(() => {
           if (ended) return;
           ended = true;
-          const error = new Error(
-            `provider_stream_idle: no SSE data bytes for ${idleMs}ms; request outcome/charge may be unknown; automatic resend forbidden`,
-          );
+          const error = new ProviderStreamIdleError(idleMs);
           fail(error);
           controller.error(error);
           void reader.cancel(error).catch(() => {});

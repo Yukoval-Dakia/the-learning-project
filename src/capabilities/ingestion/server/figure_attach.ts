@@ -1,4 +1,9 @@
-import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
+import {
+  type BBoxT,
+  type FigureRefT,
+  type StructuredQuestionT,
+  figureForModel,
+} from '@/core/schema/structured_question';
 import type { source_asset } from '@/db/schema';
 import type { PreAttachFigure } from './crop';
 import type { FigureAssignment, StructureResult } from './structure';
@@ -13,47 +18,41 @@ type PublicFigureEvidence = {
   assets: readonly Pick<typeof source_asset.$inferSelect, 'id' | 'storage_key' | 'sha256'>[];
 };
 
-/** Source ownership is retained on blocks; publication also needs verified crop metadata. */
+/**
+ * The one exit deciding which figures a question publishes: every attributable crop of
+ * the learner's captured page, each stamped by figureForModel. Learner display, blind solve, adjudication, grading,
+ * the companion and conjecture evidence all read the figures this returns; handwriting
+ * never withholds a figure because some questions cannot be solved without it.
+ */
 export function figuresForQuestion(
   question: StructuredQuestionT | null,
   figures: readonly FigureRefT[],
   publicEvidence?: PublicFigureEvidence,
 ): FigureRefT[] {
   if (!question) return [];
-  const nodes = flattenQuestions([question]);
-  if (nodes.some(hasStudentWork)) return [];
-  if (
-    publicEvidence &&
-    nodes.some(
-      (node) =>
-        node.student_answer_present !== false &&
-        !(node.source === 'tencent_ocr' && node.extraction_evidence?.handwriting?.length === 0),
-    )
-  )
-    return [];
-  const questionIds = new Set(nodes.map((node) => node.id));
+  const questionIds = new Set(flattenQuestions([question]).map((node) => node.id));
   const assets = new Map(publicEvidence?.assets.map((asset) => [asset.id, asset]));
-  return figures.filter((figure) => {
-    if (
-      bboxArea(figure.source_bbox) >= 1 ||
-      figure.attach_confidence === 'low' ||
-      !questionIds.has(figure.attached_to_index)
-    )
-      return false;
-    if (!publicEvidence) return true;
-    // A clean question does not establish visibility of an entire source page.
-    if (bboxArea(figure.source_bbox) >= 1) return false;
-    const pageAssetId = publicEvidence.sourceAssetIds[figure.source_page_index];
-    const cropPrefix = `${pageAssetId}-fig-`;
-    const asset = assets.get(figure.asset_id);
-    return (
-      pageAssetId !== undefined &&
-      figure.asset_id.startsWith(cropPrefix) &&
-      /^\d+$/.test(figure.asset_id.slice(cropPrefix.length)) &&
-      asset?.storage_key === `figures/${figure.asset_id}.png` &&
-      /^[a-f0-9]{64}$/i.test(asset.sha256)
-    );
-  });
+  return figures
+    .filter((figure) => {
+      if (
+        bboxArea(figure.source_bbox) >= 1 ||
+        figure.attach_confidence === 'low' ||
+        !questionIds.has(figure.attached_to_index)
+      )
+        return false;
+      if (!publicEvidence) return true;
+      const pageAssetId = publicEvidence.sourceAssetIds[figure.source_page_index];
+      const cropPrefix = `${pageAssetId}-fig-`;
+      const asset = assets.get(figure.asset_id);
+      return (
+        pageAssetId !== undefined &&
+        figure.asset_id.startsWith(cropPrefix) &&
+        /^\d+$/.test(figure.asset_id.slice(cropPrefix.length)) &&
+        asset?.storage_key === `figures/${figure.asset_id}.png` &&
+        /^[a-f0-9]{64}$/i.test(asset.sha256)
+      );
+    })
+    .map((figure) => figureForModel(figure, 'learner_capture'));
 }
 
 /** OCR fallback: only unique, innermost containment on the actual source page. */
@@ -64,7 +63,7 @@ export function assignFigures(
   const nodes = flattenQuestions(questions);
   return figures.flatMap((figure): FigureRefT[] => {
     const handwriting = cropHandwriting(figure, -1, { ocrQuestions: questions });
-    if (bboxArea(figure.source_bbox) >= 1 || handwriting === true) return [];
+    if (bboxArea(figure.source_bbox) >= 1) return [];
     const containing = nodes.flatMap((node) =>
       node.page_index === figure.source_page_index &&
       node.source !== 'glm_ocr' &&
@@ -78,18 +77,14 @@ export function assignFigures(
       containing.every((other) => bboxContains(other.bbox, candidate.bbox)),
     );
     const target = innermost.length === 1 ? innermost[0].node : undefined;
-    if (
-      !target ||
-      hasStudentWork(target) ||
-      nodes.filter((node) => node.id === target.id).length !== 1
-    )
-      return [];
+    if (!target || nodes.filter((node) => node.id === target.id).length !== 1) return [];
     return [
       {
         ...figure,
         attached_to_index: target.id,
         attach_confidence: 'high',
         handwriting_unverified: handwriting === null,
+        contains_learner_handwriting: handwriting ?? 'unknown',
       },
     ];
   });
@@ -105,7 +100,7 @@ export function assignFiguresFromVlm(
   const nodes = flattenQuestions(questions);
   return preFigures.flatMap((figure, index): FigureRefT[] => {
     const handwriting = cropHandwriting(figure, index, handwritingEvidence);
-    if (bboxArea(figure.source_bbox) >= 1 || handwriting === true) return [];
+    if (bboxArea(figure.source_bbox) >= 1) return [];
     const claims = (figureAssignments ?? []).filter((claim) => claim.figure_index === index);
     const targets = new Set(
       claims.map((claim) =>
@@ -116,7 +111,7 @@ export function assignFiguresFromVlm(
     if (!claim || targets.size !== 1 || claims.some((item) => item.confidence !== 'high'))
       return [];
     const matchingNodes = nodes.filter((node) => node.id === claim.attached_to_question_id);
-    if (matchingNodes.length !== 1 || hasStudentWork(matchingNodes[0])) return [];
+    if (matchingNodes.length !== 1) return [];
     // FigureRef.option_label requires a non-empty value. An empty option label
     // cannot be represented, so leave the crop withheld instead of writing a row
     // the block read schema rejects.
@@ -131,6 +126,7 @@ export function assignFiguresFromVlm(
         ...figure,
         option_label: claim.option_label,
         handwriting_unverified: handwriting === null,
+        contains_learner_handwriting: handwriting ?? 'unknown',
         attached_to_index: claim.attached_to_question_id,
         attach_confidence: 'high',
       },
@@ -145,14 +141,7 @@ function flattenQuestions(questions: StructuredQuestionT[]): StructuredQuestionT
   ]);
 }
 
-function hasStudentWork(question: StructuredQuestionT): boolean {
-  return (
-    question.student_answer_present === true ||
-    (question.extraction_evidence?.handwriting?.length ?? 0) > 0
-  );
-}
-
-/** Positive OCR overlap wins; omitted or contradictory crop judgments remain unverified. */
+/** Positive OCR overlap wins; omitted or contradictory crop judgments stay unknown. */
 function cropHandwriting(
   figure: PreAttachFigure,
   index: number,
@@ -163,6 +152,7 @@ function cropHandwriting(
     if (
       node.extraction_evidence?.handwriting?.some(
         ({ bbox }) =>
+          bbox !== undefined &&
           bboxArea(bbox) > 0 &&
           bbox.x < figure.source_bbox.x + figure.source_bbox.width &&
           bbox.x + bbox.width > figure.source_bbox.x &&

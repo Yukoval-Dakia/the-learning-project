@@ -50,6 +50,10 @@ import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import type { QuizGenJobData, QuizGenTrigger } from '@/kernel/quiz-gen-contract';
 import {
+  type LearnerCurriculum,
+  readLearnerCurriculum,
+} from '@/kernel/read-models/learner-curriculum';
+import {
   type PlacementVerificationAuthority,
   SupplyTraceV1,
   type SupplyTraceV1T,
@@ -74,8 +78,8 @@ import {
 import { type FewShotExample, renderFewShotBlock } from '../server/quiz/fewshot-retrieve';
 import { embedMaterialInPrompt } from '../server/quiz/quiz-gen-material';
 import { QuizGenOutputFailure, parseOutput } from '../server/quiz/quiz-gen-output';
-import type { DifficultyBand } from '../supply/public';
 import {
+  type DifficultyBand,
   PLACEMENT_ATTEMPT_HEARTBEAT_MS,
   PLACEMENT_QUEUE_EXPIRY_MS,
   PLACEMENT_STARTER_REQUIRED_COUNT,
@@ -96,6 +100,7 @@ import {
   releaseAuthorizedPaidCall,
   renewPlacementAttempt,
   reservePlacementGenerationCall,
+  resolveBandLevelTarget,
   startPlacementAttemptHeartbeat,
   terminalizePlacementUnknownCost,
 } from '../supply/public';
@@ -231,6 +236,8 @@ export interface RunQuizGenParams {
   // requested_difficulty_band in plan/generate inputs (planner difficulty is a hint,
   // not a checked pin — bands are approximate producer semantics).
   difficultyBand?: DifficultyBand;
+  /** Inclusive 1–5 span for `difficultyBand`. null = no ordinal sits in the band. */
+  difficultyLevels?: { min: number; max: number } | null;
   // YUK-1011 — the supply target's 篇 pin (dispatcher forwards
   // constraints.compositeParentOnly as job data composite_parent_only). When set,
   // every plan item must carry composite:true and every generated question must
@@ -491,6 +498,7 @@ async function planQuizGeneration(
   params: RunQuizGenParams,
   context: QuizGenerationContext,
   evidence: QuizGenerationEvidence,
+  curriculum: LearnerCurriculum,
 ): Promise<QuizGenPlanT> {
   const { db, trigger, resolved, count, run, planPiToolMounts, planAllowedTools, subjectProfile } =
     context;
@@ -520,11 +528,15 @@ async function planQuizGeneration(
       },
       knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
       count,
+      curriculum,
       ...(params.generationMethod ? { requested_generation_method: params.generationMethod } : {}),
       ...(params.kind ? { requested_kind: params.kind } : {}),
       ...(params.objectiveOnly ? { objective_only: true } : {}),
       ...(params.kindRequired ? { kind_required: true } : {}),
       ...(params.difficultyBand ? { requested_difficulty_band: params.difficultyBand } : {}),
+      ...(params.difficultyLevels !== undefined
+        ? { requested_difficulty_levels: params.difficultyLevels }
+        : {}),
       // YUK-1011 — the 篇 pin reaches the planner so EVERY item comes back
       // composite:true (gate-checked below; a violating plan regenerates).
       ...(params.compositeParentOnly ? { composite_parent_only: true } : {}),
@@ -590,6 +602,7 @@ async function generateQuizDrafts(
   context: QuizGenerationContext,
   plan: QuizGenPlanT,
   evidence: QuizGenerationEvidence,
+  curriculum: LearnerCurriculum,
 ) {
   const {
     db,
@@ -612,6 +625,7 @@ async function generateQuizDrafts(
     },
     knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
     count,
+    curriculum,
     // ADR-0038 决定#2 — the ACCEPTED plan rides into the generation call as
     // structured input: one question per plan item, in order, honouring each
     // item's kind / knowledge_id / objective answer_anchor.
@@ -630,6 +644,9 @@ async function generateQuizDrafts(
     // YUK-287 — the supply target's difficulty band rides alongside so the agent
     // aims plan-item / question difficulty at it (soft hint; not a checked pin).
     ...(params.difficultyBand ? { requested_difficulty_band: params.difficultyBand } : {}),
+    ...(params.difficultyLevels !== undefined
+      ? { requested_difficulty_levels: params.difficultyLevels }
+      : {}),
     // YUK-1011 — the 篇 pin: every emitted question must carry a structured
     // stem + ≥2 sub_questions (prompt contract in quiz-generation.ts).
     ...(params.compositeParentOnly ? { composite_parent_only: true } : {}),
@@ -1049,9 +1066,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     failureStage: 'plan',
   };
   try {
-    const plan = await planQuizGeneration(params, context, evidence);
+    const curriculum = await readLearnerCurriculum(params.db);
+    const plan = await planQuizGeneration(params, context, evidence, curriculum);
     evidence.failureStage = 'producer';
-    const generated = await generateQuizDrafts(params, context, plan, evidence);
+    const generated = await generateQuizDrafts(params, context, plan, evidence, curriculum);
     const persisted = await persistQuizDrafts(params, context, generated, evidence);
     await emitQuizGenerationEvent(params, context, plan, generated, persisted, evidence);
     await dispatchQuizVerification(context, persisted, evidence);
@@ -1147,6 +1165,11 @@ export function buildQuizGenHandler(
           ...(data.objective_only ? { objectiveOnly: true } : {}),
           ...(data.kind_required ? { kindRequired: true } : {}),
           ...(data.difficulty_band ? { difficultyBand: data.difficulty_band } : {}),
+          ...(data.difficulty_levels !== undefined
+            ? { difficultyLevels: data.difficulty_levels }
+            : data.difficulty_band
+              ? { difficultyLevels: resolveBandLevelTarget(data.difficulty_band, 0).levels }
+              : {}),
           // YUK-1011 — consume the 篇 pin the dispatcher has forwarded since
           // YUK-287 (was phase-deferred: forwarded but never read).
           ...(data.composite_parent_only ? { compositeParentOnly: true } : {}),

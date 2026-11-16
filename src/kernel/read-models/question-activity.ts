@@ -1,17 +1,19 @@
 // Domain event read models for review history and question timelines. Generic
 // envelope storage lives in @/kernel/events.
 
-import { and, desc, eq, gte, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne } from 'drizzle-orm';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { event, question } from '@/db/schema';
 import { filterActiveRows, takeActiveRows } from '@/kernel/events';
+import { loadNativeReviewOccurrences } from '@/kernel/read-models/assessment-review-occurrences';
 import {
   nativeAttemptOutcome,
   resolveVerdictsForAttempts,
   resolveVerdictsForNativeAttempts,
 } from '@/kernel/read-models/assessment-verdict';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
+import { recordedDurationMs } from '@/kernel/read-models/review-timing';
 
 type DbLike = Db | Tx;
 // ============================================================================
@@ -22,10 +24,11 @@ export type ReviewEvent = {
   review_event_id: string;
   question_id: string;
   fsrs_rating: 'again' | 'hard' | 'good';
-  fsrs_state_after: FsrsStateSchemaT;
+  /** Absent on a native settlement receipt; the rating and outcome are the review. */
+  fsrs_state_after: FsrsStateSchemaT | null;
   user_response_md: string | null;
   referenced_knowledge_ids: string[];
-  outcome: 'success' | 'failure';
+  outcome: 'success' | 'failure' | 'partial';
   created_at: Date;
 };
 
@@ -38,9 +41,8 @@ export interface GetRecentReviewEventsOpts {
 const DEFAULT_REVIEW_EVENTS_LIMIT = 100;
 
 /**
- * Returns review events ordered desc by created_at. Filters by questionIds /
- * since when provided. action='review' AND subject_kind='question' only — review
- * action on other materials may come in future phases.
+ * Settled native reviews, newest first. One row per question on the occurrence.
+ * Filters by questionIds / since when provided.
  */
 export async function getRecentReviewEvents(
   db: DbLike,
@@ -48,49 +50,41 @@ export async function getRecentReviewEvents(
 ): Promise<ReviewEvent[]> {
   const limit = opts.limit ?? DEFAULT_REVIEW_EVENTS_LIMIT;
   if (limit <= 0) return [];
-  const conditions = [eq(event.action, 'review'), eq(event.subject_kind, 'question')];
-  if (opts.questionIds && opts.questionIds.length > 0) {
-    conditions.push(inArray(event.subject_id, opts.questionIds));
+  const questionFilter =
+    opts.questionIds && opts.questionIds.length > 0 ? new Set(opts.questionIds) : null;
+  const occurrences = await loadNativeReviewOccurrences(db);
+  const events: ReviewEvent[] = [];
+  for (const occurrence of occurrences) {
+    if (opts.since && occurrence.occurredAt < opts.since) continue;
+    if (
+      occurrence.outcome !== 'success' &&
+      occurrence.outcome !== 'failure' &&
+      occurrence.outcome !== 'partial'
+    )
+      continue;
+    const seen = new Set<string>();
+    for (const questionId of occurrence.questionIds) {
+      if (seen.has(questionId) || (questionFilter && !questionFilter.has(questionId))) continue;
+      seen.add(questionId);
+      events.push({
+        review_event_id: occurrence.settlementId,
+        question_id: questionId,
+        fsrs_rating: occurrence.rating,
+        fsrs_state_after: null,
+        user_response_md: null,
+        referenced_knowledge_ids: [],
+        outcome: occurrence.outcome,
+        created_at: occurrence.occurredAt,
+      });
+    }
   }
-  if (opts.since) {
-    conditions.push(gte(event.created_at, opts.since));
-  }
-  const rows = await db
-    .select()
-    .from(event)
-    .where(and(...conditions))
-    .orderBy(desc(event.created_at))
-    .limit(limit * 3);
-
-  const activeRows = await takeActiveRows(db, rows, limit, async (nextLimit, offset) =>
-    db
-      .select()
-      .from(event)
-      .where(and(...conditions))
-      .orderBy(desc(event.created_at))
-      .limit(nextLimit)
-      .offset(offset),
+  events.sort(
+    (a, b) =>
+      b.created_at.getTime() - a.created_at.getTime() ||
+      b.review_event_id.localeCompare(a.review_event_id) ||
+      a.question_id.localeCompare(b.question_id),
   );
-
-  return activeRows.map((r) => {
-    const payload = r.payload as {
-      fsrs_rating: 'again' | 'hard' | 'good';
-      fsrs_state_after: FsrsStateSchemaT;
-      user_response_md: string | null;
-      referenced_knowledge_ids: string[];
-    };
-    return {
-      review_event_id: r.id,
-      question_id: r.subject_id,
-      fsrs_rating: payload.fsrs_rating,
-      fsrs_state_after: payload.fsrs_state_after,
-      user_response_md: payload.user_response_md ?? null,
-      referenced_knowledge_ids: payload.referenced_knowledge_ids ?? [],
-      // review outcome invariant: again→failure, hard/good→success
-      outcome: (r.outcome as 'success' | 'failure') ?? 'success',
-      created_at: r.created_at,
-    };
-  });
+  return events.slice(0, limit);
 }
 
 // ============================================================================
@@ -98,6 +92,8 @@ export async function getRecentReviewEvents(
 //
 // Chained judge cause is hydrated onto attempt entries. Inactive (retracted or
 // superseded) rows are filtered out. Limit defaults to 10, capped at 50.
+// `actions` keeps one kind from filling the window of another: the latest
+// score is an attempt read, and later reviews must not evict it.
 // ============================================================================
 
 export type QuestionTimelineEntry =
@@ -145,17 +141,22 @@ export type QuestionTimelineEntry =
 const DEFAULT_QUESTION_TIMELINE_LIMIT = 10;
 const MAX_QUESTION_TIMELINE_LIMIT = 50;
 
+const QUESTION_TIMELINE_ACTIONS = ['attempt', 'review', 'experimental:assessment_attempt'] as const;
+type QuestionTimelineAction = (typeof QUESTION_TIMELINE_ACTIONS)[number];
+
 export async function getQuestionTimeline(
   db: DbLike,
   questionId: string,
   limit: number = DEFAULT_QUESTION_TIMELINE_LIMIT,
+  actions: readonly QuestionTimelineAction[] = QUESTION_TIMELINE_ACTIONS,
 ): Promise<QuestionTimelineEntry[]> {
+  if (actions.length === 0) return [];
   const effectiveLimit = Math.min(Math.max(limit, 1), MAX_QUESTION_TIMELINE_LIMIT);
 
   const conditions = [
     eq(event.subject_kind, 'question'),
     eq(event.subject_id, questionId),
-    inArray(event.action, ['attempt', 'review', 'experimental:assessment_attempt']),
+    inArray(event.action, [...actions]),
   ];
 
   const firstRows = await db
@@ -302,37 +303,190 @@ export async function getQuestionTimeline(
 // chip flap back to proactive. Scans every attempt and drops inactive rows.
 // ============================================================================
 
-export async function getQuestionAttemptOutcomeCounts(
-  db: DbLike,
-  questionId: string,
-): Promise<{ success: number; partial: number; failure: number }> {
+const ATTEMPT_FACT_ACTIONS = ['attempt', 'experimental:assessment_attempt'] as const;
+const HINT_TRAJECTORY_LIMIT = 20;
+
+export type JudgedAttemptCounts = { success: number; partial: number; failure: number };
+
+export type AttemptFact = {
+  question_id: string;
+  event_id: string;
+  dispatch_seq: number;
+  created_at: Date;
+  outcome: 'success' | 'failure' | 'partial' | 'pending' | 'unsupported' | string;
+  duration_ms: number | null;
+  /** Null when the attempt did not record a usable hints_used. Absence is not zero. */
+  hints_used: number | null;
+  final_hint_level: number | null;
+};
+
+export type HintDependence = {
+  points: Array<{
+    event_id: string;
+    at: string;
+    outcome: string;
+    hints_used: number;
+    final_hint_level: number | null;
+  }>;
+  recorded_attempts: number;
+  omitted_attempts: number;
+  truncated: boolean;
+};
+
+export type PersonalHitRate = {
+  rate: number;
+  hits: number;
+  judged_attempts: number;
+};
+
+function nonnegativeInt(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function recordedHints(
+  payload: unknown,
+): { hints_used: number; final_hint_level: number | null } | null {
+  if (!payload || typeof payload !== 'object' || !Object.hasOwn(payload, 'hints_used')) return null;
+  const record = payload as Record<string, unknown>;
+  const hintsUsed = nonnegativeInt(record.hints_used);
+  if (hintsUsed === null) return null;
+  const level = Object.hasOwn(record, 'final_hint_level')
+    ? nonnegativeInt(record.final_hint_level)
+    : null;
+  return { hints_used: hintsUsed, final_hint_level: level };
+}
+
+function olderFirst(a: AttemptFact, b: AttemptFact): number {
+  const at = a.created_at.getTime() - b.created_at.getTime();
+  if (at !== 0) return at;
+  if (a.dispatch_seq !== b.dispatch_seq) return a.dispatch_seq - b.dispatch_seq;
+  if (a.event_id < b.event_id) return -1;
+  if (a.event_id > b.event_id) return 1;
+  return 0;
+}
+
+export function judgedAttemptCounts(rows: readonly AttemptFact[]): JudgedAttemptCounts {
   const counts = { success: 0, partial: 0, failure: 0 };
+  for (const row of rows) {
+    if (row.outcome === 'success') counts.success += 1;
+    else if (row.outcome === 'partial') counts.partial += 1;
+    else if (row.outcome === 'failure') counts.failure += 1;
+  }
+  return counts;
+}
+
+/** Successes over judged attempts. Partial is judged and is not a hit. No judged attempt is no rate. */
+export function personalHitRate(counts: JudgedAttemptCounts): PersonalHitRate | null {
+  const judged = counts.success + counts.partial + counts.failure;
+  if (judged === 0) return null;
+  return { rate: counts.success / judged, hits: counts.success, judged_attempts: judged };
+}
+
+export function medianOf(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const upper = sorted[mid];
+  if (upper === undefined) return null;
+  if (sorted.length % 2 === 1) return upper;
+  const lower = sorted[mid - 1];
+  if (lower === undefined) return null;
+  return (lower + upper) / 2;
+}
+
+export function recordedDurations(rows: readonly AttemptFact[]): number[] {
+  return rows.flatMap((row) => (row.duration_ms === null ? [] : [row.duration_ms]));
+}
+
+/** Chronological hints_used points. Attempts with no usable hints_used stay in omitted_attempts. */
+export function hintDependenceOf(rows: readonly AttemptFact[]): HintDependence | null {
+  if (rows.length === 0) return null;
+  const recorded = rows.flatMap((row) =>
+    row.hints_used === null ? [] : [{ ...row, hints_used: row.hints_used }],
+  );
+  const ordered = [...recorded].sort(olderFirst);
+  const truncated = ordered.length > HINT_TRAJECTORY_LIMIT;
+  const window = truncated ? ordered.slice(-HINT_TRAJECTORY_LIMIT) : ordered;
+  return {
+    points: window.map((row) => ({
+      event_id: row.event_id,
+      at: row.created_at.toISOString(),
+      outcome: row.outcome,
+      hints_used: row.hints_used,
+      final_hint_level: row.final_hint_level,
+    })),
+    recorded_attempts: recorded.length,
+    omitted_attempts: rows.length - recorded.length,
+    truncated,
+  };
+}
+
+export async function readAttemptFacts(
+  db: DbLike,
+  questionIds: readonly string[],
+): Promise<Map<string, AttemptFact[]>> {
+  const ids = [...new Set(questionIds.filter((id) => id.length > 0))];
+  const byQuestion = new Map<string, AttemptFact[]>();
+  if (ids.length === 0) return byQuestion;
   const attemptRows = await db
     .select()
     .from(event)
     .where(
       and(
         eq(event.subject_kind, 'question'),
-        eq(event.subject_id, questionId),
-        inArray(event.action, ['attempt', 'experimental:assessment_attempt']),
+        inArray(event.subject_id, ids),
+        inArray(event.action, [...ATTEMPT_FACT_ACTIONS]),
       ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id));
-
-  if (attemptRows.length === 0) return counts;
-
+    );
+  if (attemptRows.length === 0) return byQuestion;
   const activeRows = await filterActiveRows(db, attemptRows);
   const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, activeRows);
   for (const row of activeRows) {
     const outcome =
       row.action === 'experimental:assessment_attempt'
         ? nativeAttemptOutcome(nativeVerdicts.get(row.id))
-        : row.outcome;
-    if (outcome === 'success') counts.success += 1;
-    else if (outcome === 'partial') counts.partial += 1;
-    else if (outcome === 'failure') counts.failure += 1;
+        : (row.outcome ?? 'unjudged');
+    const hints = recordedHints(row.payload);
+    const fact: AttemptFact = {
+      question_id: row.subject_id,
+      event_id: row.id,
+      dispatch_seq: row.dispatch_seq,
+      created_at: row.created_at,
+      outcome,
+      duration_ms: recordedDurationMs(row.payload),
+      hints_used: hints?.hints_used ?? null,
+      final_hint_level: hints?.final_hint_level ?? null,
+    };
+    const list = byQuestion.get(row.subject_id);
+    if (list) list.push(fact);
+    else byQuestion.set(row.subject_id, [fact]);
   }
-  return counts;
+  return byQuestion;
+}
+
+/** Recorded attempt durations on other questions with the same difficulty ordinal. */
+export async function readSameDifficultyDurations(
+  db: DbLike,
+  difficulty: number,
+  excludeQuestionId: string,
+): Promise<number[]> {
+  const peers = await db
+    .select({ id: question.id })
+    .from(question)
+    .where(and(eq(question.difficulty, difficulty), ne(question.id, excludeQuestionId)));
+  const facts = await readAttemptFacts(
+    db,
+    peers.map((row) => row.id),
+  );
+  return [...facts.values()].flatMap((rows) => recordedDurations(rows));
+}
+
+export async function getQuestionAttemptOutcomeCounts(
+  db: DbLike,
+  questionId: string,
+): Promise<JudgedAttemptCounts> {
+  const facts = await readAttemptFacts(db, [questionId]);
+  return judgedAttemptCounts(facts.get(questionId) ?? []);
 }
 
 /** Current active attempts establish that a question was seen; no model inference. */

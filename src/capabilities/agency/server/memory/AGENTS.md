@@ -1,6 +1,10 @@
 # Agency memory pipeline
 
 - The platform adapter `src/server/ai/mem0/client.ts` owns the supported Mem0 boundary.
+  One process shares one Memory per database and model. PGVector schema DDL takes
+  the session lock `mem0:pgvector-init` and retries a `pg_type` name collision once.
+  A failed fact search stays a failure; brief regen and practice selection catch it
+  at their own boundary.
   Exact event lookup precedes opaque lifecycle acquire and fenced provider start reservation;
   only the post-reserve callback may write `add_started`, immediately before the SDK call.
   A reserved start or started marker forbids any later paid add fallback.

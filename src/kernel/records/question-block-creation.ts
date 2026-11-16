@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { QuestionBlockRowSnapshotT } from '@/core/schema/event/genesis';
 import type { QuestionDraftDocumentT } from '@/core/schema/question-draft';
@@ -11,6 +11,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { question_block } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { projectQuestionBlockGuarded } from './question-block-projection';
 
@@ -37,6 +38,12 @@ type RescueBlockCommand = {
   blockId: string;
   structured: StructuredQuestionT;
   figures: FigureRefT[];
+};
+
+type HandwritingTraceBlockCommand = {
+  origin: 'handwriting_trace';
+  blockId: string;
+  structured: StructuredQuestionT;
 };
 
 type DocxBlockCommand = {
@@ -78,11 +85,41 @@ type EditDraftBlockCommand = {
 type CapturedBlockCommand =
   | OcrBlockCommand
   | RescueBlockCommand
+  | HandwritingTraceBlockCommand
   | DocxBlockCommand
   | ImportBlockCommand
   | EditDraftBlockCommand;
 
 const DRAFT_SESSION_PREFIX = 'draft:';
+
+/**
+ * Rescue only rewrites a draft block: once the block entered the bank its
+ * question holds the published snapshot, and overwriting `structured` here
+ * would leave the block and the banked question disagreeing with no surface
+ * signal. Callers pass the last status they read; the rescue UPDATE's
+ * `status='draft'` predicate stays the atomic arbiter, so its CAS miss calls
+ * this without one.
+ */
+export function assertRescuableBlockDraft(blockId: string, status?: undefined): never;
+export function assertRescuableBlockDraft(
+  blockId: string,
+  status: string | undefined,
+): asserts status is 'draft';
+export function assertRescuableBlockDraft(
+  blockId: string,
+  status?: string,
+): asserts status is 'draft' {
+  if (status === 'draft') return;
+  throw new ApiError(
+    'block_not_rescuable',
+    status === undefined
+      ? `question_block ${blockId} left 'draft' before the rescue write committed`
+      : `question_block ${blockId} is '${status}'; rescue only applies to draft blocks`,
+    409,
+    undefined,
+    status === undefined ? { block_id: blockId } : { block_id: blockId, block_status: status },
+  );
+}
 
 export function persistCapturedQuestionBlock(
   db: Db | Tx,
@@ -91,7 +128,12 @@ export function persistCapturedQuestionBlock(
 ): Promise<QuestionBlockRow>;
 export function persistCapturedQuestionBlock(
   db: Db | Tx,
-  command: OcrBlockCommand | RescueBlockCommand | DocxBlockCommand | ImportBlockCommand,
+  command:
+    | OcrBlockCommand
+    | RescueBlockCommand
+    | HandwritingTraceBlockCommand
+    | DocxBlockCommand
+    | ImportBlockCommand,
   now: Date,
 ): Promise<void>;
 /**
@@ -146,6 +188,10 @@ export async function persistCapturedQuestionBlock(
       return;
     }
     case 'rescue': {
+      // Rescue only rewrites a draft block. The status CAS is the atomic guard
+      // against a concurrent enrollment: once the block is in the bank its
+      // question holds the enrolled snapshot, and overwriting structured here
+      // would silently desync them.
       const [row] = await db
         .update(question_block)
         .set({
@@ -156,14 +202,41 @@ export async function persistCapturedQuestionBlock(
           updated_at: now,
           version: sql<number>`${question_block.version} + 1`,
         })
-        .where(eq(question_block.id, command.blockId))
+        .where(and(eq(question_block.id, command.blockId), eq(question_block.status, 'draft')))
         .returning();
+      if (!row) {
+        // A returned row already proved 'draft' by matching the CAS; only a
+        // miss means the block left draft between read and write.
+        assertRescuableBlockDraft(command.blockId);
+      }
       // A second full-snapshot create for this blockId preserves last-write-wins.
       await writeQuestionBlockCreateEvent(db, {
         row,
         origin: 'rescue',
         actorKind: 'agent',
         actorRef: 'vision_rescue',
+        now,
+      });
+      return;
+    }
+    case 'handwriting_trace': {
+      // Same draft-only CAS as rescue: an enrolled block's question holds the
+      // published snapshot, so evidence written here afterwards would desync it.
+      const [row] = await db
+        .update(question_block)
+        .set({
+          structured: command.structured,
+          updated_at: now,
+          version: sql<number>`${question_block.version} + 1`,
+        })
+        .where(and(eq(question_block.id, command.blockId), eq(question_block.status, 'draft')))
+        .returning();
+      if (!row) assertRescuableBlockDraft(command.blockId);
+      await writeQuestionBlockCreateEvent(db, {
+        row,
+        origin: 'handwriting_trace',
+        actorKind: 'agent',
+        actorRef: 'handwriting_trace',
         now,
       });
       return;
@@ -291,7 +364,7 @@ function questionBlockRowToSnapshot(row: QuestionBlockRow): QuestionBlockRowSnap
 
 interface WriteQuestionBlockCreateEventParams {
   row: QuestionBlockRow;
-  origin: 'ocr' | 'rescue' | 'docx' | 'import' | 'edit_draft';
+  origin: 'ocr' | 'rescue' | 'handwriting_trace' | 'docx' | 'import' | 'edit_draft';
   actorKind: 'agent' | 'user' | 'system';
   actorRef: string;
   now: Date;

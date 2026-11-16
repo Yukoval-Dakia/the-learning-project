@@ -2,13 +2,14 @@ import { type ServerResponse, createServer } from 'node:http';
 import { agentLoop } from '@earendil-works/pi-agent-core';
 import { sql } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { PiToolMount } from '@/ai/pi-tool-mount';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { ai_task_runs, cost_ledger, system_config } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { __setPiAdapterForTests } from './execution-adapter';
 import { PiAgentAdapter } from './pi-agent-adapter';
 import { createLoomPiModels } from './pi-models';
-import { runTask } from './runner';
+import { runTask, streamTaskCollecting } from './runner';
 
 const kind = 'QuestionAdmissionSolveTask';
 const input = {
@@ -88,81 +89,135 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-// @invariant concurrency: a sent stalled tool turn cannot replay an earlier write or create a second paid attempt.
-// @fails-if idle termination is retryable or partial tool arguments reach execution, duplicating the config increment or ledger row.
-it('fails a keep-alive-only partial tool turn after a committed write without resending', async () => {
+const writeOnceMount: PiToolMount = {
+  type: 'custom',
+  tools: [
+    {
+      name: 'write_once',
+      label: 'Write',
+      description: 'Synthetic durable increment',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => {
+        await testDb()
+          .insert(system_config)
+          .values({
+            key: 'guard-replay-proof',
+            value: 1,
+            updated_by: 'offline',
+            created_at: new Date(),
+            updated_at: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: system_config.key,
+            set: { value: sql`to_jsonb(${system_config.value}::int + 1)` },
+          });
+        return { content: [{ type: 'text', text: 'written' }], details: {} };
+      },
+    },
+  ],
+};
+function stall(response: ServerResponse) {
+  const timer = setInterval(() => response.write(': keep-alive\n\n'), 20);
+  response.on('close', () => clearInterval(timer));
+}
+
+// @invariant concurrency: an interrupted request is resent at most twice and only for the learner companion; tools never rerun and the learner keeps one copy of the reply; admission never resends an interrupted request.
+// @fails-if a resend reruns the committed write, the dead attempt's streamed text survives the retraction, a third resend happens, or an admission stall is resent.
+it.each([
+  { name: 'companion recovers after two stalls', kind: 'CopilotTask', stalls: 2, sends: 4 },
+  { name: 'companion gives up after the second resend', kind: 'CopilotTask', stalls: 3, sends: 4 },
+  { name: 'admission never resends', kind, stalls: 1, sends: 1 },
+])('$name', async (row) => {
   await serve((response, body) => {
     const tools = body.tools as { function: { name: string } }[];
-    const writerName = tools.find((tool) => tool.function.name.includes('write_once'))?.function
-      .name;
-    if (!writerName) throw new Error('writer missing from actual wire');
-    event(response, {
-      role: 'assistant',
-      tool_calls: [
-        {
-          index: 0,
-          id: `call-${sends}`,
-          type: 'function',
-          function: { name: writerName, arguments: sends === 1 ? '{}' : '{"unfinished":' },
-        },
-      ],
-    });
-    if (sends === 1) {
-      event(response, {}, 'tool_calls');
-      response.end('data: [DONE]\n\n');
-    } else {
-      const timer = setInterval(() => response.write(': keep-alive\n\n'), 20);
-      response.on('close', () => clearInterval(timer));
+    if (row.kind === kind) {
+      event(response, {
+        role: 'assistant',
+        tool_calls: [
+          {
+            index: 0,
+            id: 'submit',
+            type: 'function',
+            function: { name: tools[0].function.name, arguments: '{"units":' },
+          },
+        ],
+      });
+      return stall(response);
     }
+    if (sends === 1) {
+      const writer = tools.find((tool) => tool.function.name.includes('write_once'));
+      if (!writer) throw new Error('writer missing from actual wire');
+      event(response, {
+        role: 'assistant',
+        tool_calls: [
+          {
+            index: 0,
+            id: 'call-1',
+            type: 'function',
+            function: { name: writer.function.name, arguments: '{}' },
+          },
+        ],
+      });
+      event(response, {}, 'tool_calls');
+      return response.end('data: [DONE]\n\n');
+    }
+    if (sends - 1 <= row.stalls) {
+      event(response, { role: 'assistant', content: `断掉的第${sends}段` });
+      return stall(response);
+    }
+    event(response, { role: 'assistant', content: '完整回答' });
+    event(response, {}, 'stop');
+    response.end('data: [DONE]\n\n');
   });
-  await expect(
-    runTask('CopilotTask', 'synthetic write then continue', {
+  if (row.kind === kind) {
+    await expect(
+      runTask(kind, input, { db: testDb(), override, judgeRetryPolicy: 'none' }),
+    ).rejects.toMatchObject({
+      errors: expect.arrayContaining([expect.stringContaining('provider_stream_idle')]),
+    });
+    expect(sends).toBe(row.sends);
+    return;
+  }
+  let page = '';
+  const retries: number[] = [];
+  const result = await streamTaskCollecting(
+    'CopilotTask',
+    'synthetic write then answer',
+    {
       db: testDb(),
-      enableTransientRetry: true,
       allowedTools: ['write_once'],
-      piToolMounts: [
-        {
-          type: 'custom',
-          tools: [
-            {
-              name: 'write_once',
-              label: 'Write',
-              description: 'Synthetic durable increment',
-              parameters: { type: 'object', properties: {} },
-              execute: async () => {
-                await testDb()
-                  .insert(system_config)
-                  .values({
-                    key: 'guard-replay-proof',
-                    value: 1,
-                    updated_by: 'offline',
-                    created_at: new Date(),
-                    updated_at: new Date(),
-                  })
-                  .onConflictDoUpdate({
-                    target: system_config.key,
-                    set: { value: sql`to_jsonb(${system_config.value}::int + 1)` },
-                  });
-                return { content: [{ type: 'text', text: 'written' }], details: {} };
-              },
-            },
-          ],
-        },
-      ],
-    }),
-  ).rejects.toMatchObject({
-    subtype: 'error_during_execution',
-    errors: expect.arrayContaining([expect.stringContaining('provider_stream_idle')]),
-  });
-  expect(sends).toBe(2);
+      piToolMounts: [writeOnceMount],
+      onRequestRetry: (retry) => {
+        retries.push(retry.retry);
+        page = page.slice(0, page.length - retry.discarded_text_chars);
+      },
+    },
+    (text) => {
+      page += text;
+    },
+  );
+  expect(sends).toBe(row.sends);
+  expect(retries).toEqual([1, 2]);
   expect(
     (await testDb().select().from(system_config)).find((row) => row.key === 'guard-replay-proof')
       ?.value,
   ).toBe(1);
-  expect(await testDb().select().from(ai_task_runs)).toMatchObject([{ status: 'failure' }]);
-  expect(await testDb().select().from(cost_ledger)).toMatchObject([
-    { outcome: 'failed_permanent' },
-  ]);
+  if (row.stalls === 2) {
+    expect(page).toBe('完整回答');
+    expect(result).toMatchObject({ text: '完整回答', terminalText: '完整回答' });
+    expect(await testDb().select().from(ai_task_runs)).toMatchObject([{ status: 'success' }]);
+  } else {
+    // Only the last attempt's partial survives, as on any failed reply.
+    expect(page).toBe('断掉的第4段');
+    expect(result).toMatchObject({
+      partial: true,
+      text: '断掉的第4段',
+      error: expect.stringContaining('provider_stream_idle'),
+    });
+    expect(await testDb().select().from(cost_ledger)).toMatchObject([
+      { outcome: 'failed_permanent' },
+    ]);
+  }
 });
 
 // @invariant grading: an output ceiling never accepts even valid-looking structured answers; continuous slow data remains admissible.

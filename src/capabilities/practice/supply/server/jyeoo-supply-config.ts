@@ -1,7 +1,7 @@
 // Constants and spawn env for the jyeoo agent tool chain. The producer's grade route
 // cannot target a KC and its daily account budget does not fit per-target dispatch;
 // candidates are fetched by tools/jyeoo-fetch-candidates.ts and committed through
-// tools/store-sourced-question.ts.
+// tools/submit-question.ts.
 
 // Shared route literal with sourcing_web / quiz_gen; still a valid provenance value.
 export const JYEOO_FETCH_ROUTE = 'jyeoo_fetch';

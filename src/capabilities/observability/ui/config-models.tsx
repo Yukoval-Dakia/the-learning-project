@@ -30,6 +30,7 @@ import {
   laneWords,
   matchesSearch,
   modelEditable,
+  modelLimitsLine,
   ruleWord,
   taskWords,
   thinkingChoiceWord,
@@ -150,6 +151,9 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
   const pickedModel = pinned
     ? findModel(data.providers, current?.provider ?? '', current?.model ?? '')
     : findModel(data.providers, pick.provider, pick.model);
+  const currentModel = current?.model
+    ? findModel(data.providers, current.provider ?? '', current.model)
+    : undefined;
   const catalogLevels = thinkingLevels(pickedModel);
   // With no single model to read it from, the level still applies to whatever each task runs.
   const levels = catalogLevels.length > 0 ? catalogLevels : GLOBAL_THINKING_LEVELS;
@@ -249,6 +253,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       ) : (
         <p className="adm-note">没有全局默认，各任务用自己的模型。</p>
       )}
+      {currentModel ? <p className="adm-cell-sub">{modelLimitsLine(currentModel)}</p> : null}
       {stored ? (
         <p className="adm-cell-sub">
           思考强度 {thinkingWord(stored)}

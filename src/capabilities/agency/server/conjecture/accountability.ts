@@ -5,18 +5,11 @@
 
 import type { Db } from '@/db/client';
 import { scorePrediction } from '@/kernel/records/conjecture-prediction-scoring';
-import { misconceptionHardConfirmEnabled } from '../misconception-promote';
-import {
-  type DissociationVerdict,
-  decideDissociation,
-  gatherDissociationRecordsByIdentity,
-  summarizeDissociation,
-} from './hard-confirm';
+import { gatherDissociationRecordsByIdentity } from './hard-confirm';
 
 export const ACCOUNTABILITY_STREAK_FLOOR = 2;
 export const ACCOUNTABILITY_DOWNWEIGHT_MULTIPLIER = 0.25;
 export const ACCOUNTABILITY_SUPPORTED_MULTIPLIER = 1.15;
-export const ACCOUNTABILITY_EMERGING_MULTIPLIER = 1.25;
 const ACCOUNTABILITY_RANK_TIE_EPSILON = 1e-9;
 
 export interface PredictionAccountabilityRecord {
@@ -35,8 +28,6 @@ export interface PredictionAccountability {
   latest_direction: PredictionAccountabilityDirection;
   consecutive_count: number;
   rank_multiplier: number;
-  hard_confirm_verdict: DissociationVerdict;
-  hard_confirm_enabled: boolean;
   score_event_ids: string[];
 }
 
@@ -58,15 +49,11 @@ function directionForScore(skillScorePoint: number): PredictionAccountabilityDir
  * Fold valid prediction scores for one `(cause_category × knowledge_id)` identity.
  *
  * The latest consecutive direction wins. One miss is intentionally inert; two
- * misses downweight. Two hits boost; only when the hard-confirm track is explicitly
- * enabled does an independently established Tier-1 `EMERGING` verdict permit the
- * slightly stronger boost. A neutral score resets the streak. A later opposite
- * streak reverses the prior state.
+ * misses downweight. Two hits boost. A neutral score resets the streak. A later
+ * opposite streak reverses the prior state.
  */
 export function derivePredictionAccountability(
   records: readonly PredictionAccountabilityRecord[],
-  hardConfirmVerdict: DissociationVerdict,
-  options: { hardConfirmEnabled?: boolean } = {},
 ): PredictionAccountability {
   const sorted = [...records].sort(
     (a, b) =>
@@ -105,10 +92,7 @@ export function derivePredictionAccountability(
     rankMultiplier = ACCOUNTABILITY_DOWNWEIGHT_MULTIPLIER;
   } else if (consecutiveCount >= ACCOUNTABILITY_STREAK_FLOOR && latestDirection === 'hit') {
     state = 'supported';
-    rankMultiplier =
-      hardConfirmVerdict === 'EMERGING' && options.hardConfirmEnabled === true
-        ? ACCOUNTABILITY_EMERGING_MULTIPLIER
-        : ACCOUNTABILITY_SUPPORTED_MULTIPLIER;
+    rankMultiplier = ACCOUNTABILITY_SUPPORTED_MULTIPLIER;
   }
 
   return {
@@ -116,8 +100,6 @@ export function derivePredictionAccountability(
     latest_direction: latestDirection,
     consecutive_count: consecutiveCount,
     rank_multiplier: rankMultiplier,
-    hard_confirm_verdict: hardConfirmVerdict,
-    hard_confirm_enabled: options.hardConfirmEnabled === true,
     score_event_ids: effective.map((record) => record.score_event_id),
   };
 }
@@ -130,11 +112,15 @@ export function derivePredictionAccountability(
 export function rankEvidenceCellsByAccountability<T extends AccountabilityCandidate>(
   cells: readonly T[],
   accountabilityByKey: ReadonlyMap<string, PredictionAccountability>,
+  noteWeightByKey: ReadonlyMap<string, number> = new Map(),
 ): T[] {
   return [...cells].sort((a, b) => {
     const aMultiplier = accountabilityByKey.get(a.key)?.rank_multiplier ?? 1;
     const bMultiplier = accountabilityByKey.get(b.key)?.rank_multiplier ?? 1;
-    const adjusted = b.recurrence_count * bMultiplier - a.recurrence_count * aMultiplier;
+    const aNote = noteWeightByKey.get(a.key) ?? 1;
+    const bNote = noteWeightByKey.get(b.key) ?? 1;
+    const adjusted =
+      b.recurrence_count * bMultiplier * bNote - a.recurrence_count * aMultiplier * aNote;
     const adjustedWithStableTie =
       Math.abs(adjusted) < ACCOUNTABILITY_RANK_TIE_EPSILON ? 0 : adjusted;
     return (
@@ -146,12 +132,7 @@ export function rankEvidenceCellsByAccountability<T extends AccountabilityCandid
   });
 }
 
-/**
- * Correction-aware live DB reader used by the nightly research meeting. The
- * hard-confirm decision is evaluated in the same pass and consumed by the rank
- * policy, but ownerFreshlyConfirmed is deliberately false: a background job may
- * observe `EMERGING`; it can never mint a hard misconception.
- */
+/** Correction-aware live DB reader used by the nightly research meeting. */
 export async function loadPredictionAccountabilityByKey(
   db: Db,
   cells: readonly AccountabilityCandidate[],
@@ -162,17 +143,9 @@ export async function loadPredictionAccountabilityByKey(
     knowledgeId: cell.knowledge_id,
   }));
   const recordsByKey = await gatherDissociationRecordsByIdentity(db, targets);
-  const hardConfirmEnabled = misconceptionHardConfirmEnabled();
   const out = new Map<string, PredictionAccountability>();
   for (const cell of cells) {
     const records = recordsByKey.get(cell.key) ?? [];
-    const evidence = summarizeDissociation(records);
-    const hardConfirmVerdict = decideDissociation(evidence, {
-      hardConfirmEnabled,
-      hasRivalProbe: records.some((record) => record.discriminating),
-      // Protected red line: only a dedicated owner command may ever pass true.
-      ownerFreshlyConfirmed: false,
-    });
     out.set(
       cell.key,
       derivePredictionAccountability(
@@ -193,8 +166,6 @@ export async function loadPredictionAccountabilityByKey(
                 },
               ],
         ),
-        hardConfirmVerdict,
-        { hardConfirmEnabled },
       ),
     );
   }

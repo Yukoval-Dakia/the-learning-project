@@ -29,6 +29,7 @@ import {
   BankSearchOutputSchema,
   type BankSearchOutputV3,
   type SearchBankInput,
+  bindConditionJudgments,
 } from './bank-search-contract';
 import { resolveBankHistoryRootIds, resolveBankSearchScope } from './bank-search-scope';
 import { bankReadRoleForActor } from './read-bank';
@@ -307,6 +308,19 @@ export async function resumeBankSearchSnapshot(ctx: ToolContext, cursor: string)
   );
 }
 
+function missingHitMessage(receipt: BankReceipt): string {
+  const refs = receipt.output.hits.flatMap((hit) => (hit.ref ? [hit.ref] : []));
+  const shown = refs.slice(0, 20);
+  const extra = refs.length - shown.length;
+  const list =
+    shown.length === 0
+      ? '(none)'
+      : extra > 0
+        ? `${shown.join(', ')}, and ${extra} more`
+        : shown.join(', ');
+  return `Assessment ref is not in this search's hits. Available refs: ${list}.`;
+}
+
 /** Caller judgments remain attributed opinions; validation proves provenance and scope, not semantic truth. */
 function assessBankReceipt(receipt: BankReceipt, raw: BankAssessment[]) {
   const assessments = BankAssessmentSchema.array().parse(raw);
@@ -316,20 +330,18 @@ function assessBankReceipt(receipt: BankReceipt, raw: BankAssessment[]) {
   const acceptedRefs: string[] = [];
   for (const assessment of assessments) {
     const hit = receipt.output.hits.find((h) => h.ref === assessment.ref);
-    if (!hit?.available || assessment.parts.some((p) => !hit.parts.includes(p)))
+    if (!hit) throw new BankSearchError(missingHitMessage(receipt));
+    if (!hit.available || assessment.parts.some((p) => !hit.parts.includes(p)))
       throw new BankSearchError('Assessment selects unavailable candidate or foreign part');
     // Missing input is a deterministic unknown, regardless of a caller's opinion.
     if (hit.missing.some((m) => assessment.parts.includes(m.part))) {
       assessment.checks = assessment.checks.map((c) => ({ ...c, verdict: 'unknown' as const }));
       assessment.joint = { ...assessment.joint, verdict: 'unknown' };
     }
+    const judged = bindConditionJudgments(receipt.output.conditions, assessment.checks);
+    if (!judged.ok) throw new BankSearchError(judged.message);
+    assessment.checks = judged.checks;
     const checks = assessment.checks;
-    if (
-      new Set(checks.map((c) => c.condition)).size !== checks.length ||
-      checks.length !== receipt.output.conditions.length ||
-      checks.some((c) => !receipt.output.conditions.some((r) => r.id === c.condition))
-    )
-      throw new BankSearchError('Each original condition needs exactly one judgment');
     const validate = (decision: BankAssessment['joint']) => {
       if (decision.verdict === 'unknown') return;
       if (!decision.evidence.length)

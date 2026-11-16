@@ -1,5 +1,6 @@
 // YUK-1770 steering — pure window/quote/exclusion helpers shared by the
-// deterministic consumers (due-list deferral, expiry, selection, coach input).
+// deterministic consumers (due-list deferral, daily-stream channels, supply
+// targets, expiry, selection, coach input).
 // No IO: every caller passes learner-local (Asia/Shanghai) YYYY-MM-DD days.
 
 import type { SteeringGoalDataT } from './schema/steering';
@@ -107,4 +108,18 @@ export function steeringExcludedKnowledgeIds(
  */
 export function steeringIsSubtractive(steering: SteeringGoalDataT): boolean {
   return steering.excluded_subject_ids.length > 0 || steering.excluded_knowledge_ids.length > 0;
+}
+
+/**
+ * A candidate is deferred only when it names at least one knowledge id and
+ * every one of them is inside `deferred`. An empty id list stays (nothing to
+ * attribute). A mixed item stays: any id outside the set still owns it.
+ */
+export function steeringDefersKnowledgeIds(
+  knowledgeIds: readonly string[],
+  deferred: ReadonlySet<string>,
+): boolean {
+  return (
+    deferred.size > 0 && knowledgeIds.length > 0 && knowledgeIds.every((id) => deferred.has(id))
+  );
 }

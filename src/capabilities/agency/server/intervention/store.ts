@@ -59,6 +59,8 @@ export interface InterventionRecord {
   package: InterventionPackageT | null;
   settlement: InterventionSettlementT | null;
   preparation_attempts: InterventionPreparationAttemptT[];
+  preparation_waits: number;
+  preparation_wait_until: Date | null;
   failure_code: string | null;
   created_at: Date;
   updated_at: Date;
@@ -88,6 +90,8 @@ function parseInterventionRow(row: InterventionRow): InterventionRecord {
     preparation_attempts: InterventionPreparationAttempt.array().parse(
       row.preparation_attempts_json,
     ),
+    preparation_waits: row.preparation_waits,
+    preparation_wait_until: row.preparation_wait_until,
     failure_code: row.failure_code,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -180,10 +184,17 @@ export async function updatePreparationJobId(
   version: number,
   jobId: string,
   now: Date,
+  wait?: { waits: number; until: Date | null },
 ): Promise<void> {
   const [updated] = await tx
     .update(intervention)
-    .set({ preparation_job_id: jobId, updated_at: now })
+    .set({
+      preparation_job_id: jobId,
+      updated_at: now,
+      ...(wait !== undefined
+        ? { preparation_waits: wait.waits, preparation_wait_until: wait.until }
+        : {}),
+    })
     .where(
       and(
         eq(intervention.id, interventionId),

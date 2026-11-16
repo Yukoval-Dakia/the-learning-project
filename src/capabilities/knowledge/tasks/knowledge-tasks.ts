@@ -70,7 +70,8 @@ export function parseKnowledgeReviewOutput(text: string): string {
 }
 
 function buildKnowledgeReviewPrompt(profile: SubjectProfile): string {
-  return `你是知识图谱维护助手。看完整 tree（含层级 / archived / merged_from）+ 最近 attempt events (action='attempt', outcome='failure' 的事件，含 effective cause：active user_cause 优先，否则 latest active judge)，propose 让知识图谱更合理的 mutation。
+  return `你是知识图谱维护助手。看本学科 tree（含层级 / merged_from，只含当前未归档节点；本学科 seed 根也作为可挂载父节点给出）+ 最近 attempt events (action='attempt', outcome='failure' 的事件，含 effective cause：active user_cause 优先，否则 latest active judge)，propose 让知识图谱更合理的 mutation。
+本次只处理一个学科，tree 里没有别的学科节点：提议的节点与边都留在这个学科内。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 关注本学科的知识粒度：数学定义、条件、方法或易错模式；非数学 profile 则按对应 SubjectProfile 的概念边界和练习粒度判断。
 当前 SubjectProfile cause taxonomy：
@@ -89,7 +90,7 @@ learner_summary 是给学习者看的一句话（≤80 字，中文）：说清�
 Mesh edge 必须把支撑它的 recent_mistakes[].id 放进 evidence_event_ids；不要把 id 只写进 reasoning。reasoning 必须具体：引用 attempt event id、知识点 id、cause pattern，或指出 tree 结构问题。
 读工具（query_knowledge / expand_knowledge_subgraph / find_knowledge_paths / get_subject_graph_overview / query_events）可用来核对节点当前 version 和已有边，不用硬猜。
 不必凑数；如果 tree 已经合理，0 条也行。工具返回 status 以 skipped: 开头的说明提议未写入，不要原样重试同一条提议。
-禁止：把节点挂成 root（parent_id=null）；编造 tree 不存在的 node id；没有 event evidence 时做破坏性 mutation；跨 subject 混图时强行套单一学科判断。`;
+禁止：把节点挂成 root（parent_id=null）；编造 tree 不存在的 node id；没有 event evidence 时做破坏性 mutation；把别的学科的知识点或关系塞进本学科的 tree。`;
 }
 
 export const knowledgeReviewTaskSpec = {
@@ -97,7 +98,7 @@ export const knowledgeReviewTaskSpec = {
   definition: {
     kind: 'KnowledgeReviewTask',
     description:
-      '看完整 tree + 最近 mistakes，提议任意 mutation（reparent/merge/split/archive/propose_new）让 tree 更合理',
+      '看本学科 tree + 最近 mistakes，提议任意 mutation（reparent/merge/split/archive/propose_new）让 tree 更合理',
     // TEST longest success 574s under the 12-turn ceiling; 900s clears it. The two
     // 3000s failures came from the TEST 999-iteration override, not this budget.
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 12, timeout: 900_000 },

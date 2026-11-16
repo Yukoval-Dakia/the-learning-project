@@ -250,6 +250,7 @@ jobs:
           pnpm audit:provider-lanes
           pnpm audit:model-source
           pnpm audit:advisory-locks
+          pnpm audit:review-action-readers
           pnpm audit:relations
           pnpm audit:mastery-provenance
 
@@ -858,7 +859,8 @@ jobs:
             src/core/calibration/native-parity.unit.test.ts \
             src/core/calibration/wasm-parity.unit.test.ts \
             src/core/poly-exp-parity.unit.test.ts \
-            src/core/coldstart-solver-parity.unit.test.ts
+            src/core/coldstart-solver-parity.unit.test.ts \
+            src/capabilities/practice/scheduling/server/day-one-prior-propagate.unit.test.ts
 
   workspace_boundary:
     name: workspace container invariant

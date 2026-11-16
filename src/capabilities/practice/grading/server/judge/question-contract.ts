@@ -21,6 +21,7 @@ import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
 import type { JudgeKind } from './';
 import { extractJsonObject } from './judge-output-parse';
+import type { JudgeSandboxEvidence } from './sandbox-evidence';
 
 export { resolveQuestionJudgeRoute };
 
@@ -233,6 +234,7 @@ export interface JudgeAnswerResult {
     input_hash: string;
     prompt_fingerprint: string;
     prompt_template_revision: string;
+    sandbox?: JudgeSandboxEvidence;
   };
 }
 
@@ -261,10 +263,6 @@ function parseRubric(raw: unknown): z.infer<typeof Rubric> | null {
 function nonEmpty(values: string[] | undefined): string[] {
   return (values ?? []).map((v) => v.trim()).filter((v) => v.length > 0);
 }
-
-// `resolveQuestionJudgeRoute` moved to `@/capabilities/practice/grading/server/judge/route-resolve` (F0,
-// PR #309 round-3) and is re-exported at the top of this file. The private
-// helpers it used (`parseRoute` / `isPreferred`) moved with it.
 
 export function buildLocalJudgeQuestion(
   q: JudgeQuestionRow,

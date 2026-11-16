@@ -35,3 +35,13 @@ SDK HTTP retries and uses a 60 second request timeout. Local 503 acceptance chec
 both exports, the chosen model, JSON mode, the header and exactly one request.
 Opaque memory operations retain unknown usage/cost; no new usage estimate is
 attributed to the SDK. Existing extraction/write failure and atomicity fixes remain.
+
+## mem0ai 3.0.13 — concurrent PGVector schema init
+
+`PGVector._doInitialize` runs `CREATE TABLE IF NOT EXISTS` for `memory_migrations`
+and the collection table. That statement is not safe when two sessions both miss
+the table: Postgres raises `23505` on `pg_type_typname_nsp_index` even though the
+type then exists. The patch holds session lock `pg_advisory_lock(hashtext('mem0:pgvector-init'))`
+around that DDL on the target database connection, and retries the schema statements
+once when that constraint fires. The lock is released before search or add. It is
+not a TypeScript advisory-lock site.

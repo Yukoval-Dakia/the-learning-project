@@ -43,16 +43,28 @@ function assertLosslessJsonMembers(text: string): void {
   // JSON.parse below validates the complete grammar; this scan checks raw member identity.
 }
 
-function decimalIdentity(token: string): string {
+/** Exact zero has no sign: JSON.stringify(-0) is "0". Non-zero underflow stays distinct. */
+type JsonNumberIdentity =
+  | { kind: 'exact-zero' }
+  | { kind: 'finite'; sign: '' | '-'; coefficient: string; scale: bigint };
+
+function jsonNumberIdentity(token: string): JsonNumberIdentity {
   const match = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(token);
   if (!match) throw new Error('Invalid JSON number');
   const [, sign, integer, fraction = '', exponent = '0'] = match;
   const significant = (integer + fraction).replace(/^0+/, '');
-  if (significant.length === 0) return `${sign}0`;
+  if (significant.length === 0) return { kind: 'exact-zero' };
   const coefficient = significant.replace(/0+$/, '');
   const scale =
     BigInt(exponent) - BigInt(fraction.length) + BigInt(significant.length - coefficient.length);
-  return `${sign}${coefficient}e${scale}`;
+  return { kind: 'finite', sign: sign === '-' ? '-' : '', coefficient, scale };
+}
+
+function sameJsonNumberIdentity(left: JsonNumberIdentity, right: JsonNumberIdentity): boolean {
+  if (left.kind === 'exact-zero' || right.kind === 'exact-zero') return left.kind === right.kind;
+  return (
+    left.sign === right.sign && left.coefficient === right.coefficient && left.scale === right.scale
+  );
 }
 
 function parseWithoutNumericLoss(text: string): JsonValue {
@@ -64,7 +76,10 @@ function parseWithoutNumericLoss(text: string): JsonValue {
         // Different decimal leaves must not collapse to the same rounded JS number.
         if (
           !Number.isFinite(value) ||
-          decimalIdentity(source) !== decimalIdentity(JSON.stringify(value))
+          !sameJsonNumberIdentity(
+            jsonNumberIdentity(source),
+            jsonNumberIdentity(JSON.stringify(value)),
+          )
         ) {
           throw new Error('JSON number loses precision');
         }

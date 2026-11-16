@@ -101,6 +101,14 @@ const State = z.object({
     placementClaimId: z.string().optional(),
     objectiveOnly: z.boolean().optional(),
     kindRequired: z.boolean().optional(),
+    /** Resolved 1–5 span. null = the band holds no ordinal. Absent = legacy demand. */
+    difficultyLevels: z
+      .object({
+        min: z.number().int().min(1).max(5),
+        max: z.number().int().min(1).max(5),
+      })
+      .nullable()
+      .optional(),
   }),
   trace: SupplyTraceV1.optional(),
   subjectId: z.string(),
@@ -288,6 +296,7 @@ const FALLBACKABLE_BLOCK_REASONS: ReadonlySet<string> = new Set([
   'parse',
   'kind_gate',
   'knowledge_unresolvable',
+  'difficulty_out_of_band',
 ]);
 
 /** Routes the executor can actually dispatch ('sourcing_web' is always tried). */
@@ -308,6 +317,7 @@ const PLACEMENT_REDRIVE_BLOCK_REASONS: ReadonlySet<string> = new Set([
   'parse',
   'kind_gate',
   'knowledge_unresolvable',
+  'difficulty_out_of_band',
 ]);
 
 /** Routes of the persisted plan not yet tried for this demand (deduped, in order). */
@@ -323,6 +333,18 @@ function remainingRoutePlan(state: WebSupplyState): string[] {
   return out;
 }
 
+/** Holds that still may become serving; any other hold is a terminal failure. */
+const PENDING_HOLDS: ReadonlySet<string> = new Set([
+  'awaiting_admission',
+  'awaiting_source_verification',
+]);
+
+/** The part of the demand its own submissions can no longer fill. */
+function shortfall(state: WebSupplyState): number {
+  const live = state.observations.filter((o) => o.hold === null || PENDING_HOLDS.has(o.hold));
+  return Math.max(state.item.count - live.length, 0);
+}
+
 /**
  * Routing fields merged into every transition that lands on 'blocked': the next
  * executable untried route the supply agent may dispatch once, or
@@ -330,7 +352,12 @@ function remainingRoutePlan(state: WebSupplyState): string[] {
  * 'policy_blocked' — those demands stay terminal, never paid again.
  */
 function blockedRouting(state: WebSupplyState, reason: string | null) {
-  if (reason === null || !FALLBACKABLE_BLOCK_REASONS.has(reason)) {
+  // An empty 1–5 span has no aim any route could honour, so it never falls back.
+  if (
+    reason === null ||
+    !FALLBACKABLE_BLOCK_REASONS.has(reason) ||
+    state.item.difficultyLevels === null
+  ) {
     return { nextRoute: null, routeExhausted: 'policy_blocked' };
   }
   const next = remainingRoutePlan(state).find((route) => EXECUTABLE_FALLBACK_ROUTES.has(route));
@@ -367,9 +394,11 @@ export async function dispatchWebSupplyRouteFallback(
 ): Promise<{ dispatched: boolean; jobId: string | null; route: string | null }> {
   const state = await latestRequired(db, demandId);
   const route = state.nextRoute;
+  const count = shortfall(state);
   if (
     state.phase !== 'blocked' ||
     route === null ||
+    count === 0 ||
     placementClaimOf(state) ||
     state.routesTried.includes(route)
   )
@@ -385,7 +414,10 @@ export async function dispatchWebSupplyRouteFallback(
         knowledge_id: state.item.knowledgeId,
         kind: state.item.kind,
         difficulty_band: state.item.difficultyBand,
-        count: state.item.count,
+        ...(state.item.difficultyLevels !== undefined
+          ? { difficulty_levels: state.item.difficultyLevels }
+          : {}),
+        count,
         route_preference: [route],
         ...(state.item.objectiveOnly ? { objective_only: true } : {}),
         ...(state.item.kindRequired ? { kind_required: true } : {}),
@@ -401,7 +433,7 @@ export async function dispatchWebSupplyRouteFallback(
     const hold = await holdNightlyRouteFallback(db, {
       targetId: state.trace.target_id,
       route,
-      questionCount: state.item.count,
+      questionCount: count,
     });
     if (hold === 'denied') return { dispatched: false, jobId: null, route };
   }
@@ -457,7 +489,10 @@ export async function dispatchWebSupplyRouteFallback(
           knowledge_ids: [state.item.knowledgeId],
           kind: state.item.kind,
           difficulty_band: state.item.difficultyBand,
-          desired_count: state.item.count,
+          ...(state.item.difficultyLevels !== undefined
+            ? { difficulty_levels: state.item.difficultyLevels }
+            : {}),
+          desired_count: count,
           route_plan: state.routePlan,
           chosen_route: route,
           status: 'dispatched',
@@ -762,8 +797,7 @@ export async function resumeWebSupply(
   const fulfilled = observed.serving.length >= state.item.count;
   const unsubmitted = state.submissions.some((s) => !s.receipt);
   const terminalFailure = observed.observations.some(
-    (o) =>
-      o.hold != null && !['awaiting_admission', 'awaiting_source_verification'].includes(o.hold),
+    (o) => o.hold != null && !PENDING_HOLDS.has(o.hold),
   );
   const noBindings = !state.submissions.some((s) => s.binding);
   const cannotReachCount = state.submissions.filter((s) => s.binding).length < state.item.count;
@@ -908,7 +942,13 @@ async function runWebSupplyRound(
   // Validate the original claim binding before deriving a private acquisition key.
   if (placement && roundId) item.demandId = roundId;
   const intent = {
-    item: { ...item, routePreference: undefined },
+    // levelTarget / difficultyLevels are how this fill is aimed, not a different demand.
+    item: {
+      ...item,
+      routePreference: undefined,
+      levelTarget: undefined,
+      difficultyLevels: undefined,
+    },
     trace: trace ? { ...trace, trace_id: undefined } : undefined,
     subjectId: params.subjectProfile.id,
   };
@@ -920,14 +960,17 @@ async function runWebSupplyRound(
     return resumeWebSupply(db, item.demandId, placementClaimId ? placement : undefined);
   }
   // A placement demand outside its claim's delivery has no paid authority: refuse it.
+  // An empty difficulty span cannot be filled by any source: refuse it before paying.
   const refusal =
     placementClaimId && !placement
       ? 'placement_attempt_required'
-      : trace?.needed_by && Date.parse(trace.needed_by) <= Date.now()
-        ? 'deadline_exhausted'
-        : trace?.max_budget_micro_usd === 0
-          ? 'budget_exhausted'
-          : null;
+      : item.levelTarget?.levels === null
+        ? 'difficulty_span_empty'
+        : trace?.needed_by && Date.parse(trace.needed_by) <= Date.now()
+          ? 'deadline_exhausted'
+          : trace?.max_budget_micro_usd === 0
+            ? 'budget_exhausted'
+            : null;
   // Admitted before the acquisition fence: a failed admission must not leave an
   // 'acquiring' state that reads as an unknown paid outcome.
   const sourcingRun = refusal ? null : await admitSourcingRun(db, trace);
@@ -937,7 +980,10 @@ async function runWebSupplyRound(
     sequence: 0,
     demandId: item.demandId,
     fingerprint,
-    item,
+    item: {
+      ...item,
+      ...(item.levelTarget ? { difficultyLevels: item.levelTarget.levels } : {}),
+    },
     trace,
     subjectId: params.subjectProfile.id,
     causeId: params.causeId,
@@ -1007,6 +1053,7 @@ async function runWebSupplyRound(
         kindRequired: item.kindRequired,
         // Placement 交付只走扁平提交链——取水即只要不带 parts 的单题。
         flatOnly: placement !== undefined,
+        ...(item.levelTarget ? { levelTarget: item.levelTarget } : {}),
         subjectProfile: params.subjectProfile,
       },
       ctx: {
@@ -1046,6 +1093,8 @@ async function runWebSupplyRound(
   await recordAcquisition(fetched.taskRunId, fetched.costUsd);
   // The actual runner id is canonical. A legacy/injected fetch without one cannot
   // produce a traceable supply commit; preserve its result and stop honestly.
+  // Out-of-band questions were already dropped by the fetch. They are not submitted
+  // and do not count as filling the gap; an empty in-band set falls through.
   const candidates = fetched.candidates.slice(0, item.count);
   await settleSourcingRun(
     [state.producerTaskRunId, ...(fetched.taskRunId ? [fetched.taskRunId] : [])],
@@ -1054,9 +1103,11 @@ async function runWebSupplyRound(
   const nextPhase = fetched.taskRunId && candidates.length ? 'verifying' : 'blocked';
   const nextReason = !fetched.taskRunId
     ? 'producer_identity_missing'
-    : !candidates.length
-      ? 'text_evidence_unavailable'
-      : null;
+    : candidates.length
+      ? null
+      : fetched.filteredOutOfBand > 0
+        ? 'difficulty_out_of_band'
+        : 'text_evidence_unavailable';
   state = await advance(db, state, {
     phase: nextPhase,
     reason: nextReason,

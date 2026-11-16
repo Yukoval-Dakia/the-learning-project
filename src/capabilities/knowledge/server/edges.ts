@@ -170,17 +170,7 @@ export async function listLiveEdgesTouchingNode(
         ),
       ),
     );
-  return rows.map((r) => ({
-    id: r.id,
-    from_knowledge_id: r.from_knowledge_id,
-    to_knowledge_id: r.to_knowledge_id,
-    relation_type: r.relation_type as RelationTypeSchemaT,
-    weight: r.weight,
-    created_by: r.created_by,
-    reasoning: r.reasoning,
-    created_at: r.created_at,
-    archived_at: r.archived_at,
-  }));
+  return rows.map(projectKnowledgeEdge);
 }
 
 /** The minimal endpoint triple the ADR-0034 topology gate consumes. */
@@ -214,15 +204,5 @@ export async function getKnowledgeEdgeById(
   const rows = await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, id)).limit(1);
   const r = rows[0];
   if (!r) return null;
-  return {
-    id: r.id,
-    from_knowledge_id: r.from_knowledge_id,
-    to_knowledge_id: r.to_knowledge_id,
-    relation_type: r.relation_type as RelationTypeSchemaT,
-    weight: r.weight,
-    created_by: r.created_by,
-    reasoning: r.reasoning,
-    created_at: r.created_at,
-    archived_at: r.archived_at,
-  };
+  return projectKnowledgeEdge(r);
 }

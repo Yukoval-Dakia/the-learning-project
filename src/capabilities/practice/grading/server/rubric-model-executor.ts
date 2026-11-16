@@ -311,7 +311,7 @@ export function createRubricModelExecutor(
       let result: RunTaskResult | undefined;
       try {
         signal.throwIfAborted();
-        const prepared = await prepareAssessmentModelInput(request, loadAsset, signal);
+        const prepared = await prepareAssessmentModelInput(request, loadAsset, signal, options.db);
         if (!prepared.ok) return pending(prepared.pending, priorRefs);
         signal.throwIfAborted();
         result = await withinAssessmentSignal(

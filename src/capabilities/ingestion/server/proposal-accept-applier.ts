@@ -4,7 +4,6 @@ import type {
   ProposalAcceptInput,
   ProposalAcceptResult,
 } from '@/kernel/proposals';
-import { toProposalLifecycleResult } from '@/kernel/proposals';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   type LegacyRecordApplierOpts,
@@ -41,7 +40,7 @@ function wrap(result: {
   readonly kind: string;
   readonly idempotent?: boolean;
 }): ProposalAcceptResult {
-  return { kind: result.kind, result: toProposalLifecycleResult(result) };
+  return { kind: result.kind, result: { ...result } };
 }
 
 export const blockMergeProposalAcceptApplier: ProposalAcceptApplier = async (db, input, runtime) =>

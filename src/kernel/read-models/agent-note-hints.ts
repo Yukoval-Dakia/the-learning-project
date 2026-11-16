@@ -10,12 +10,14 @@
 import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { eventCorrectionActiveSql } from '@/kernel/events/corrections';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 
 type DbLike = Db | Tx;
 
 // Which background agents a note addresses. 'research_meeting' names the nightly
-// meeting lane, not a writing actor; the deterministic lane reads no agent notes.
+// meeting lane, not a writing actor. Curator and that lane read notes as input;
+// the notes stay attention priors, not evidence.
 export type AgentNoteTarget = 'dreaming' | 'maintenance' | 'coach' | 'research_meeting' | 'copilot';
 
 export interface AgentNoteRef {
@@ -37,6 +39,27 @@ export interface AgentNote {
   // From the event column, not the payload; the board uses it as the evidence
   // fallback when refs[] is empty.
   caused_by_event_id?: string;
+}
+
+export interface AgentNoteInput {
+  id: string;
+  signal_kind: string;
+  summary_md: string;
+  refs: { kind: string; id: string }[];
+  source_task_kind: string;
+  confidence?: number;
+}
+
+/** Prompt-facing projection. The note stays a hint: callers do not treat it as evidence. */
+export function agentNoteInputs(notes: readonly AgentNote[]): AgentNoteInput[] {
+  return notes.map((note) => ({
+    id: note.id,
+    signal_kind: note.signal_kind,
+    summary_md: note.summary_md,
+    refs: note.refs.map((ref) => ({ kind: ref.kind, id: ref.id })),
+    source_task_kind: note.source_task_kind,
+    ...(note.confidence !== undefined ? { confidence: note.confidence } : {}),
+  }));
 }
 
 export interface ReadAgentNotesOpts {
@@ -105,6 +128,8 @@ export async function readAgentNotes(db: DbLike, opts: ReadAgentNotesOpts): Prom
   const conditions = [
     eq(event.action, 'experimental:agent_note'),
     eventAllowsDerivationSql(),
+    // A note replaced or withdrawn by a later observation stays in history only.
+    eventCorrectionActiveSql(event.id),
     eq(event.subject_kind, 'query'),
     // target_agents array contains for_agent (jsonb containment).
     sql`${event.payload}->'target_agents' @> ${JSON.stringify([opts.for_agent])}::jsonb`,
@@ -146,6 +171,8 @@ export async function readAllAgentNotes(
       and(
         eq(event.action, 'experimental:agent_note'),
         eq(event.subject_kind, 'query'),
+        // Same retire filter as readAgentNotes: the board shows live hints, not history.
+        eventCorrectionActiveSql(event.id),
         // Un-expired only: no expires_at OR expires_at strictly in the future.
         sql`(NOT (${event.payload} ? 'expires_at') OR (${event.payload}->>'expires_at') > ${nowIso})`,
       ),

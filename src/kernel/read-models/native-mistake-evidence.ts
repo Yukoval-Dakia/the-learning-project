@@ -27,12 +27,15 @@ import {
   assessment_issuance,
   assessment_submission,
   evaluation,
+  question,
   question_revision,
   source_asset,
 } from '@/db/schema';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import type { MistakeProjection } from '@/kernel/records/mistake-projection-contract';
+import { isIngestionQuestionSource } from './admission-source';
+import { loadLearnerImagePageIndex, pageAssetIdsForQuestion } from './question-images';
 
 type NativeMistakeEvidence = Pick<
   MistakeProjection,
@@ -242,6 +245,26 @@ export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly 
           .where(inArray(evaluation.evaluation_id, evaluationIds))
       : [];
   const evaluationById = new Map(evaluations.map((row) => [row.evaluation_id, row]));
+  // Same page identity rule as question image reads: a photographed source page is
+  // machine prompt material only. Attempt evidence can carry those pages too, so a
+  // learner must not receive one that holds other questions' handwriting.
+  const questionIds = [...new Set(native.map((failure) => failure.question_id))];
+  const questionRows =
+    questionIds.length > 0
+      ? await db
+          .select({ id: question.id, metadata: question.metadata, source: question.source })
+          .from(question)
+          .where(inArray(question.id, questionIds))
+      : [];
+  const imagePageIndex = await loadLearnerImagePageIndex(db, questionRows);
+  const questionById = new Map(questionRows.map((row) => [row.id, row]));
+  const learnerVisibleEvidenceAsset = (failure: FailureAttempt, assetId: string): boolean => {
+    const q = questionById.get(failure.question_id);
+    if (!q) return false; // unknown identity fails closed
+    const pages = pageAssetIdsForQuestion(q, imagePageIndex);
+    if (pages === null) return !isIngestionQuestionSource(q.source);
+    return pages.size === 0 || !pages.has(assetId);
+  };
   const imagesByAttempt = new Map<string, EvidenceAttachmentT[]>();
   const materialsByAttempt = new Map<
     string,
@@ -319,6 +342,17 @@ export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly 
     const parsedResponses = ResponseSet.safeParse(row.submission.response_set);
     const responses = parsedResponses.success ? parsedResponses.data : { entries: [] };
     const answerable = slots.filter((slot) => slot.kind !== 'table');
+    const markBySlot = new Map(
+      (failure.ingestion_unit_captures ?? [])
+        .filter((capture) => capture.red_ink_mark !== undefined)
+        .map((capture) => [capture.slot_id, capture.red_ink_mark] as const),
+    );
+    const markText = (mark: 'check' | 'cross' | 'mixed' | undefined): string => {
+      if (mark === undefined) return '';
+      const symbol = mark === 'check' ? '✓' : mark === 'cross' ? '✗' : '✓✗';
+      // The learner's own red pen, shown as evidence; it never yields a verdict.
+      return `（红笔标记：${symbol}）`;
+    };
     const images: EvidenceAttachmentT[] = [];
     evidence.wrong_answer_md = !parsedResponses.success
       ? '（作答证据损坏）'
@@ -328,14 +362,15 @@ export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly 
             const entry = entries[0];
             const prefix =
               multipleParts || answerable.length > 1 ? `[${slot.part_id}/${slot.slot_id}] ` : '';
-            if (!entry) return `${prefix}（未记录作答）`;
+            const mark = markText(markBySlot.get(slot.slot_id));
+            if (!entry) return `${prefix}（未记录作答）${mark}`;
             if (
               entries.length !== 1 ||
               validateResponseSet({ slots: [slot] }, { entries: [entry] }).length > 0
             )
-              return `${prefix}（作答证据损坏）`;
+              return `${prefix}（作答证据损坏）${mark}`;
             if (entry.kind === 'open') images.push(...entry.evidence);
-            return `${prefix}${responseText(slot, entry)}`;
+            return `${prefix}${responseText(slot, entry)}${mark}`;
           })
           .join('\n')
           .slice(0, 200);
@@ -389,7 +424,10 @@ export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly 
     }
     imagesByAttempt.set(
       failure.attempt_event_id,
-      images.filter((image) => image.kind === 'image'),
+      images.filter(
+        (image) =>
+          image.kind === 'image' && learnerVisibleEvidenceAsset(failure, image.asset.asset_id),
+      ),
     );
   }
 

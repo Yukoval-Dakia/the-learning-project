@@ -8,12 +8,16 @@ import { compileDeclaredKey } from '@/core/schema/assessment/blank-answer-compar
 import type { BlankAnswerShapeT } from '@/core/schema/assessment/blank-answer-shape';
 import { gradeBlankAuthorKeyUnit, gradeSelectUnit } from '@/core/schema/assessment/grade';
 import type { ScoringUnitResultT } from '@/core/schema/assessment/judgment';
-import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
+import {
+  type LearnerHandwritingMarkerT,
+  isPublicSharedMaterial,
+} from '@/core/schema/assessment/materials';
 import { describeSelectItem } from '@/core/schema/assessment/response';
 import type { ScoringUnitCriterionT, ScoringUnitT } from '@/core/schema/assessment/scoring';
 import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
+import { readFigureMaterialMarkers } from '@/kernel/read-models/figure-origin';
 import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -227,12 +231,25 @@ export function solverUnits(
     });
 }
 
-export function solverParts(
+/** Learner-handwriting marker per public figure material, resolved from the figure's own provenance. */
+export function figureMaterialMarkers(
+  db: Db,
   definition: QuestionAdmissionDefinition,
-): QuestionAdmissionSolveInputT['parts'] {
+): Promise<Map<string, LearnerHandwritingMarkerT>> {
+  return readFigureMaterialMarkers(
+    db,
+    definition.structure.materials.filter(isPublicSharedMaterial),
+  );
+}
+
+export async function solverParts(
+  db: Db,
+  definition: QuestionAdmissionDefinition,
+): Promise<QuestionAdmissionSolveInputT['parts']> {
   const figures = definition.structure.materials.filter(
     (m) => isPublicSharedMaterial(m) && m.kind === 'figure',
   );
+  const markers = await figureMaterialMarkers(db, definition);
   const materialById = new Map(
     definition.structure.materials.map((m) => [m.material_id, m] as const),
   );
@@ -250,7 +267,7 @@ export function solverParts(
         material_id: m.material_id,
         text_md:
           m.kind === 'figure'
-            ? `Figure image ${figures.findIndex((f) => f.material_id === m.material_id) + 1}: ${m.alt_text ?? m.caption ?? ''}`
+            ? `Figure image ${figures.findIndex((f) => f.material_id === m.material_id) + 1}: ${m.alt_text ?? m.caption ?? ''}; contains_learner_handwriting: ${markers.get(m.material_id) ?? 'unknown'}`
             : (m.content_md ?? ''),
       })),
   }));
@@ -461,7 +478,7 @@ export async function runDualSolve(
     images?: readonly AdmissionImage[];
   },
 ): Promise<DualSolveOutcome> {
-  const parts = solverParts(definition);
+  const parts = await solverParts(db, definition);
   // solve lane 剥离一切印出判分/答案文本（rule_reference.statement_md 只进
   // crosscheck）—— 否则对全 rule_reference 判据的存量题，两次"盲"解都在
   // 看答案，agreement 证明不了任何东西。
@@ -739,7 +756,7 @@ export async function runSolutionPriorPass(
     images?: readonly AdmissionImage[];
   },
 ): Promise<SolutionPriorPassResult> {
-  const parts = solverParts(definition);
+  const parts = await solverParts(db, definition);
   let taskRunId: string | null = null;
   try {
     const candidates = [...(deps.knowledgeCandidates ?? [])];

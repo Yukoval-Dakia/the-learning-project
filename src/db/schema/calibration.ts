@@ -144,8 +144,9 @@ export const item_family_calibration = pgTable(
     // familyKey(subject, primaryKnowledgeId, kind, source) = `${subject}:${pk}:${kind}:${source}`。
     // 绝不含 exact question id——家族绕道的核心（多题共享一个 b_delta）。
     family_key: text('family_key').notNull(),
-    // 收缩后的家族级 b 增量（logit 尺度，与 b_anchor 同度量）。门控未过时恒 0
-    // （只累 evidence_count，不应用 delta）；门控全过后 = shrinkFamilyDelta(rawDelta, n)。
+    // 收缩后的家族级 b 增量（logit 尺度，与 b_anchor 同度量）。首次两门全过前恒 0
+    // （只累 evidence_count，不应用 delta）；之后 = shrinkFamilyDelta(折进残差的均值,
+    // calibrated_n)，某条观测没过门只是不折，已折的均值不动。
     b_delta: real('b_delta').notNull().default(0),
     // 累积的客观观测条数（family 的有效样本量）。n 门控（≥20）读它。
     evidence_count: integer('evidence_count').notNull().default(0),
@@ -157,8 +158,9 @@ export const item_family_calibration = pgTable(
     // calibrated_n 保持 0；待 distinct 门也过时从 1 起算。不变量：
     //   storedDelta = shrinkFamilyDelta(runningMeanOf(folded residuals), calibrated_n)
     // 精确成立，**与门跨越顺序无关**——反推 oldRawMean = b_delta / shrinkageFactor(
-    // calibrated_n) 用同一基，round-trip 精确。两门一旦都过即恒过（n 只增、distinct 只
-    // 增），故 calibrated_n 此后每条客观观测 +1。门控未过期间恒 0。
+    // calibrated_n) 用同一基，round-trip 精确。撤销会让 n 与 distinct（结算账本里仍有效
+    // 的家族观测涉及的题数）回落，门可能重新关上；关门期间的观测不折、不改均值。首次
+    // 两门全过前恒 0。
     calibrated_n: integer('calibrated_n').notNull().default(0),
     // 置信度 0-1，= shrinkage 因子 n/(n+priorStrength)。门控未过也可计算（只是不应用 delta）。
     confidence: real('confidence').notNull().default(0),
