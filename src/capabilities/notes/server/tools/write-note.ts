@@ -291,7 +291,7 @@ async function executeWriteNote(
 export const writeNoteTool: DomainTool<WriteNoteInput, WriteNoteOutput> = {
   name: 'write_note',
   description:
-    'Write a Markdown note for the learner. mode=create saves a NEW note with the given title and markdown and returns status=written with its artifact_id. mode=append adds the markdown as a new block on an existing note_id (an art_… id returned earlier or from the notes API) and bumps its version. mode=generate hands off to the durable note_generate task when the learner asks for a complete, systematic note — returns status=generation_queued and the note content is produced asynchronously, so say it is queued, not written. Errors come back as typed field issues — fix the named field and resubmit.',
+    'Write a Markdown note for the learner. mode=create saves a NEW note (title + markdown → written, returns artifact_id); mode=append adds the markdown as a new block on an existing note_id (an art_… id) and bumps its version; mode=generate hands off to the durable note_generate task for a complete systematic note — status=generation_queued means say queued, not written. Errors come back as typed field issues — fix the named field and resubmit.',
   effect: 'write',
   inputSchema: WriteNoteInputSchema,
   outputSchema: WriteNoteOutputSchema,

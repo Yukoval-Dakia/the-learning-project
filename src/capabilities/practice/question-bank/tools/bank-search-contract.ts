@@ -4,35 +4,82 @@ export const BANK_SEARCH_POLICY = 'bank-evidence-v3';
 const Verdict = z.enum(['supported', 'contradicted', 'unknown']);
 export const SearchBankInputSchema = z
   .object({
-    query: z.string().max(400).optional(),
-    use: z.enum(['inventory', 'dedup', 'practice', 'inspect']).optional(),
-    count: z.number().int().min(0).optional(),
-    page_size: z.number().int().min(1).max(20).optional(),
+    query: z
+      .string()
+      .max(400)
+      .optional()
+      .describe("Retrieval text — preserve the learner's original wording."),
+    use: z
+      .enum(['inventory', 'dedup', 'practice', 'inspect'])
+      .optional()
+      .describe(
+        'Lane: inventory = admitted/servable stock for a gap ticket (question_preparer default, 10/page); ' +
+          'dedup = active + pending/withheld + draft candidates before adding — broaden KC/kind filters, a ' +
+          'mislabeled duplicate hides; ref=null means an unread unpublished draft, never proof of no duplicate; ' +
+          'practice = learner pool (default for other callers, 5/page); inspect = free look.',
+      ),
+    count: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Copy the ticket goal quantity here — the inventory goal, not a page limit.'),
+    page_size: z
+      .number()
+      .int()
+      .min(1)
+      .max(20)
+      .optional()
+      .describe('Pagination only — never narrows the inventory goal.'),
     filters: z
       .object({
-        subject: z.string().optional(),
-        knowledge_ids: z.array(z.string()).max(50).optional(),
-        knowledge_mode: z.enum(['all', 'any']).optional(),
-        kinds: z.array(z.string().min(1)).min(1).max(10).optional(),
+        subject: z.string().optional().describe('Subject/domain filter.'),
+        knowledge_ids: z
+          .array(z.string())
+          .max(50)
+          .optional()
+          .describe('KC scope; inventory defaults to all KCs on ONE question.'),
+        knowledge_mode: z
+          .enum(['all', 'any'])
+          .optional()
+          .describe('all = every listed KC; any = at least one.'),
+        kinds: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(10)
+          .optional()
+          .describe('Allowed-type union — not one question of every kind.'),
         kind: z.string().optional(),
         difficulty: z
           .object({
             basis: z.enum(['authored', 'calibrated']),
             range: z.tuple([z.number(), z.number()]),
           })
-          .optional(),
+          .optional()
+          .describe('Numeric scale/range only — never invent a range from a relative band.'),
         terms: z.array(z.string().min(1).max(100)).max(10).optional(),
         history: z.enum(['any', 'unseen', 'wrong']).optional(),
         exclude_refs: z.array(z.string()).max(50).optional(),
       })
       .strict()
-      .optional(),
+      .optional()
+      .describe('Deterministic scope — narrows recall, judges nothing.'),
     conditions: z
       .array(z.object({ text: z.string().min(1).max(400), required: z.boolean() }).strict())
       .max(10)
-      .optional(),
-    like_ref: z.string().optional(),
-    cursor: z.string().max(6000).optional(),
+      .optional()
+      .describe(
+        '[{text, required}] — required/preferred ticket semantics you judge with same-question joint evidence.',
+      ),
+    like_ref: z
+      .string()
+      .optional()
+      .describe('Bank ref of a question to find similar candidates for.'),
+    cursor: z
+      .string()
+      .max(6000)
+      .optional()
+      .describe('Server-signed snapshot continuation — resubmit it alone and unchanged.'),
   })
   .strict()
   .superRefine((v, ctx) => {

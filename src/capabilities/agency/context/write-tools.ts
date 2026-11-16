@@ -23,7 +23,7 @@ export const rememberLearnerTool: DomainTool<
   z.infer<typeof ChangeResult>
 > = {
   name: 'remember_learner',
-  description: `学习者说出希望记住的偏好、称呼、语气、persona 或个人事实时，回复前调用，确认只用工具实际返回值。learner_words 必须逐字引用本轮原话。${COMMUNICATION_RULES}${FACT_PRESENTATION_RULES}其他主题自由命名。只记事实，不推断掌握度。不用于学习安排（用 record_steering）。`,
+  description: `Call before replying when the learner states a preference, form of address, tone, persona, or personal fact they want remembered — confirm only from the tool result. learner_words MUST quote the learner's words verbatim from this message. ${COMMUNICATION_RULES}${FACT_PRESENTATION_RULES}Other topics may be named freely. Facts only — never infer mastery; use record_steering for study scheduling.`,
   effect: 'write',
   costClass: 'local',
   mirrorEvent: 'when_causal',

@@ -850,7 +850,7 @@ export const getSubjectGraphOverviewTool: DomainTool<OverviewInput, OverviewOutp
 export const queryKnowledgeTool: DomainTool<QueryKnowledgeInput, QueryKnowledgeOutput> = {
   name: 'query_knowledge',
   description:
-    'Find active knowledge nodes by id or text inside one effective subject domain and return path, local edge counts, optional stats, and recent failure snippets. subjectId is the domain scope (for example math/yuwen), never a node id. nodeId and query are mutually exclusive exact selectors. Empty nodes means no active match in that exact domain/query scope; it cannot prove global absence, archived absence, or that a node never existed. edges only cover returned active nodes and requested relation types; an empty edge list is not global absence. Unrequested stats/recent_failures are not observed, never zero or absent failures. Read query_scope, lookup_status, coverage, and claim_boundaries before making a negative or complete-expansion claim.',
+    'Find active knowledge nodes by id or text inside one effective subject domain — path, local edge counts, optional stats, recent failure snippets. subjectId is the domain scope (e.g. math/yuwen), never a node id; nodeId and query are mutually exclusive. Empty results cover only the exact requested scope and cannot prove global or archived absence; an empty edge list is not absence either. Unrequested stats/recent_failures are unobserved, never zero or absent. Read query_scope, lookup_status, coverage and claim_boundaries before a negative or complete-expansion claim.',
   effect: 'read',
   inputSchema: QueryKnowledgeInputSchema,
   outputSchema: QueryKnowledgeOutputSchema,

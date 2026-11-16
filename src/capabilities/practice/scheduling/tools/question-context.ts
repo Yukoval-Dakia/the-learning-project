@@ -881,7 +881,7 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
   {
     name: 'get_question_context',
     description:
-      'Learner-state context for one question: attempts, reviews, FSRS state, linked records, variants, knowledge paths, and assets. ADR-0072: bank CONTENT reads go through read_bank (versioned refs from search_bank) — this tool remains the learner-side read (its content projection stays for the coach/dreaming/maintenance faces; final home decided with the learner-brain line). Check availability first: lifecycle zeros with observation_status=not_observed are compatibility placeholders for missing or protected diagnostic questions, not observed facts.',
+      'Learner-state context for one question: attempts, reviews, FSRS state, linked records, variants, knowledge paths, and assets. Bank CONTENT reads go through read_bank (versioned refs from search_bank); this is the learner-side read. Check availability first: lifecycle zeros with observation_status=not_observed are compatibility placeholders for missing or protected diagnostic questions, not observed facts.',
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,
@@ -902,7 +902,7 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
 export const getReviewDueTool: DomainTool<GetReviewDueInput, GetReviewDueOutput> = {
   name: 'get_review_due',
   description:
-    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. rows=[] means this call returned zero actionable rows, NOT that the queue is empty. Use queue_assertion as the authoritative claim surface: cleared=false is supported by at least one returned actionable row; every null is unobserved and must never be converted to 0 or true. Report due returned rows, material due-state count, due completeness, and future returned/total/completeness separately. queue_coverage.completeness=unknown and supports_exhaustive_zero_claim=false forbid complete/cleared/global-zero claims. entity_status_coverage=not_observed forbids pending/in-progress entity counts. Never mutates FSRS.',
+    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. rows=[] means zero returned rows, NOT an empty queue — queue_assertion is the authoritative claim surface: cleared=false is supported by ≥1 returned row; every null is unobserved and must never be converted to 0 or true. Report due returned/material/completeness and future returned/total/completeness separately. queue_coverage.completeness=unknown or supports_exhaustive_zero_claim=false forbids complete/cleared/global-zero claims; entity_status_coverage=not_observed forbids pending/in-progress entity counts. Never mutates FSRS.',
   effect: 'read',
   inputSchema: GetReviewDueInputSchema,
   outputSchema: GetReviewDueOutputSchema,

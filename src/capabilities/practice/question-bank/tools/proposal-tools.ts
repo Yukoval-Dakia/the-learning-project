@@ -62,7 +62,9 @@ type AuthorQuestionSeed =
 // `validateAuthorQuestionInput` inside execute (NOT on the schema), keeping the
 // schema a pure ZodObject.
 const AuthorQuestionInputSchema = z.object({
-  seed_mode: z.enum(['variant', 'record', 'teaching_draft']),
+  seed_mode: z
+    .enum(['variant', 'record', 'teaching_draft'])
+    .describe('teaching_draft = write draft yourself; variant/record keep their proposal paths.'),
   // variant seed
   attempt_event_id: z.string().min(1).optional(),
   // ADR-0032 D2 — count>1 is now allowed in principle; the variant core still
@@ -73,11 +75,30 @@ const AuthorQuestionInputSchema = z.object({
   reasoning: z.string().min(1).max(2000).optional(),
   // Opaque record-promotion draft, consumed by the record_promotion accept
   // applier; z.json instead of an unconstrained value (YUK-1553 C1-1).
-  draft: OpaqueJsonInput.optional(),
+  draft: OpaqueJsonInput.optional().describe(
+    'teaching_draft: {stem_md, response, solution_md?}. response.form: single_choice(options,answer_index) | multi_choice(options,answer_indices) | blank(blanks:[{answer,accepted?,numeric?}]) | matching(left,right,pairs) | break_tap(segments) | ordering(objects_in_order). Free response has no automatic grader — prefer a deterministic form.',
+  ),
   suggestion_kind: SuggestionKind.optional(),
-  knowledge_ids: z.array(z.string().min(1)).optional(),
-  subject_id: z.string().min(1).max(160).optional(),
-  learner_topic: z.string().min(1).max(200).optional(),
+  knowledge_ids: z
+    .array(z.string().min(1))
+    .optional()
+    .describe('Prefer confirmed matching KCs; [] + subject_id + learner_topic when no node fits.'),
+  subject_id: z
+    .string()
+    .min(1)
+    .max(160)
+    .optional()
+    .describe(
+      'Existing subject id; for an unregistered discipline its name — the server creates the subject only when the learner asked to study it, else returns a typed missing-subject problem.',
+    ),
+  learner_topic: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Exact topic substring from the learner's own message — used for exact-name matching.",
+    ),
   difficulty: z.number().int().min(1).max(5).optional(),
 });
 
@@ -502,7 +523,7 @@ async function authorQuestionExecute(
 export const authorQuestionTool: DomainTool<AuthorQuestionInput, AuthorQuestionOutput> = {
   name: 'author_question',
   description:
-    'Create one question with seed_mode="teaching_draft": write draft={stem_md,response,solution_md?}. Prefer confirmed matching knowledge_ids. If no suitable knowledge node exists, pass knowledge_ids=[], subject_id (existing subject ID), learner_topic (exact topic substring from this user request). Match the discipline to existing subjects first; a topic is not a new subject. For an unregistered discipline use its name as subject_id: when the learner message itself says they want to study it, the server creates the subject and files the question under its root; otherwise it returns a typed missing-subject problem. In the missing case explain only that the subject is not available and nothing was saved. If subject_created=true and the question was not saved, tell the learner the subject exists but the question was not saved; retrying the same subject reuses it. Never show problem codes or suggest creating subjects, roots, nodes, proposals or inbox confirmations. You may explain a question in chat, explicitly saying it will not enter the bank. Do not retry this missing-subject problem. When no suitable node exists you may first call propose_knowledge_mutation to propose the topic as a child node — it auto-applies later; submit the question as usual without waiting for placement. Never ask confirmation. On root fallback repeat placement_note once. response.form: single_choice(options,answer_index), multi_choice(options,answer_indices), blank(blanks:[{answer,accepted?,numeric?}]), matching(left,right,pairs), break_tap(segments), ordering(objects_in_order). Direct bank submission, no inbox. Give bank_path; only admitted questions can be practiced. Free response has no automatic grader today; offer a deterministic form. variant/record retain proposal paths.',
+    'Create one question. teaching_draft: write draft and prefer confirmed matching knowledge_ids; match the discipline to existing subjects first — a topic is not a new subject. If no node fits you may first call propose_knowledge_mutation for the topic, but submit the question as usual without waiting for it. On a missing-subject problem explain only that the subject is unavailable and nothing was saved — never show problem codes or suggest creating subjects/nodes/proposals, and do not retry it. If subject_created=true and the question was not saved, the subject exists and a retry reuses it. You may explain a question in chat while saying it will not enter the bank. Never ask confirmation; on root fallback repeat placement_note once. Direct bank submission, no inbox — return bank_path; only admitted questions can be practiced.',
 
   effect: 'propose',
   inputSchema: AuthorQuestionInputSchema,

@@ -631,7 +631,7 @@ async function fileBankGapWithEvidence(
 export const fileBankGapTool: DomainTool<FileBankGapInput, FileBankGapOutput> = {
   name: 'file_bank_gap',
   description:
-    'File a supply demand using a v3 search_id, original demand statement and cited per-ref assessments. The server loads its own signed snapshot and rechecks actor, versions, serving state, scope and required/joint judgments; caller_assessed never becomes a database semantic fact. unknown, incomplete recall or unsupported supply filters are held, not evidence that the bank has no question. Pass request_id for idempotency and the full EvidenceDemandV1 controls/context. Same id+content replays; changed content is rejected. Budget, deadline, cooldown and transactional ticket/job lineage remain enforced before paid work. No raw search_evidence or model-authored MAC is accepted.',
+    'File a supply demand using a v3 search_id, original demand statement and cited per-ref assessments. The server loads its own signed snapshot and rechecks actor, versions, serving state, scope and required/joint judgments — caller_assessed never becomes a database fact. unknown, incomplete recall or unsupported supply filters are held, not evidence the bank has no question. Pass request_id for idempotency with the full EvidenceDemandV1 controls/context: same id+content replays, changed content is rejected. Budget, deadline, cooldown and ticket/job lineage are enforced before paid work. No raw search_evidence or model-authored MAC is accepted. A claim recorded as claimed_not_dispatched is never auto-redispatched — decide the next step yourself.',
   effect: 'write',
   inputSchema: FileBankGapInputSchema,
   outputSchema: FileBankGapOutputSchema,
