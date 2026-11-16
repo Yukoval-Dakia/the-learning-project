@@ -1,5 +1,5 @@
-import { and, eq, inArray } from 'drizzle-orm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFailed } from 'vitest';
 
 import {
   type EnqueueVerifyFn,
@@ -63,6 +63,25 @@ describe('verify dispatch outbox (YUK-700)', () => {
   // @fails-if the bound claim does not fence concurrent drains — a second
   // drain would mint a second paid verify for the same intent
   it('concurrent drains converge on one engine delivery per bound batch', async () => {
+    onTestFailed(async () => {
+      const events = await db.execute(sql`
+        SELECT action, subject_id,
+          payload->>'delivery_id' AS delivery_id,
+          payload->'question_ids' AS question_ids,
+          payload->>'disposition' AS disposition,
+          payload->>'verifier_kind' AS verifier_kind
+        FROM event
+        WHERE action IN (
+          'experimental:verify_dispatch_intent',
+          'experimental:verify_dispatch_bound',
+          'experimental:verify_dispatch')
+        ORDER BY created_at, id`);
+      const jobs = await db.execute(sql`
+        SELECT id, state, data->'question_ids' AS question_ids
+        FROM pgboss.job WHERE name = 'quiz_verify' ORDER BY created_on`);
+      console.log('SNAPSHOT dispatch events:', JSON.stringify(events));
+      console.log('SNAPSHOT pgboss jobs:', JSON.stringify(jobs));
+    });
     await Promise.all([seedQuestion('q-c1', 'quiz_gen'), seedQuestion('q-c2', 'quiz_gen')]);
     await Promise.all([seedIntent('q-c1', 'quiz_verify'), seedIntent('q-c2', 'quiz_verify')]);
     const enqueue: EnqueueVerifyFn = async (verifier, questionIds, options) => {

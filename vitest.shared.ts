@@ -89,6 +89,7 @@ export const fastTestInclude = [
 ];
 
 export const dbTestInclude = [
+  'src/server/boss/verify-dispatch-outbox.flake-probe.db.test.ts',
   'src/server/ai/provider-stream-guards.db.test.ts',
   'src/capabilities/practice/grading/server/photo-gate.db.test.ts',
   'src/capabilities/shell/api/proposal-reason-privacy.db.test.ts',
