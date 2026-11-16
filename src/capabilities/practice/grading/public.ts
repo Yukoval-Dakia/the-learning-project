@@ -69,6 +69,7 @@ export {
   type MultimodalDirectImageFetchFn,
   type MultimodalDirectRunTaskFn,
   createDefaultJudgeInvoker,
+  defaultImageFetch,
   evaluateAttempt,
   evaluateSubmission,
   isModelBackedJudgeRoute,
@@ -83,6 +84,7 @@ export {
 export {
   activateSubmissionCandidate,
   createFormalModelExecutor,
+  withdrawCapturedOccurrence,
 } from './server/judge/evaluate-submission';
 export { assertGeneratedQuestionHasJudgeContract } from './server/judge/question-contract';
 export {

@@ -643,7 +643,8 @@ async function runIndependentSolutionInternal(
     let images: Array<{ data: string; mediaType: string }>;
     try {
       const imageFetchFn =
-        opts.imageFetchFn ?? (await import('@/kernel/records/assessment-assets')).defaultImageFetch;
+        opts.imageFetchFn ??
+        (await import('@/capabilities/practice/grading/public')).defaultImageFetch;
       images = await imageFetchFn(promptImageRefs, opts.db);
     } catch (err) {
       return {

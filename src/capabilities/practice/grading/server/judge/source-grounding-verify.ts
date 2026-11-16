@@ -19,8 +19,6 @@ import {
   type SourceGroundingVerifyOutputT,
 } from '@/core/schema/source-grounding';
 import type { Db } from '@/db/client';
-// Reuse the steps@1 R2 image fetcher verbatim — no R2 logic duplicated here.
-import { defaultImageFetch } from '@/kernel/records/assessment-assets';
 import { applicableVisionJudgeOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
@@ -28,6 +26,8 @@ import {
   defaultStructuredRunTaskFn,
   parseStructuredTaskOutput,
 } from './judge-output-parse';
+// Reuse the steps@1 R2 image fetcher verbatim — no R2 logic duplicated here.
+import { defaultImageFetch } from './steps-judge';
 
 // The registry-declared structuredOutputSchema (the single, audited source) drives the
 // app-level Zod parse, mirroring the multimodal/steps judges; lanes without a transport

@@ -16,7 +16,6 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import type { FormalAttemptPreview } from '@/kernel/judge';
 import { lockAssessmentAttemptCapture } from '@/kernel/locks/grading';
 import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import {
@@ -102,7 +101,7 @@ export async function previewFormalAttempt(
     /** A superseded accepted original must finish without another paid judgment. */
     hold?: PendingStateT;
   } = {},
-): Promise<FormalAttemptPreview> {
+) {
   const { issuance, revision, scopedBasis, scopedUnitIds, submission, assisted } =
     await prepareFormalAttemptSubmission(database, entry, questionId, request);
   const hold = options.hold;

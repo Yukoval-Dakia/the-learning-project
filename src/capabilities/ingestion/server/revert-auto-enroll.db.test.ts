@@ -1,8 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
-import { installPracticeHost } from '@/capabilities/practice/public';
 import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import {
@@ -153,7 +152,6 @@ async function seedAndAutoEnroll(
 }
 
 describe('revertAutoEnrolledBlock', () => {
-  beforeAll(installPracticeHost);
   beforeEach(async () => {
     await resetDb();
   });
