@@ -39,7 +39,20 @@ export async function setup() {
   // testcontainer. (Previously this guarded a single accumulating fork.)
   container = await new PostgreSqlContainer('pgvector/pgvector:pg16')
     .withTmpFs({ '/var/lib/postgresql/data': 'rw,size=2g' })
-    .withCommand(['postgres', '-c', 'max_connections=500'])
+    .withCommand([
+      'postgres',
+      '-c', 'max_connections=64',
+      '-c', 'shared_buffers=32MB',
+      '-c', 'work_mem=2MB',
+      '-c', 'maintenance_work_mem=32MB',
+      '-c', 'max_parallel_workers=0',
+      '-c', 'max_parallel_workers_per_gather=0',
+      '-c', 'jit=off',
+      '-c', 'autovacuum=off',
+      '-c', 'fsync=off',
+      '-c', 'synchronous_commit=off',
+      '-c', 'full_page_writes=off',
+    ])
     .start();
   const uri = container.getConnectionUri();
   process.env.TEST_DATABASE_URL = uri;
