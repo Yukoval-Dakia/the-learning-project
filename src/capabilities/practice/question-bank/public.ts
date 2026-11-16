@@ -87,6 +87,8 @@ export {
   type ExactQuestionDuplicateKnowledgeMerge,
   canonicalQuestionContentHash,
   canonicalSourcedQuestionContentHash,
+  canonicalTypedQuestionContentHash,
+  findTypedQuestionDuplicate,
   combineExactDuplicateKnowledgeIds,
   mergeExactQuestionDuplicateKnowledgeIds,
   settleOneQuestionPageHit,

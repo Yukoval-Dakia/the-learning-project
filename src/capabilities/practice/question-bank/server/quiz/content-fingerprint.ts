@@ -1,14 +1,21 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
+import { ExecutionPlan, QuestionGroupStructure, ResponseSpec, ScoringBasis, type SelectSlotT } from '@/core/schema/assessment';
+import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
+import type { ScoringRuleT } from '@/core/schema/assessment/scoring-rule';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
-import type { QuestionDraftDocumentT } from '@/core/schema/question-draft';
+import { DraftRubric, type QuestionDraftDocumentT } from '@/core/schema/question-draft';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
-import { event, knowledge, question } from '@/db/schema';
+import { event, knowledge, question, question_group_lifecycle, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';
-import { draftCanonicalIdentity } from '@/kernel/records/question-draft-contract';
+import {
+  draftCanonicalIdentity,
+  draftDocumentToContract,
+  revisionToDraftDocument,
+} from '@/kernel/records/question-draft-contract';
 import { enrollAddedKnowledgeScheduling } from '../question-scheduling-enrollment';
 
 // Bumping this version rewrites the canonical string, so every persisted
@@ -120,27 +127,210 @@ export function canonicalSourcedQuestionContentHash(
   input: Pick<SourcedQuestionT, 'prompt_md' | 'reference_md' | 'choices_md' | 'rubric_json'>,
   document: QuestionDraftDocumentT | null,
 ): string {
-  return canonicalQuestionContentHash(
-    document != null
-      ? {
-          ...draftCanonicalIdentity(document),
-          declaredParts: document.parts.map((part) => ({
-            promptMd: part.prompt_md,
-            units: part.units.map((unit) =>
-              draftCanonicalIdentity({
-                ...document,
-                parts: [{ ...part, units: [unit] }],
-              }),
-            ),
-          })),
-        }
-      : {
+  return document != null
+    ? canonicalTypedQuestionContentHash(document)
+    : canonicalQuestionContentHash({
           promptMd: input.prompt_md,
           referenceMd: input.reference_md,
           choicesMd: input.choices_md,
           rubricJson: input.rubric_json,
-        },
+      });
+}
+
+// Grading keys can deliberately distinguish Unicode and whitespace. Unlike flat v1,
+// semantic JSON sorts keys without folding its string values.
+function typedJson(value: unknown): string {
+  return JSON.stringify(value, (_key, entry) =>
+    entry != null && typeof entry === 'object' && !Array.isArray(entry)
+      ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+      : entry,
   );
+}
+
+const contentMarkdown = (value: string) =>
+  value.replace(/!\[([^\]]*)\]\((?:\\.|[^)])*\)/g, '![$1](IMAGE)');
+
+function selectItemContent(slot: SelectSlotT, id: string): unknown {
+  const item = slot.items.find((item) => item.item_id === id);
+  if (item == null) return { unresolved: true };
+  return {
+    ...(item.label_md != null ? { label: contentMarkdown(item.label_md) } : {}),
+    ...(item.coordinates != null ? {
+      coordinates: Object.fromEntries(Object.entries(item.coordinates).map(([axis, coordinate]) => [
+        axis, slot.axes?.[axis]?.find((entry) => entry.id === coordinate)?.label_md ?? null,
+      ])),
+    } : {}),
+    ...(item.gap_after_codepoint != null ? { gap: item.gap_after_codepoint } : {}),
+    ...(item.label_md == null && item.coordinates == null && item.gap_after_codepoint == null
+      ? { displayed_token: item.item_id } : {}),
+  };
+}
+
+function byTypedContent(a: unknown, b: unknown): number {
+  const left = typedJson(a), right = typedJson(b);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function ruleReferenceContent(statement: string): unknown {
+  // criterionFor packs a DraftRubric after the reference. Criterion ids and metadata
+  // address that rubric; they are not its grading statements or awards.
+  const split = statement.lastIndexOf('\n\n');
+  const tail = split < 0 ? statement : statement.slice(split + 2);
+  try {
+    const rubric = DraftRubric.safeParse(JSON.parse(tail));
+    if (rubric.success) return {
+      reference: split < 0 ? '' : contentMarkdown(statement.slice(0, split)),
+      rubric: {
+        guidance: rubric.data.guidance_md,
+        criteria: rubric.data.criteria.map((criterion) => ({
+          statement: criterion.statement_md, max: criterion.max,
+          allowed_awards: criterion.allowed_awards,
+        })),
+      },
+    };
+  } catch { /* Plain reference text is already the authoritative statement. */ }
+  return contentMarkdown(statement);
+}
+
+function typedQuestionContent(
+  document: QuestionDraftDocumentT,
+  revision?: typeof question_revision.$inferSelect,
+): string {
+  const contract = revision != null
+    ? { ...revision, conversion_issues: [] }
+    : draftDocumentToContract(document, 'content');
+  const material = (id: string) => {
+    const value = contract.structure.materials.find((material) => material.material_id === id);
+    return value == null ? { unresolved: true } : {
+      kind: value.kind, digest: value.asset.digest, public: isPublicSharedMaterial(value),
+      caption: value.caption, alt: value.alt_text,
+      text: value.content_md != null ? contentMarkdown(value.content_md) : undefined,
+    };
+  };
+  return typedJson({
+    typed_content_version: 2,
+    aggregation: contract.scoring_basis.aggregation,
+    blank_scores_zero: contract.scoring_basis.blank_scores_zero,
+    issues: [...new Set(contract.conversion_issues.map((issue) => issue.code))].sort(),
+    parts: document.parts.map((part) => ({
+      prompt: contentMarkdown(part.prompt_md),
+      materials: part.material_ids.map(material),
+      blank_order: part.blank_order?.map((id) => part.units.findIndex((unit) => unit.slot_id === id)),
+      units: part.units.map((unit) => {
+        const slot = contract.response_spec.slots.find((slot) => slot.slot_id === unit.slot_id);
+        const scoring = contract.scoring_basis.units.find((scoring) => scoring.scoring_unit_id === unit.unit_id);
+        const executor = contract.execution_plan.assignments.find((assignment) =>
+          assignment.scoring_unit_ids.includes(unit.unit_id))?.executor;
+        const criterion = scoring?.criterion;
+        const award = (value: ScoringRuleT['otherwise']) =>
+          'per_item' in value && slot?.kind === 'select'
+            ? { ...value, per_item: Object.entries(value.per_item).map(([id, points]) => ({
+                item: selectItemContent(slot, id), points,
+              })).sort(byTypedContent) }
+            : value;
+        return {
+          response: slot?.kind === 'select' ? {
+            kind: slot.kind, pick: slot.pick,
+            text: slot.text,
+            axes: slot.axes != null ? Object.fromEntries(Object.entries(slot.axes).map(([axis, entries]) => [
+              axis, entries.map((entry) => contentMarkdown(entry.label_md)).sort(),
+            ])) : undefined,
+            items: slot.axes != null || slot.text != null
+              ? slot.items.map((item) => selectItemContent(slot, item.item_id)).sort(byTypedContent)
+              : slot.items.map((item) => selectItemContent(slot, item.item_id)),
+            at_most_per_coordinate: slot.at_most_per_coordinate,
+          } : slot != null ? Object.fromEntries(Object.entries(slot).filter(([key]) =>
+            key !== 'slot_id' && key !== 'part_id')) : null,
+          criterion: criterion?.kind === 'select_key' && slot?.kind === 'select'
+            ? { kind: criterion.kind, accepted: criterion.accepted_item_ids.map((id) =>
+                selectItemContent(slot, id)).sort(byTypedContent) }
+            : criterion?.kind === 'rule_reference'
+              ? { kind: criterion.kind, statement: ruleReferenceContent(criterion.statement_md) }
+              : criterion ?? null,
+          points: scoring?.points,
+          materials: scoring?.material_refs.map(material),
+          rule: scoring?.rule != null ? {
+            version: scoring.rule.version,
+            cases: scoring.rule.cases.map((entry) => ({ when: entry.when, award: award(entry.award) })),
+            otherwise: award(scoring.rule.otherwise),
+          } : null,
+          executor: executor?.kind === 'deterministic'
+            ? { kind: executor.kind, comparator: executor.comparator }
+            : executor?.kind === 'model_executor'
+              ? { kind: executor.kind, task_kind: executor.task_kind }
+              : executor?.kind,
+        };
+      }),
+    })),
+  });
+}
+
+/** Content only: never used for a sealed revision, request fingerprint or paid receipt. */
+export function canonicalTypedQuestionContentHash(document: QuestionDraftDocumentT): string {
+  return createHash('sha256').update(typedQuestionContent(document)).digest('hex');
+}
+
+async function currentTypedDocument(db: Db | Tx, id: string): Promise<{
+  document: QuestionDraftDocumentT; revision: typeof question_revision.$inferSelect;
+} | null> {
+  const [row] = await db.select({ revision: question_revision, parentId: question.parent_question_id })
+    .from(question)
+    .innerJoin(question_group_lifecycle,
+      eq(question_group_lifecycle.group_id, sql`COALESCE(${question.parent_question_id}, ${question.id})`))
+    .innerJoin(question_revision, eq(question_revision.revision_id, question_group_lifecycle.current_revision_id))
+    .where(eq(question.id, id)).limit(1);
+  if (row == null) return null;
+  try {
+    if (!QuestionGroupStructure.safeParse(row.revision.structure).success ||
+        !ResponseSpec.safeParse(row.revision.response_spec).success ||
+        !ScoringBasis.safeParse(row.revision.scoring_basis).success ||
+        !ExecutionPlan.safeParse(row.revision.execution_plan).success) return null;
+    const document = revisionToDraftDocument(row.revision);
+    if (document.parts.length === 0 || row.revision.scoring_basis.units.some((unit) =>
+      unit.criterion.kind !== 'select_key' && unit.criterion.kind !== 'blank_key' &&
+      unit.criterion.kind !== 'rule_reference') || document.parts.some((part) =>
+        part.units.some((unit) => unit.metadata.unmapped_slot_kind != null))) return null;
+    if (row.parentId == null) return { document, revision: row.revision };
+    const part = document.parts.find((part) => part.part_id === id);
+    return part != null ? { document: { ...document, parts: [part] }, revision: row.revision } : null;
+  } catch { return null; }
+}
+
+type FlatSourcedContent = Pick<SourcedQuestionT, 'prompt_md' | 'reference_md' | 'choices_md' | 'rubric_json'>;
+
+/** Legacy hashes/stems locate candidates only; the current complete typed content must agree. */
+export async function findTypedQuestionDuplicate(
+  db: Db | Tx,
+  input: { document: QuestionDraftDocumentT; canonicalContentHash?: string;
+    legacyFlatContent?: FlatSourcedContent; excludeQuestionId?: string },
+): Promise<{ id: string; canonicalContentHash: string } | null> {
+  const identity = draftCanonicalIdentity(input.document);
+  const canonicalHash = canonicalTypedQuestionContentHash(input.document);
+  const legacyDeclaredHash = canonicalQuestionContentHash({ ...identity,
+    declaredParts: input.document.parts.map((part) => ({ promptMd: part.prompt_md,
+      units: part.units.map((unit) => draftCanonicalIdentity({ ...input.document,
+        parts: [{ ...part, units: [unit] }] })),
+    })),
+  });
+  const hashes = [canonicalHash, canonicalQuestionContentHash(identity), legacyDeclaredHash,
+    ...(input.canonicalContentHash != null ? [input.canonicalContentHash] : []),
+    ...(input.legacyFlatContent != null
+      ? [canonicalSourcedQuestionContentHash(input.legacyFlatContent, null)] : [])];
+  const candidates = await db.select({ id: question.id, hash: question.canonical_content_hash })
+    .from(question).where(and(isNotNull(question.canonical_content_hash),
+      or(inArray(question.canonical_content_hash, hashes), eq(question.prompt_md, identity.promptMd)),
+      ...(input.excludeQuestionId != null ? [ne(question.id, input.excludeQuestionId)] : [])))
+    .orderBy(sql`CASE WHEN ${question.canonical_content_hash} = ${canonicalHash} THEN 0 ELSE 1 END`,
+      question.created_at, question.id);
+  const content = typedQuestionContent(input.document);
+  for (const candidate of candidates) {
+    const current = await currentTypedDocument(db, candidate.id);
+    if (current != null && candidate.hash != null &&
+        typedQuestionContent(current.document, current.revision) === content) {
+      return { id: candidate.id, canonicalContentHash: candidate.hash };
+    }
+  }
+  return null;
 }
 
 export interface ExactQuestionDuplicate {
@@ -356,6 +546,8 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
   tx: Tx,
   params: {
     canonicalContentHash: string;
+    document?: QuestionDraftDocumentT;
+    legacyFlatContent?: FlatSourcedContent;
     knowledgeIds: string[];
     // jyeoo_fetch reuses this cross-KC dedup path via insertSourcedDraft.
     actorRef: 'quiz_gen' | 'sourcing' | 'jyeoo_fetch';
@@ -372,12 +564,19 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
   // onConflictDoNothing on the canonical hash, and the conflict loser re-enters here and
   // merges under the locks). Only a HIT acquires G and then re-reads FOR UPDATE, so every
   // path that touches the row or reaches enrollFsrsStateIfAbsent holds G first.
-  const peek = await tx
-    .select({ id: question.id })
-    .from(question)
-    .where(eq(question.canonical_content_hash, params.canonicalContentHash))
-    .limit(1);
+  const typedHit = params.document != null
+    ? await findTypedQuestionDuplicate(tx, {
+        document: params.document, canonicalContentHash: params.canonicalContentHash,
+        legacyFlatContent: params.legacyFlatContent,
+      })
+    : null;
+  const peek = params.document != null
+    ? typedHit != null ? [{ id: typedHit.id, hash: typedHit.canonicalContentHash }] : []
+    : await tx.select({ id: question.id, hash: question.canonical_content_hash })
+        .from(question).where(eq(question.canonical_content_hash, params.canonicalContentHash)).limit(1);
   if (peek.length === 0) return null;
+  const matchedHash = peek[0].hash;
+  if (matchedHash == null) return null;
 
   await acquireLearningStateWriteLock(tx);
   const rows = await tx
@@ -390,7 +589,7 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
       version: question.version,
     })
     .from(question)
-    .where(eq(question.canonical_content_hash, params.canonicalContentHash))
+    .where(and(eq(question.id, peek[0].id), eq(question.canonical_content_hash, matchedHash)))
     .limit(1)
     .for('update');
   const row = rows[0];
@@ -398,6 +597,11 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
   // out-of-band deletion (question rows are never deleted by production flows); treat as
   // a clean miss rather than inventing a row.
   if (!row) return null;
+  if (params.document != null) {
+    const current = await currentTypedDocument(tx, row.id);
+    if (current == null || typedQuestionContent(current.document, current.revision) !==
+        typedQuestionContent(params.document)) return null;
+  }
 
   const released = await releaseTerminalVerifiedDraft(
     tx,
@@ -407,7 +611,7 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
       source: row.source,
       metadata: row.metadata,
       version: row.version,
-      canonicalContentHash: params.canonicalContentHash,
+      canonicalContentHash: matchedHash,
     },
     params,
   );
@@ -467,7 +671,7 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
     .where(
       and(
         eq(question.id, row.id),
-        eq(question.canonical_content_hash, params.canonicalContentHash),
+        eq(question.canonical_content_hash, matchedHash),
       ),
     )
     .returning({ id: question.id });
@@ -501,7 +705,7 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
       before: { knowledge_ids: row.knowledgeIds },
       after: { knowledge_ids: knowledgeIds },
       reason: 'cross_kc_exact_duplicate',
-      canonical_content_hash: params.canonicalContentHash,
+      canonical_content_hash: matchedHash,
       added_knowledge_ids: addedKnowledgeIds,
       enrolled_knowledge_ids: enrolledKnowledgeIds,
       task_run_id: params.taskRunId ?? null,

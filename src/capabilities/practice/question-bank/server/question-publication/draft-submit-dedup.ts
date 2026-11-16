@@ -92,6 +92,7 @@ export async function deduplicateNewDraftInTx(
   const canonicalHash = input.sourced?.canonical_content_hash ?? params.canonicalHash;
   const merged = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
     canonicalContentHash: canonicalHash,
+    document: doc,
     knowledgeIds: doc.knowledge_ids,
     actorRef: 'sourcing',
     taskRunId,

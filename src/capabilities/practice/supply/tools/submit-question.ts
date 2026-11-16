@@ -480,6 +480,9 @@ async function runCandidateSubmit(
     await ctx.beforeIngestionWrite?.(tx);
     return mergeExactQuestionDuplicateKnowledgeIds(tx, {
       canonicalContentHash: canonicalHash,
+      ...(declaredDocument != null ? {
+        document: declaredDocument.document, legacyFlatContent: candidate.question,
+      } : {}),
       knowledgeIds,
       actorRef: routeConfig.mergeActorRef,
       taskRunId: ctx.taskRunId,

@@ -47,6 +47,7 @@ import { answerClassCompatible } from '@/subjects/question-kind';
 import {
   canonicalSourcedQuestionContentHash,
   declaredCandidateDocument,
+  findTypedQuestionDuplicate,
   nearDupComparableText,
 } from '../../question-bank/public';
 import { type BandLevelTarget, difficultyInBand, resolveBandLevelTarget } from './band-level';
@@ -702,16 +703,23 @@ async function runJyeooFetchCandidatesCore(
       }
 
       const canonicalHash = await canonicalJyeooQuestionHash(item.q, loadedImages);
+      const document = item.q.parts?.length
+        ? declaredCandidateDocument(item.q, 'jyeoo_fetch', item.q.knowledge_ids).document
+        : undefined;
 
       // 全局 exact-dup（advisory）：任何带同 hash 的 row（含 terminal-rejected draft——
       // 内容相同的题本就会被 verify 再拒，保守判重）都让候选丢弃。commit 侧的
       // mergeExact + ON CONFLICT 仍是权威判定。
-      const existing = await db
+      const existing = document != null
+        ? await findTypedQuestionDuplicate(db, {
+            document, canonicalContentHash: canonicalHash, legacyFlatContent: item.q,
+          })
+        : (await db
         .select({ id: question.id })
         .from(question)
         .where(eq(question.canonical_content_hash, canonicalHash))
-        .limit(1);
-      if (existing.length > 0) {
+        .limit(1))[0];
+      if (existing != null) {
         counts.deduped_exact += 1;
         dropped.push({
           sourceUrl: item.q.source_url,
@@ -721,9 +729,6 @@ async function runJyeooFetchCandidatesCore(
         continue;
       }
 
-      const document = item.q.parts?.length
-        ? declaredCandidateDocument(item.q, 'jyeoo_fetch', item.q.knowledge_ids).document
-        : undefined;
       const comparable =
         document != null
           ? nearDupComparableText(

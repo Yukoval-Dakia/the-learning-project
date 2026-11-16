@@ -1554,6 +1554,7 @@ describe('edit/submit question boundary', () => {
       { ...ACTOR, sessionId: null },
     );
     expect(first.status, JSON.stringify(first)).not.toBe('conflict');
+    if (!('question_id' in first)) throw new Error(JSON.stringify(first));
     expect(first.question_id, JSON.stringify(first)).toEqual(expect.any(String));
     const different = await saveDraftEdit(db, {
       input: {
@@ -1575,6 +1576,7 @@ describe('edit/submit question boundary', () => {
       { ...ACTOR, sessionId: null },
     );
     expect(second.status, JSON.stringify(second)).not.toBe('conflict');
+    if (!('question_id' in second)) throw new Error(JSON.stringify(second));
     expect(second.question_id, JSON.stringify(second)).toEqual(expect.any(String));
     expect(second.question_id).not.toBe(first.question_id);
     const replay = await submitDraftQuestion(
