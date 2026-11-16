@@ -427,43 +427,65 @@ describe('explicit single-event memory ingest recovery', () => {
   // @fails-if sessionless edits are rejected or sessionless inferred asks reach any provider lookup/add
   it('keeps a sessionless owner-edited conjecture verbatim while rejecting sessionless asks', async () => {
     const sourceId = 'sessionless-owner-edit';
-    await testDb()
-      .update(event)
-      .set({
-        action: 'rate',
-        subject_kind: 'event',
-        subject_id: 'conjecture-sessionless',
-        session_id: null,
-        payload: {
-          rating: 'accept',
-          conjecture_id: 'conjecture-sessionless',
-          corrected_by_owner: true,
-          corrected_claim_md: 'Preserve this corrected claim verbatim.',
-        },
-      })
-      .where(eq(event.id, (await stalledSource(sourceId)).sourceEventId));
+    await writeEvent(testDb(), {
+      id: 'conjecture-sessionless',
+      actor_kind: 'user',
+      actor_ref: 'user:self',
+      action: 'experimental:recovery_test_source',
+      subject_kind: 'query',
+      subject_id: 'query-recovery',
+      payload: {},
+      outcome: 'success',
+      ingest_at: new Date(),
+    });
+    // Normal ingestion requires a resolvable source and no prior provider-start fence.
+    await writeEvent(testDb(), {
+      id: sourceId,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'user:self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: 'conjecture-sessionless',
+      outcome: 'success',
+      payload: {
+        rating: 'accept',
+        conjecture_id: 'conjecture-sessionless',
+        corrected_by_owner: true,
+        corrected_claim_md: 'Preserve this corrected claim verbatim.',
+      },
+      ingest_at: new Date(),
+    });
     const boundary = providerBoundary();
+    const addVerbatimOnce = vi.fn(
+      async (_text, _metadata, _projectionKey, _operation, before) => {
+        await before();
+        return { results: [] };
+      },
+    );
     await buildMemoryEventIngestHandler(testDb(), boundary.boss, {
-      memoryClient: memoryClientMock({
-        addVerbatimOnce: vi.fn(async (_text, _metadata, _projectionKey, _operation, before) => {
-          await before();
-          return { results: [] };
-        }),
-      }),
+      memoryClient: memoryClientMock({ addVerbatimOnce }),
     })([{ data: { event_id: sourceId } }]);
+    expect(addVerbatimOnce).toHaveBeenCalledOnce();
+    expect(await readIngestCompleted(testDb(), sourceId)).toMatchObject({
+      resolution: 'provider_result',
+      memory_count: 0,
+    });
     expect(boundary.add).not.toHaveBeenCalled();
 
     const askId = 'sessionless-inferred-ask';
-    await testDb()
-      .update(event)
-      .set({
-        action: 'experimental:copilot_user_ask',
-        subject_kind: 'query',
-        subject_id: 'query-sessionless',
-        session_id: null,
-        payload: { user_message: 'This inferred ask must not be admitted.' },
-      })
-      .where(eq(event.id, (await stalledSource(askId)).sourceEventId));
+    await writeEvent(testDb(), {
+      id: askId,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'user:self',
+      action: 'experimental:copilot_user_ask',
+      subject_kind: 'query',
+      subject_id: 'query-sessionless',
+      outcome: 'success',
+      payload: { user_message: 'This inferred ask must not be admitted.' },
+      ingest_at: new Date(),
+    });
     await expect(
       buildMemoryEventIngestHandler(testDb(), boundary.boss, {
         memoryClient: boundary.client,
