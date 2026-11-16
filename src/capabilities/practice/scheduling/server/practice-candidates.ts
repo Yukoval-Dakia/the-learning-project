@@ -10,7 +10,7 @@
 // Dedupe key: refKind + refId + revision. Roles accumulate, so a question that is both due
 // and an active variant keeps BOTH facts. Nothing is written: no queue, no flag, no run.
 import { createHash } from 'node:crypto';
-import { and, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { KnowledgeSignal } from '@/core/schema/knowledge-signal';
@@ -47,7 +47,12 @@ import {
   type ActiveGoal,
   listActiveGoalsWithResolvedScope,
 } from '@/kernel/read-models/active-goal-scope';
+import {
+  nativeAttemptOutcome,
+  resolveVerdictsForNativeAttempts,
+} from '@/kernel/read-models/assessment-verdict';
 import { readCauseJudgment } from '@/kernel/read-models/cause-judgment';
+import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import {
   getNonKcKnowledgeIds,
   withoutNonKcKnowledgeIds,
@@ -351,7 +356,14 @@ async function readRevisions(
   return out;
 }
 
-type AttemptRow = { id: string; subject_id: string; outcome: string | null; created_at: Date };
+type AttemptRow = {
+  id: string;
+  action: string;
+  subject_id: string;
+  subject_kind: string;
+  outcome: string | null;
+  created_at: Date;
+};
 
 async function readAttemptWindows(
   db: DbLike,
@@ -362,8 +374,8 @@ async function readAttemptWindows(
   const ids = [...new Set(questionIds)];
   if (ids.length === 0) return out;
   const rows = await db.execute<AttemptRow>(sql`
-    select id, subject_id, outcome, created_at from (
-      select e.id, e.subject_id, e.outcome, e.created_at,
+    select id, action, subject_id, subject_kind, outcome, created_at from (
+      select e.id, e.action, e.subject_id, e.subject_kind, e.outcome, e.created_at,
         row_number() over (
           partition by e.subject_id
           order by e.created_at desc, e.dispatch_seq desc, e.id desc
@@ -398,16 +410,43 @@ async function readAttemptWindows(
     bucket.push(row);
     activeByQuestion.set(row.subject_id, bucket);
   }
+  // Native attempts carry their verdict in the linked submission/evaluation chain,
+  // not on event.outcome (which stays null). Resolve the effective verdict once
+  // over the bounded window so recent_attempts reflects the same truth the
+  // composer and derivation reads already use. The window query is already
+  // capped at ATTEMPT_WINDOW rows per question, so the follow-up load is bounded.
+  const nativeIds = [
+    ...new Set(
+      rows
+        .filter(
+          (row) =>
+            row.action === 'experimental:assessment_attempt' && row.subject_kind === 'question',
+        )
+        .map((row) => row.id),
+    ),
+  ];
+  const nativeRows = nativeIds.length
+    ? await db.select().from(event).where(inArray(event.id, nativeIds))
+    : [];
+  const nativeVerdicts = nativeRows.length
+    ? await resolveVerdictsForNativeAttempts(db, nativeRows)
+    : null;
+  const effectiveOutcome = (row: AttemptRow): string | null =>
+    row.action === 'experimental:assessment_attempt'
+      ? nativeAttemptOutcome(nativeVerdicts?.get(row.id))
+      : row.outcome;
   for (const id of ids) {
     const bucket = activeByQuestion.get(id) ?? [];
     const windowComplete = (fetchedByQuestion.get(id) ?? 0) < ATTEMPT_WINDOW;
     const counts = { success: 0, partial: 0, failure: 0 };
     for (const row of bucket) {
-      if (row.outcome === 'success') counts.success += 1;
-      else if (row.outcome === 'partial') counts.partial += 1;
-      else if (row.outcome === 'failure') counts.failure += 1;
+      const outcome = effectiveOutcome(row);
+      if (outcome === 'success') counts.success += 1;
+      else if (outcome === 'partial') counts.partial += 1;
+      else if (outcome === 'failure') counts.failure += 1;
     }
     const latest = bucket[0] ?? null;
+    const latestOutcome = latest === null ? null : effectiveOutcome(latest);
     out.set(id, {
       // A completed window is the lifetime history; a clipped window is only a floor.
       count: windowComplete
@@ -418,15 +457,11 @@ async function readAttemptWindows(
             'attempt_history_exceeds_window; count is a floor, not a lifetime total',
           ),
       outcomes: counts,
-      last_at: latest ? latest.created_at.toISOString() : null,
+      last_at: latest ? new Date(latest.created_at).toISOString() : null,
       last_outcome:
-        latest === null
-          ? null
-          : latest.outcome === 'success' ||
-              latest.outcome === 'partial' ||
-              latest.outcome === 'failure'
-            ? latest.outcome
-            : null,
+        latestOutcome === 'success' || latestOutcome === 'partial' || latestOutcome === 'failure'
+          ? latestOutcome
+          : null,
       window: ATTEMPT_WINDOW,
       window_complete: windowComplete,
     });
@@ -545,19 +580,11 @@ async function readPracticeCandidatesInSnapshot(
 
   // ── 2. Admitted mistake variants (same 7-day failure window as the composer).
   const since = new Date(asOf.getTime() - VARIANT_WINDOW_DAYS * 24 * 3600 * 1000);
-  const recentFailures = await db
-    .select({ qid: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'attempt'),
-        eq(event.outcome, 'failure'),
-        eq(event.subject_kind, 'question'),
-        gte(event.created_at, since),
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id));
-  const failedQids = [...new Set(recentFailures.map((row) => row.qid))];
+  // Same canonical failure owner the composer (stream-inputs) reads: an accepted
+  // native assessment failure qualifies a parent for its admitted mistake
+  // variants exactly like a legacy attempt failure does.
+  const recentFailures = await getCurrentFailureAttempts(db, { since, limit: null });
+  const failedQids = [...new Set(recentFailures.map((row) => row.question_id))];
   const variantCandidates = failedQids.length
     ? await db
         .select({

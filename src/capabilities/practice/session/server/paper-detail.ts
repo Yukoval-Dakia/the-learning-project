@@ -17,10 +17,7 @@ import {
   type JudgeVerdictProjection,
   resolveVerdictsForAttempts,
 } from '@/kernel/read-models/assessment-verdict';
-import {
-  learnerVisibleImageRefs,
-  loadLearnerImagePageIndex,
-} from '@/kernel/read-models/question-images';
+import { learnerVisibleImageRefs } from '@/kernel/read-models/question-images';
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
@@ -290,7 +287,6 @@ export async function getPaperDetail(
         part_index: question.part_index,
         image_refs: question.image_refs,
         metadata: question.metadata,
-        source: question.source,
         reference_md: question.reference_md,
         // Server-side only: feeds the display-subject bridge for notation; not
         // exposed on the learner-facing face.
@@ -302,7 +298,6 @@ export async function getPaperDetail(
       db,
       qRows.map((q) => ({ id: q.id, knowledge_ids: q.knowledge_ids ?? [] })),
     );
-    const imagePageIndex = await loadLearnerImagePageIndex(db, qRows);
     for (const q of qRows) {
       referenceMap.set(q.id, q.reference_md ?? null);
       questionMap.set(q.id, {
@@ -315,7 +310,7 @@ export async function getPaperDetail(
         parent_question_id: q.parent_question_id ?? null,
         part_index: q.part_index ?? null,
         // Whole photographed pages are machine prompt input, never a learner picture.
-        image_refs: learnerVisibleImageRefs(q, imagePageIndex),
+        image_refs: learnerVisibleImageRefs(q),
       });
     }
   }

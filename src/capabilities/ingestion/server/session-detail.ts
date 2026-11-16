@@ -1,12 +1,12 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
+
 import { type Tx, db } from '@/db/client';
 import { event, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { resolveDocumentDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { DuplicateUploadSchema } from '../api/contracts';
 import { DUPLICATE_UPLOAD_ACTION } from './duplicate-upload';
-import { readExtractionNotices } from './extraction-notices';
 
 const UsageReceiptMetadataSchema = z.object({
   engine: z.string().optional(),
@@ -138,7 +138,6 @@ export async function readIngestionSessionDetail(sessionId: string) {
       return {
         session: {
           ...session,
-          ...(await readExtractionNotices(tx, session.id)),
           created_at: session.created_at.toISOString(),
           updated_at: session.updated_at.toISOString(),
           duplicate_of: duplicateParsed.success ? duplicateParsed.data : null,

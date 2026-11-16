@@ -1,19 +1,14 @@
 // GET /api/ingestion/[id]/blocks
 //
-// Returns the session's question_block rows for the review/import UI, including the
-// stored judge confidence and a tolerant projection of the auto-enroll observation
-// when present.
+// Returns the session's question_block rows for the review/import UI, including a
+// tolerant projection of the judge's auto-enroll observation when present.
 
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
-import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { event, knowledge, question, question_block } from '@/db/schema';
+import { event, question, question_block } from '@/db/schema';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
-import { readWorkflowJudgeConfidence } from '@/kernel/read-models/workflow-judge-confidence';
-import { readRevertedBlockIds } from './block-revert-state';
-import { blockHasPrompt } from './capture/question-text';
 
 export async function readIngestionSessionBlocks(db: Db, params: { id: string }) {
   const sessionId = params.id;
@@ -44,8 +39,27 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
     .orderBy(asc(question_block.ordinal), asc(question_block.id));
 
   const blockIds = rows.map((r) => r.id);
-  const enrollmentInFlight = await hasInflightAutoEnroll(db, sessionId);
-  const revertedBlockIds = await readRevertedBlockIds(db, blockIds);
+  const enrolledQuestionIds = [
+    ...new Set(
+      rows
+        .map((r) => r.imported_question_id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0),
+    ),
+  ];
+  // The recording page must not re-derive enrollment state on the client: one server
+  // projection names what happened to each block and why it is still not in the library.
+  const enrolledQuestions =
+    enrolledQuestionIds.length === 0
+      ? []
+      : await db
+          .select({
+            id: question.id,
+            draft_status: question.draft_status,
+            metadata: question.metadata,
+          })
+          .from(question)
+          .where(inArray(question.id, enrolledQuestionIds));
+  const questionById = new Map(enrolledQuestions.map((row) => [row.id, row]));
   const observations =
     blockIds.length === 0
       ? []
@@ -69,166 +83,47 @@ export async function readIngestionSessionBlocks(db: Db, params: { id: string })
   const observationByBlockId = new Map<string, (typeof observations)[number]>();
   for (const obs of observations) observationByBlockId.set(obs.subject_id, obs);
 
-  // The judge confidence is stored on the enrolled question's metadata. Read it
-  // back per block so the review surface can show the honest "把握不高" signal.
-  const importedQuestionIds = [
-    ...new Set(rows.map((r) => r.imported_question_id).filter((id): id is string => id !== null)),
-  ];
-  const judgeConfidenceByQuestionId = new Map<string, number | null>();
-  const questionById = new Map<
-    string,
-    {
-      draft_status: string | null;
-      metadata: Record<string, unknown> | null;
-      knowledge_ids: string[];
-    }
-  >();
-  if (importedQuestionIds.length > 0) {
-    const questionRows = await db
-      .select({
-        id: question.id,
-        metadata: question.metadata,
-        draft_status: question.draft_status,
-        knowledge_ids: question.knowledge_ids,
-      })
-      .from(question)
-      .where(inArray(question.id, importedQuestionIds));
-    for (const row of questionRows) {
-      judgeConfidenceByQuestionId.set(row.id, readWorkflowJudgeConfidence(row.metadata));
-      questionById.set(row.id, {
-        draft_status: row.draft_status,
-        metadata: row.metadata,
-        knowledge_ids: row.knowledge_ids ?? [],
-      });
-    }
-  }
-  const knowledgeNames = await loadKnowledgeNames(db, questionById);
-
   return {
     rows: rows.map((r) => {
       const observation = observationByBlockId.get(r.id);
-      const projectedObservation = observation ? toAutoEnrollObservation(observation) : null;
-      const recordedConfidence = r.imported_question_id
-        ? (judgeConfidenceByQuestionId.get(r.imported_question_id) ?? null)
-        : null;
       return {
         ...r,
-        handwriting_trace: r.structured?.extraction_evidence?.handwriting_trace ?? null,
         created_at: Math.floor(r.created_at.getTime() / 1000),
-        workflow_judge_confidence: recordedConfidence ?? projectedObservation?.confidence ?? null,
-        auto_enroll_observation: projectedObservation,
-        ingestion_enrollment: toEnrollmentProjection(
-          r,
-          r.imported_question_id !== null ? questionById.get(r.imported_question_id) : undefined,
-          enrollmentInFlight,
-          revertedBlockIds.has(r.id),
-          knowledgeNames,
-        ),
+        auto_enroll_observation: observation ? toAutoEnrollObservation(observation) : null,
+        ingestion_enrollment: toEnrollmentProjection(r, questionById.get(r.imported_question_id ?? '')),
       };
     }),
   };
 }
 
-/**
- * True while the session still has a queued/running auto_enroll delivery. pgboss.job is
- * pg-boss owned; to_regclass keeps this honest on databases that never reached it. A
- * missing/in-flight job is the only "waiting" signal — anything else means the session's
- * enrollment has finished and a still-draft block is a failure.
- */
-export async function hasInflightAutoEnroll(db: Db, sessionId: string): Promise<boolean> {
-  const probe = await db.execute<{ reg: string | null }>(
-    sql`select to_regclass('pgboss.job') as reg`,
-  );
-  if (probe[0]?.reg == null) return false;
-  const rows = await db.execute<{ one: number }>(sql`
-    select 1 as one from pgboss.job
-    where name = 'auto_enroll'
-      and state in ('created','retry','active')
-      and data->>'sessionId' = ${sessionId}
-    limit 1
-  `);
-  return rows.length > 0;
-}
-
 /** How to read one block's enrollment without re-implementing the server gates. */
 function toEnrollmentProjection(
-  block: {
-    status: string;
-    extracted_prompt_md: string | null;
-    structured: StructuredQuestionT | null;
-  },
-  enrolled:
-    | {
-        draft_status: string | null;
-        metadata: Record<string, unknown> | null;
-        knowledge_ids: string[];
-      }
-    | undefined,
-  enrollmentInFlight: boolean,
-  reverted: boolean,
-  knowledgeNames: Map<string, string>,
+  block: { status: string; extracted_prompt_md: string | null; structured: unknown },
+  enrolled: { draft_status: string | null; metadata: Record<string, unknown> | null } | undefined,
 ) {
-  // The block status is the ground truth about what happened to this capture:
-  // imported/submitted/auto_enrolled all carry a question, ignored was an explicit
-  // learner choice, and only draft means "not in the library (yet)".
-  if (block.status === 'ignored') {
-    return {
-      state: 'ignored' as const,
-      reason: null,
-      knowledge: null,
-      knowledge_ids: [] as string[],
-      knowledge_labels: [] as Array<{ id: string; name: string }>,
-      library_visible: false,
-    };
-  }
-  if (block.status !== 'draft') {
-    const markers = enrolled?.metadata?.ingestion_enrollment as { knowledge?: unknown } | undefined;
-    // Synthetic ids (pending proposals, system nodes) are never learner-visible;
-    // the read must not leak them as labels either.
-    const knowledgeIds = learnerVisibleKnowledgeIds(enrolled?.knowledge_ids ?? []);
-    return {
-      state: 'in_library' as const,
-      reason: null,
-      knowledge:
-        markers?.knowledge === 'attributed' ||
-        markers?.knowledge === 'missing' ||
-        markers?.knowledge === 'restricted'
-          ? markers.knowledge
-          : null,
-      knowledge_ids: knowledgeIds,
-      knowledge_labels: knowledgeIds.map((id) => ({
-        id,
-        name: knowledgeNames.get(id) ?? id,
-      })),
-      library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,
-    };
-  }
-  // Enrollment is automatic. A draft block with a prompt is still waiting while its
-  // session has a queued/running auto_enroll delivery; once that has finished, the same
-  // row is a failure. A block with no printed prompt never had anything to publish.
-  if (reverted) {
-    // A learner-reverted block is intentionally out of the library; it is not a failed
-    // publication and the automatic worker will not touch it again.
+  if (block.status !== 'auto_enrolled') {
+    const hasPrompt =
+      (block.structured != null) || (block.extracted_prompt_md ?? '').trim().length > 0;
     return {
       state: 'not_enrolled' as const,
-      reason: 'reverted' as const,
+      reason: hasPrompt ? null : ('needs_text' as const),
       knowledge: null,
-      knowledge_ids: [] as string[],
-      knowledge_labels: [] as Array<{ id: string; name: string }>,
+      low_confidence: null,
       library_visible: null,
     };
   }
+  const markers = enrolled?.metadata?.ingestion_enrollment as
+    | { knowledge?: unknown; low_confidence?: unknown }
+    | undefined;
   return {
-    state: 'not_enrolled' as const,
-    reason: blockHasPrompt(block)
-      ? enrollmentInFlight
-        ? ('pending' as const)
-        : ('publish_failed' as const)
-      : ('needs_text' as const),
-    knowledge: null,
-    knowledge_ids: [] as string[],
-    knowledge_labels: [] as Array<{ id: string; name: string }>,
-    library_visible: null,
+    state: 'in_library' as const,
+    reason: null,
+    knowledge:
+      markers?.knowledge === 'attributed' || markers?.knowledge === 'missing'
+        ? markers.knowledge
+        : null,
+    low_confidence: typeof markers?.low_confidence === 'boolean' ? markers.low_confidence : null,
+    library_visible: enrolled ? enrolled.draft_status !== 'draft' : null,
   };
 }
 
@@ -246,9 +141,6 @@ function toAutoEnrollObservation(row: {
     route: stringOrNull(payload.route),
     confidence: numberOrNull(payload.confidence),
     threshold: numberOrNull(payload.threshold),
-    // Only the TaggingTask observes a candidate grid, so only derive-mode events
-    // carry this. Enroll-mode blocks have no grid to truncate.
-    grid_truncated: booleanOrNull(payload.grid_truncated),
     reasoning: stringOrNull(payload.reasoning),
     suggested_knowledge_ids: learnerVisibleKnowledgeIds(
       stringArray(payload.suggested_knowledge_ids),
@@ -308,32 +200,10 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
-function booleanOrNull(value: unknown): boolean | null {
-  return typeof value === 'boolean' ? value : null;
-}
-
 function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
-}
-
-/**
- * One batched name lookup for every enrolled question's attributed KCs, so the block
- * read can label the knowledge point without an N+1 query. Missing/archived nodes fall
- * back to their id at the call site.
- */
-async function loadKnowledgeNames(
-  db: Db,
-  questionById: Map<string, { knowledge_ids: string[] }>,
-): Promise<Map<string, string>> {
-  const ids = [...new Set([...questionById.values()].flatMap((row) => row.knowledge_ids))];
-  if (ids.length === 0) return new Map();
-  const rows = await db
-    .select({ id: knowledge.id, name: knowledge.name })
-    .from(knowledge)
-    .where(inArray(knowledge.id, ids));
-  return new Map(rows.map((row) => [row.id, row.name]));
 }

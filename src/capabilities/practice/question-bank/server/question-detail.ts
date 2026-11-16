@@ -20,17 +20,13 @@ import {
   getQuestionTimeline,
 } from '@/kernel/read-models/question-activity';
 import { declaredAdmissionOwned } from '@/kernel/read-models/question-admission-ownership';
-import {
-  learnerVisibleImageRefs,
-  loadLearnerImagePageIndex,
-} from '@/kernel/read-models/question-images';
+import { learnerVisibleImageRefs } from '@/kernel/read-models/question-images';
 import { loadFamilyMembers } from '@/kernel/read-models/questions';
 import { reviewTimingJson } from '@/kernel/read-models/review-timing';
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
-import { readWorkflowJudgeConfidence } from '@/kernel/read-models/workflow-judge-confidence';
 
 const DEFAULT_TIMELINE_LIMIT = 10;
 const MAX_TIMELINE_LIMIT = 50;
@@ -120,7 +116,7 @@ export interface QuestionDetailTimelineEntry {
     secondary_labels: Record<string, string>;
   } | null;
   // review-only
-  fsrs_rating?: 'again' | 'hard' | 'good' | 'easy';
+  fsrs_rating?: 'again' | 'hard' | 'good';
 }
 
 export interface QuestionDetail {
@@ -160,8 +156,6 @@ export interface QuestionDetail {
   backlinks_by_intent_source: Record<string, QuestionDetailBacklink[]>;
   timeline: QuestionDetailTimelineEntry[];
   metadata: Record<string, unknown> | null;
-  /** Auto-enroll judge confidence (0..1) for a captured question; null otherwise. */
-  ingestion_judge_confidence: number | null;
   created_at_sec: number;
   updated_at_sec: number;
   computed_at_sec: number;
@@ -232,7 +226,6 @@ export async function loadQuestionDetail(
   const backlinks = await loadBacklinks(db, questionId);
   const effectiveLimit = Math.min(Math.max(timelineLimit, 1), MAX_TIMELINE_LIMIT);
   const timelineEntries = await getQuestionTimeline(db, questionId, effectiveLimit);
-  const imagePageIndex = await loadLearnerImagePageIndex(db, [q]);
 
   return {
     id: q.id,
@@ -251,7 +244,7 @@ export async function loadQuestionDetail(
     visual_complexity: q.visual_complexity ?? null,
     figures: q.figures ?? [],
     // Whole photographed pages never render next to the prompt; only verified figures do.
-    image_refs: learnerVisibleImageRefs(q, imagePageIndex),
+    image_refs: learnerVisibleImageRefs(q),
     variant_depth: q.variant_depth,
     root_question_id: q.root_question_id ?? null,
     parent_variant_id: q.parent_variant_id ?? null,
@@ -268,7 +261,6 @@ export async function loadQuestionDetail(
     backlinks_by_intent_source: groupByIntentSource(backlinks),
     timeline: timelineEntries.map(toTimelineEntry),
     metadata: (q.metadata ?? null) as Record<string, unknown> | null,
-    ingestion_judge_confidence: readWorkflowJudgeConfidence(q.metadata),
     created_at_sec: Math.floor(q.created_at.getTime() / 1000),
     updated_at_sec: Math.floor(q.updated_at.getTime() / 1000),
     computed_at_sec: Math.floor(Date.now() / 1000),
